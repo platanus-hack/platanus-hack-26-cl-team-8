@@ -1,7 +1,6 @@
 ---
-// Catálogo de todos los ítems de Minecraft 1.20.4, con imagen y nombre en español. Sirve
-// para escribir prompts con kit "Personalizado": dice el id de cada cosa y cuáles se pueden
-// pedir. El catálogo lo genera scripts/items/catalog.mjs; las imágenes (texturas de Mojang)
+// Ítems que se pueden pedir en el kit "Personalizado", con imagen y nombre en español. Sirve
+// para escribir prompts: dice el id de cada cosa. El catálogo lo genera scripts/items/catalog.mjs; las imágenes (texturas de Mojang)
 // las copia ese mismo script a public/items/ y no van al repositorio: si faltan, la página
 // se ve igual, solo sin imágenes.
 import "@fontsource-variable/instrument-sans";
@@ -18,12 +17,10 @@ type CatalogItem = {
   texture: string | null;
 };
 
-const items = (catalog.items as CatalogItem[]).map((item) => ({
-  ...item,
-  label: item.nameEs ?? item.name,
-  inKit: Object.prototype.hasOwnProperty.call(CUSTOM_KIT_ITEMS, item.id),
-}));
-const inKit = items.filter((item) => item.inKit).length;
+// Solo los ítems que se pueden pedir en el kit: el resto del juego no sirve en la arena.
+const items = (catalog.items as CatalogItem[])
+  .filter((item) => Object.prototype.hasOwnProperty.call(CUSTOM_KIT_ITEMS, item.id))
+  .map((item) => ({ ...item, label: item.nameEs ?? item.name }));
 ---
 
 <!doctype html>
@@ -33,29 +30,25 @@ const inKit = items.filter((item) => item.inKit).length;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#101113" />
-    <title>Ítems de Minecraft</title>
-    <meta name="description" content={`Los ${items.length} ítems de Minecraft ${catalog.version}, con su id y cuáles se pueden pedir en un kit personalizado.`} />
+    <title>Ítems del kit</title>
+    <meta name="description" content={`Los ${items.length} ítems que se pueden pedir en un kit personalizado, con su id.`} />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>
     <main class="page items-page">
       <header class="section__head">
         <p><a class="items-page__back" href="/">← Volver a la arena</a></p>
-        <h1 class="section__title">Ítems de Minecraft {catalog.version}</h1>
+        <h1 class="section__title">Ítems del kit personalizado</h1>
         <p class="section__hint">
-          {items.length} ítems. Los {inKit} marcados como <strong>kit</strong> se pueden pedir en el kit
-          "Personalizado" escribiéndolos en el prompt (por nombre o por id); el resto se ignora.
+          {items.length} ítems que se pueden pedir en el kit "Personalizado" escribiéndolos en el prompt
+          (por nombre o por id). Lo que no esté aquí se ignora.
         </p>
       </header>
 
       <div class="items-page__filters">
         <label class="field">
           <span class="field__label">Buscar</span>
-          <input id="items-search" type="search" placeholder="espada, wool, cubo…" autocomplete="off" />
-        </label>
-        <label class="items-page__check">
-          <input id="items-kit" type="checkbox" />
-          Solo los que sirven en el kit personalizado
+          <input id="items-search" type="search" placeholder="espada, poción, cubo…" autocomplete="off" />
         </label>
         <span class="items-page__count" id="items-count" role="status">{items.length} ítems</span>
       </div>
@@ -66,7 +59,6 @@ const inKit = items.filter((item) => item.inKit).length;
             <li
               class="item-card"
               data-search={`${item.id} ${item.label} ${item.name}`.toLowerCase()}
-              data-kit={item.inKit ? "1" : "0"}
             >
               <span class="item-card__img">
                 {item.texture && (
@@ -79,7 +71,6 @@ const inKit = items.filter((item) => item.inKit).length;
               </span>
               <span class="item-card__meta">
                 {item.stackSize > 1 ? `x${item.stackSize}` : "x1"}
-                {item.inKit && <span class="item-card__kit">kit</span>}
               </span>
             </li>
           ))
@@ -89,11 +80,10 @@ const inKit = items.filter((item) => item.inKit).length;
 
     <script>
       const search = document.getElementById("items-search") as HTMLInputElement;
-      const onlyKit = document.getElementById("items-kit") as HTMLInputElement;
       const count = document.getElementById("items-count") as HTMLElement;
       const cards = Array.from(document.querySelectorAll<HTMLElement>("#items-grid .item-card"));
 
-      // Sin tildes: "lana roja" encuentra "Lana roja" y "pocion" encuentra "Poción".
+      // Sin tildes: "pocion" encuentra "Poción".
       const fold = (text: string): string => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
       const haystacks = cards.map((card) => fold(card.dataset.search ?? ""));
 
@@ -102,7 +92,7 @@ const inKit = items.filter((item) => item.inKit).length;
         let shown = 0;
         cards.forEach((card, i) => {
           const text = haystacks[i] ?? "";
-          const visible = (!onlyKit.checked || card.dataset.kit === "1") && words.every((word) => text.includes(word));
+          const visible = words.every((word) => text.includes(word));
           card.hidden = !visible;
           if (visible) shown += 1;
         });
@@ -110,7 +100,6 @@ const inKit = items.filter((item) => item.inKit).length;
       }
 
       search.addEventListener("input", filter);
-      onlyKit.addEventListener("change", filter);
     </script>
   </body>
 </html>
@@ -144,14 +133,6 @@ const inKit = items.filter((item) => item.inKit).length;
     background: var(--surface);
     color: var(--text);
     font: inherit;
-  }
-
-  .items-page__check {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    font-size: 14px;
-    color: var(--muted);
   }
 
   .items-page__count {
@@ -226,10 +207,4 @@ const inKit = items.filter((item) => item.inKit).length;
     color: var(--faint);
   }
 
-  .item-card__kit {
-    padding: 0 6px;
-    border: 1px solid var(--ok);
-    color: var(--ok);
-    font-size: 11px;
-  }
 </style>

@@ -8,7 +8,6 @@ import {
   isLavaBucket,
   isPearl,
   isPickaxe,
-  isShears,
   isShield,
   isSword,
   isWaterBucket,
@@ -130,13 +129,10 @@ function foodGuide(item: KitItem, kit: Kit): Guide {
 
 function blockGuide(item: KitItem): Guide {
   const name = item.item;
-  const toughness = name.endsWith("_wool")
-    ? "la lana se rompe rápido (~1 s a mano, al instante con tijeras): sirve para estructuras rápidas, no para aguantar"
-    : name.endsWith("_planks")
-      ? "los tablones tardan ~3 s en romperse a mano (rápido con hacha)"
-      : name === "dirt"
-        ? "la tierra se rompe rápido a mano"
-        : "la roca y la obsidiana solo se rompen con pico: un rival sin pico no puede atravesarlas";
+  const toughness =
+    name === "cobblestone"
+      ? "la roca solo se rompe con pico: un rival sin pico no puede atravesarla"
+      : "los tablones tardan ~3 s en romperse a mano (rápido con hacha)";
   return {
     what: `bloques para construir; ${toughness}`,
     how: `build con "blocks": una lista de celdas {x,y,z,material: "${name}"}`,
@@ -186,16 +182,9 @@ function guideFor(item: KitItem, kit: Kit): Guide | null {
   if (isBuildBlock(name)) return blockGuide(item);
   if (isPickaxe(name)) {
     return {
-      what: "rompe roca y obsidiana (sin pico no se pueden romper)",
+      what: "rompe roca (sin pico no se puede romper)",
       how: "dig la usa sola cuando hace falta",
-      when: "abrirte paso por un muro o una torre de piedra del rival, o recoger bloques para construir",
-    };
-  }
-  if (isShears(name)) {
-    return {
-      what: "rompe la lana al instante",
-      how: "dig las usa solas con la lana",
-      when: "atravesar un muro de lana del rival o recuperar lana para construir",
+      when: "abrirte paso por un muro o una torre de roca del rival, o recoger bloques para construir",
     };
   }
   if (isShield(name)) {

@@ -176,7 +176,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "attack",
     description:
-      "Ataque cuerpo a cuerpo: equipa tu arma (espada o hacha), persigue al rival y lo golpea respetando la recarga del arma. Sigue atacando hasta que elijas otra acción (o por 'seconds' segundos).",
+      "Ataque cuerpo a cuerpo: equipa tu arma (espada o hacha), persigue al rival y lo golpea respetando la recarga del arma. Con crit=true salta para que cada golpe caiga como crítico. Sigue atacando hasta que elijas otra acción (o por 'seconds' segundos).",
     parameters: {
       type: "object",
       properties: {
@@ -191,6 +191,11 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "boolean",
           description:
             "Opcional, solo con escudo: true = entre golpe y golpe levantas el escudo y lo bajas justo para pegar (recibes menos daño, persigues más lento).",
+        },
+        crit: {
+          type: "boolean",
+          description:
+            "Opcional: true = saltas justo antes de que el arma recargue y pegas al caer, para hacer golpes críticos (1.5 veces el daño). Cerca del rival dejas de correr. No sirve en el agua ni junto con guard.",
         },
       },
       required: [],
@@ -291,7 +296,7 @@ export const TOOL_DEFS: ToolDef[] = [
           description: "Plano en coordenadas absolutas del mapa world. Primero apoyos y después lo que depende de ellos. Cada bloque consume uno de material.",
           items: {
             type: "object",
-            properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" }, material: { type: "string", description: "Id del material, por ejemplo oak_planks o red_wool." } },
+            properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" }, material: { type: "string", description: "Id del material, por ejemplo oak_planks o cobblestone." } },
             required: ["x", "y", "z", "material"], additionalProperties: false,
           },
         },
@@ -301,7 +306,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "dig",
-    description: `Rompe un bloque exacto con position, o elige bloques cercanos con target; nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (tijeras para lana, hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
+    description: `Rompe un bloque exacto con position, o elige bloques cercanos con target; nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
     parameters: {
       type: "object",
       properties: {
@@ -399,6 +404,8 @@ export type ParsedToolArgs = {
   /** "attack": arma elegida (id) y si se cubre con el escudo entre golpes. */
   weapon: string | null;
   guard: boolean;
+  /** "attack": saltar para pegar cayendo (golpe crítico). */
+  crit: boolean;
   /** "eat": comida elegida (id). */
   food: string | null;
   /** "drink" / "throw": tipo de poción elegido y a quién se arroja. */
@@ -447,6 +454,7 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   const food = id("food");
   const potion = id("potion");
   const guard = source["guard"] === true || word("guard") === "true";
+  const crit = source["crit"] === true || word("crit") === "true";
   const rawPosition = source["position"];
   const coords = rawPosition && typeof rawPosition === "object" ? rawPosition as Record<string, unknown> : {};
   const position = [coords.x, coords.y, coords.z].every((n) => typeof n === "number" && Number.isFinite(n))
@@ -455,5 +463,5 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
   // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
   const say = cleanMessage(source["say"]);
-  return { reason, seconds, target, blocks: source["blocks"], position, positionInvalid, where, digTarget, style, distance, place, weapon, guard, food, potion, at, say };
+  return { reason, seconds, target, blocks: source["blocks"], position, positionInvalid, where, digTarget, style, distance, place, weapon, guard, crit, food, potion, at, say };
 }

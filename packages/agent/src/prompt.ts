@@ -27,12 +27,12 @@ import {
   isLavaBucket,
   isPearl,
   isPickaxe,
-  isShears,
   isShield,
   isSword,
   isWaterBucket,
 } from "./items";
 import { armorGuide, itemGuideLines } from "./item-guide";
+import { knowledgeSection } from "./knowledge";
 import {
   DIG_MAX_SECONDS,
   kitToolNames,
@@ -145,7 +145,9 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       const guard = find(isShield)
         ? ' Con "guard": true levantas el escudo entre golpe y golpe y lo bajas justo para pegar: recibes mucho menos daño de frente, pero persigues más lento.'
         : "";
-      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
+      const crit =
+        ' Con "crit": true saltas justo antes de que el arma recargue y pegas al caer: cada golpe en la caída es crítico (1.5 veces el daño) y el ritmo casi no cambia. Cerca del rival dejas de correr (un golpe a la carrera no es crítico, pero empuja más); en el agua pegas normal.';
+      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}${crit}`;
     }
     case "move":
       return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta que la reemplaces o termine su duración.';
@@ -202,9 +204,9 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       return `- build: ${amount}; define blocks como una lista ordenada de celdas {x,y,z,material}. La geometría la decides tú: puedes combinar materiales, construir apoyos, escaleras, plataformas, pasillos o huecos para mirar. Cada bloque nuevo consume uno del material elegido. Tu cuerpo se acerca para colocarlos respetando alcance y línea de visión. No hay formas fijas ni recarga artificial; la colocación lleva tiempo físico y continúa entre decisiones. Otra herramienta pausa el plano y build sin blocks lo retoma; blocks nuevos lo reemplazan. Consulta construction para conocer progreso y obstáculos. No puedes poner bloques donde hay agentes, fuera de buildBounds o sobre una celda ocupada. Ordena primero los apoyos; si algo falla, corrige el plano o usa dig/move con position.`;
     }
     case "dig": {
-      const tools = kit.items.filter((i) => isPickaxe(i.item) || isShears(i.item) || isAxe(i.item));
+      const tools = kit.items.filter((i) => isPickaxe(i.item) || isAxe(i.item));
       const with_ = tools.length > 0 ? `Tus herramientas para romper: ${tools.map(kitItemTitle).join(", ")}.` : "No tienes herramientas: rompes a mano.";
-      return `- dig: ${with_} A mano la lana tarda ~1 s y los tablones ~3 s; la roca y la obsidiana necesitan pico (sin pico no se intentan: pasarían de ${DIG_MAX_SECONDS} s). Las tijeras rompen la lana al instante, el hacha la madera y el pico la piedra.`;
+      return `- dig: ${with_} A mano los tablones tardan ~3 s (el hacha los rompe rápido); la roca necesita pico (sin pico no se intenta: pasaría de ${DIG_MAX_SECONDS} s).`;
     }
     case "shield": {
       if (!find(isShield)) return null;
@@ -397,6 +399,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
     '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
     '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Resume solo la decisión en reason, si aporta algo nuevo.',
+    "",
+    ...knowledgeSection(input.kit),
     "",
     ...commsSection(input.comms),
     "",

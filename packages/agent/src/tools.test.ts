@@ -216,7 +216,7 @@ describe("modo chat: argumento say", () => {
 describe("escudo, agua y lava", () => {
   it("se ofrecen solo si el kit trae el ítem", () => {
     const { kit } = buildCustomKit({
-      items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "red_wool", count: 128 }],
+      items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "cobblestone", count: 128 }],
     });
     expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "move", "build", "dig", "shield", "water", "lava", "wait"]);
     for (const k of KIT_LIST) {
@@ -279,6 +279,9 @@ describe("move, pociones y elecciones", () => {
     expect(parseToolArgs({ food: "golden_apple" }).food).toBe("golden_apple");
     expect(parseToolArgs({ potion: "splash_potion:harming" }).potion).toBe("harming");
     expect(parseToolArgs({ guard: true }).guard).toBe(true);
+    expect(parseToolArgs({ crit: true }).crit).toBe(true);
+    expect(parseToolArgs({ crit: "true" }).crit).toBe(true);
+    expect(parseToolArgs({}).crit).toBe(false);
     expect(parseToolArgs({ guard: "true" }).guard).toBe(true);
     expect(parseToolArgs({ at: "self" })).toMatchObject({ at: "self" });
   });
