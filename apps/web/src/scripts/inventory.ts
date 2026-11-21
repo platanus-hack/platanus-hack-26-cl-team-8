@@ -1,6 +1,6 @@
 /**
- * Inventario de un kit dibujado como el del juego: los cuatro casilleros de armadura,
- * los efectos permanentes a su lado y, debajo, los nueve de la barra rápida. Los
+ * Inventario de un kit dibujado como el del juego: los cuatro casilleros de armadura y
+ * el de la mano secundaria, los efectos permanentes a su lado y, debajo, los nueve de la barra rápida. Los
  * casilleros vacíos se dibujan vacíos, así se ve en qué posición queda cada ítem.
  */
 import { kitItemTitle, type Kit, type KitItem, type KitSlot } from "@phack/protocol";
@@ -62,8 +62,13 @@ export function renderInventory(target: HTMLElement, kit: Kit): void {
     effects.append(chip);
   }
 
+  // La mano secundaria (el escudo) va junto a la armadura, como en el juego.
+  const offhand = slotNode(bySlot.get("weapon.offhand"));
+  offhand.classList.add("inv__slot--offhand");
+
   target.replaceChildren(
     ...ARMOR_SLOTS.map((slot) => slotNode(bySlot.get(slot))),
+    offhand,
     effects,
     ...HOTBAR_SLOTS.map((slot) => slotNode(bySlot.get(slot))),
   );

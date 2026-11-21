@@ -1,4 +1,4 @@
-import { ARENA, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
+import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
 import {
   ALWAYS_EDIBLE,
@@ -22,6 +22,7 @@ import {
   BOX_BLOCKS,
   DIG_MAX_SECONDS,
   kitToolNames,
+  THROW_MAX_DISTANCE,
   LAVA_MAX_DISTANCE,
   LAVA_MIN_DISTANCE,
   PEARL_COOLDOWN_MS,
@@ -68,6 +69,12 @@ function toolLine(tool: ToolName, kit: Kit): string {
     }
     case "retreat":
       return "- retreat: alejarte del rival dentro de la arena.";
+    case "move":
+      return '- move: moverte con táctica: esquivar de lado ("strafe"), rodearlo ("circle"), mantener una distancia ("keep") o ir a un lugar ("goto").';
+    case "drink":
+      return "- drink: beber una poción.";
+    case "throw":
+      return "- throw: arrojar una poción al rival o a tus propios pies.";
     case "shoot":
       return "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.";
     case "eat":
@@ -75,7 +82,7 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "pearl":
       return '- pearl: lanzar una perla de ender y aparecer donde cae; con target "rival" caes junto al rival y con target "away" lejos de él.';
     case "build":
-      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques; con shape "box", encerrarte en una caja de bloques con techo. Te deja quieto 1 a 4 segundos.';
+      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques; con shape "box", encerrarte en una caja de bloques con techo; con shape "block", poner una columna de 2 bloques a tu lado. Te deja quieto 1 a 4 segundos.';
     case "dig":
       return '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.';
     case "shield":
@@ -101,7 +108,34 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       if (!weapon) return "- attack: no tienes arma; a puño limpio casi no haces daño.";
       const seconds = Math.round(attackCooldownMs(weapon.item) / 100) / 10;
       const slower = isAxe(weapon.item) ? " Es más lenta que una espada, pero cada golpe quita más vida." : "";
-      return `- attack: tu arma es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}`;
+      const weapons = kit.items.filter((i) => isSword(i.item) || isAxe(i.item));
+      const choice =
+        weapons.length > 1
+          ? ` Puedes elegir otra con "weapon": ${weapons.map((w) => `${w.item} (${kitItemTitle(w)}, un golpe cada ~${Math.round(attackCooldownMs(w.item) / 100) / 10} s)`).join(", ")}.`
+          : "";
+      const guard = find(isShield)
+        ? ' Con "guard": true levantas el escudo entre golpe y golpe y lo bajas justo para pegar: recibes mucho menos daño de frente, pero persigues más lento.'
+        : "";
+      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
+    }
+    case "move":
+      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival"). Sigue hasta tu próxima decisión.';
+    case "drink":
+    case "throw": {
+      const kind = tool === "drink" ? "potion" : "splash_potion";
+      const potions = kit.items.filter((i) => i.item === kind && i.potion);
+      if (potions.length === 0) return null;
+      const counts = new Map<string, number>();
+      for (const p of potions) counts.set(p.potion as string, (counts.get(p.potion as string) ?? 0) + p.count);
+      const list = [...counts].map(([type, n]) => {
+        const info = CUSTOM_KIT_POTIONS[type];
+        return `${n} de ${info?.label ?? type} (potion "${type}": ${info?.effect ?? "efecto desconocido"})`;
+      });
+      const how =
+        tool === "drink"
+          ? "Beber tarda cerca de 2 s y te deja quieto."
+          : `Arrojar es instantáneo; al rival solo llega si está a ${THROW_MAX_DISTANCE} bloques o menos. Las de efecto bueno arrójalas a tus pies (at "self"), las dañinas al rival.`;
+      return `- ${tool}: tienes ${list.join("; ")}. ${how}`;
     }
     case "shoot": {
       const bow = find(isBow);
@@ -123,7 +157,8 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
         if (ALWAYS_EDIBLE.has(food.item)) return `${title} (se puede comer siempre)`;
         return `${title} (solo se puede comer con la comida bajo 20; la vida vuelve de a poco, no al instante)`;
       });
-      return `- eat: ${parts.join("; ")}.`;
+      const pick = foods.length > 1 ? ' Con "food" eliges cuál (si no, la primera que se pueda comer).' : "";
+      return `- eat: ${parts.join("; ")}.${pick}`;
     }
     case "pearl": {
       const pearls = find(isPearl);
@@ -192,7 +227,7 @@ function capabilitiesSection(kit: Kit): string[] {
   const tools = kitToolNames(kit);
   const lines = [
     "CAPACIDADES",
-    "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2.",
+    "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2. Además de acercarte (approach) y alejarte (retreat), con move puedes esquivar de lado, rodear al rival, mantener una distancia o ir a un lugar.",
     '- Puedes romper bloques que alguien colocó (dig). El piso, los muros de vidrio y el techo invisible de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.',
   ];
   if (tools.includes("build")) {
@@ -200,6 +235,9 @@ function capabilitiesSection(kit: Kit): string[] {
   } else {
     lines.push("- No tienes bloques para colocar (salvo los que recojas rompiendo).");
   }
+  lines.push(
+    '- Tu cuerpo elige solo qué sacar para cada acción (la mejor arma para attack, la mejor herramienta para dig). Si quieres otra cosa, dilo en los argumentos: "weapon" en attack, "food" en eat, "potion" en drink y throw. Usa los ids que aparecen en tu inventario.',
+  );
   lines.push(
     "- Usas tu equipo solo a través de las herramientas: no puedes fabricar (craftear), tirar ítems, cambiarte la armadura ni abrir menús.",
     '- La observación cuenta lo que hay alrededor: "blocksBetween" (bloques en la recta hasta el otro agente), "enclosed" (tienes bloques por los cuatro lados) y "height" (cuánto estás sobre el piso). Si no aparecen, no hay nada de eso.',

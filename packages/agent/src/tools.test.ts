@@ -36,8 +36,8 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
 
     const build = TOOL_DEFS.find((def) => def.name === "build");
     const buildProps = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
-    expect(Object.keys(buildProps)).toEqual(["reason", "shape"]);
-    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower", "box"]);
+    expect(Object.keys(buildProps)).toEqual(["reason", "shape", "side"]);
+    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower", "box", "block"]);
     expect(build?.parameters["required"]).toEqual([]);
     expect(build?.description).toContain("muro de 3 de ancho y 2 de alto");
     expect(build?.description).toContain("gasta hasta 6 bloques");
@@ -99,12 +99,12 @@ describe("herramientas que no se pueden usar", () => {
 });
 
 describe("kitToolNames", () => {
-  const base = ["approach", "attack", "retreat"];
+  const base = ["approach", "attack", "retreat", "move"];
 
   it("ofrece a cada kit solo lo que sus ítems permiten", () => {
     expect(kitToolNames(KITS.classic)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
     expect(kitToolNames(KITS.archer)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
-    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "dig", "wait"]);
+    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "dig", "shield", "wait"]);
     expect(kitToolNames(KITS.berserker)).toEqual([...base, "eat", "dig", "wait"]);
     expect(kitToolNames(KITS.ender)).toEqual([...base, "eat", "pearl", "dig", "wait"]);
     expect(kitToolNames(KITS.builder)).toEqual([...base, "shoot", "eat", "build", "dig", "wait"]);
@@ -200,9 +200,11 @@ describe("escudo, agua y lava", () => {
     const { kit } = buildCustomKit({
       items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "red_wool", count: 128 }],
     });
-    expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "build", "dig", "shield", "water", "lava", "wait"]);
+    expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "move", "build", "dig", "shield", "water", "lava", "wait"]);
     for (const k of KIT_LIST) {
-      for (const tool of ["shield", "water", "lava"] as const) expect(kitToolNames(k)).not.toContain(tool);
+      for (const tool of ["water", "lava"] as const) expect(kitToolNames(k)).not.toContain(tool);
+      // De los kits fijos, solo el Tanque trae escudo.
+      expect(kitToolNames(k).includes("shield")).toBe(k.id === "tank");
     }
   });
 
@@ -230,6 +232,42 @@ describe("dig", () => {
     expect(parseToolArgs({ target: "nearest" }).digTarget).toBe("nearest");
     expect(parseToolArgs({ target: "away" }).digTarget).toBe("between");
     expect(parseToolArgs({ shape: "box" }).shape).toBe("box");
+  });
+});
+
+describe("move, pociones y elecciones", () => {
+  it("move se ofrece siempre; drink y throw solo con pociones de su tipo", () => {
+    for (const kit of KIT_LIST) expect(kitToolNames(kit)).toContain("move");
+    const { kit } = buildCustomKit({
+      items: [
+        { item: "potion", potion: "healing", count: 2 },
+        { item: "splash_potion", potion: "harming" },
+      ],
+    });
+    expect(kitToolNames(kit)).toEqual(expect.arrayContaining(["drink", "throw"]));
+    expect(kitToolNames(KITS.classic)).not.toContain("drink");
+  });
+
+  it("parseToolArgs: estilos, distancia, lugar, arma, comida, poción y escudo", () => {
+    const def = parseToolArgs({});
+    expect(def).toMatchObject({ style: "strafe", distance: 8, place: "center", weapon: null, guard: false, food: null, potion: null, at: "rival", side: "front" });
+    expect(parseToolArgs({ style: "keep", distance: 50 }).distance).toBe(16);
+    expect(parseToolArgs({ style: "keep", distance: "3" }).distance).toBe(3);
+    expect(parseToolArgs({ style: "volar" }).style).toBe("strafe");
+    expect(parseToolArgs({ place: "far_corner" }).place).toBe("far_corner");
+    expect(parseToolArgs({ weapon: "minecraft:Diamond_Axe" }).weapon).toBe("diamond_axe");
+    expect(parseToolArgs({ weapon: "espada; rm -rf" }).weapon).toBeNull();
+    expect(parseToolArgs({ food: "golden_apple" }).food).toBe("golden_apple");
+    expect(parseToolArgs({ potion: "splash_potion:harming" }).potion).toBe("harming");
+    expect(parseToolArgs({ guard: true }).guard).toBe(true);
+    expect(parseToolArgs({ guard: "true" }).guard).toBe(true);
+    expect(parseToolArgs({ at: "self", side: "left" })).toMatchObject({ at: "self", side: "left" });
+  });
+
+  it("build ofrece el bloque suelto con su lado", () => {
+    const build = TOOL_DEFS.find((def) => def.name === "build");
+    const props = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
+    expect(props["side"]?.enum).toEqual(["front", "behind", "left", "right"]);
   });
 });
 

@@ -88,11 +88,16 @@ export function arenaBuildCommands(): string[] {
   ];
 }
 
-/** Encantamientos en el formato NBT de 1.20.4: `{Enchantments:[{id:"minecraft:punch",lvl:1s}]}`. */
+/** Encantamientos y tipo de poción en el formato NBT de 1.20.4: `{Enchantments:[{id:"minecraft:punch",lvl:1s}]}`, `{Potion:"minecraft:healing"}`. */
 function itemNbt(item: KitItem): string {
-  if (!item.enchantments?.length) return "";
-  const list = item.enchantments.map((e) => `{id:"minecraft:${e.id}",lvl:${e.level}s}`).join(",");
-  return `{Enchantments:[${list}]}`;
+  const tags: string[] = [];
+  if (item.enchantments?.length) {
+    const list = item.enchantments.map((e) => `{id:"minecraft:${e.id}",lvl:${e.level}s}`).join(",");
+    tags.push(`Enchantments:[${list}]`);
+  }
+  // Pociones (1.20.4): el tipo va en la etiqueta Potion.
+  if (item.potion) tags.push(`Potion:"minecraft:${item.potion}"`);
+  return tags.length > 0 ? `{${tags.join(",")}}` : "";
 }
 
 /**

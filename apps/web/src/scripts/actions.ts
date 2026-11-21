@@ -27,6 +27,9 @@ const TOOLS: Record<string, { label: string; icon: IconRef }> = {
   approach: { label: "Se acerca al rival", icon: { name: "forward" } },
   attack: { label: "Ataca cuerpo a cuerpo", icon: { name: "sword" } },
   retreat: { label: "Se aleja del rival", icon: { name: "back" } },
+  move: { label: "Esquiva de lado", icon: { name: "forward" } },
+  drink: { label: "Bebe una poción", icon: { name: "potion" } },
+  throw: { label: "Arroja una poción al rival", icon: { name: "splash_potion" } },
   shoot: { label: "Dispara con el arco", icon: { name: "bow" } },
   eat: { label: "Come para recuperarse", icon: { name: "steak" } },
   pearl: { label: "Lanza una perla", icon: { name: "pearl" } },
@@ -64,6 +67,17 @@ export function describeAction(tool: string, args: Record<string, unknown>, resu
   if (tool === "build" && args.shape === "tower") label = "Se sube a una torre";
   if (tool === "build" && args.shape === "box") label = "Se encierra con bloques";
   if (tool === "dig" && args.target === "nearest") label = "Rompe el bloque más cercano";
+  if (tool === "build" && args.shape === "block") label = "Pone bloques a su lado";
+  if (tool === "move") {
+    const keep = Number(args.distance);
+    if (args.style === "circle") label = "Rodea al rival";
+    else if (args.style === "keep") label = Number.isFinite(keep) ? `Se mantiene a ${keep} bloques` : "Mantiene la distancia";
+    else if (args.style === "goto") {
+      label = args.place === "far_corner" ? "Va a la esquina más lejana" : args.place === "behind_rival" ? "Va detrás del rival" : "Va al centro";
+    }
+  }
+  if (tool === "throw" && args.at === "self") label = "Se arroja una poción";
+  if (tool === "attack" && args.guard === true) label += " cubriéndose con el escudo";
   if (tool === "water" && args.where === "feet") label = "Vacía agua bajo sus pies";
   return {
     tool: known ? tool : "",

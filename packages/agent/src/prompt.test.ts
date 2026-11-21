@@ -121,6 +121,7 @@ describe("buildSystemPrompt", () => {
       "- approach: caminar hacia el rival.",
       "- attack: cuerpo a cuerpo con la espada; solo golpea a menos de ~3 bloques, así que te acerca solo.",
       "- retreat: alejarte del rival dentro de la arena.",
+      '- move: moverte con táctica: esquivar de lado ("strafe"), rodearlo ("circle"), mantener una distancia ("keep") o ir a un lugar ("goto").',
       "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.",
       "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.",
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.',
@@ -180,9 +181,9 @@ describe("buildSystemPrompt", () => {
 
   it("da los datos que el modelo no puede adivinar", () => {
     const berserker = section(promptFor(KITS.berserker), "TU KIT").join("\n");
-    expect(berserker).toContain("- attack: tu arma es Hacha de diamante; da un golpe cada ~1.1 s.");
+    expect(berserker).toContain("- attack: tu arma por defecto es Hacha de diamante; da un golpe cada ~1.1 s.");
     const classic = section(promptFor(KITS.classic), "TU KIT").join("\n");
-    expect(classic).toContain("- attack: tu arma es Espada de hierro; da un golpe cada ~0.7 s.");
+    expect(classic).toContain("- attack: tu arma por defecto es Espada de hierro; da un golpe cada ~0.7 s.");
     expect(classic).toContain("Filete x4 (solo se puede comer con la comida bajo 20");
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
     expect(ender).toContain("no se puede lanzar con 4 de vida o menos");
@@ -248,4 +249,31 @@ describe("buildSystemPrompt", () => {
     const builder = section(promptFor(KITS.builder), "CAPACIDADES").join("\n");
     expect(builder).toContain("Puedes colocar bloques (build)");
   });
+
+  it("explica cómo elegir arma, comida y pociones, y el escudo entre golpes", () => {
+    const { kit } = buildCustomKit({
+      items: [
+        { item: "iron_sword" },
+        { item: "diamond_axe" },
+        { item: "shield" },
+        { item: "cooked_beef", count: 4 },
+        { item: "golden_apple", count: 2 },
+        { item: "potion", potion: "strength" },
+        { item: "splash_potion", potion: "healing", count: 2 },
+        { item: "splash_potion", potion: "poison" },
+      ],
+    });
+    const mine = section(promptFor(kit), "TU KIT").join("\n");
+    expect(mine).toContain('Puedes elegir otra con "weapon": iron_sword');
+    expect(mine).toContain("diamond_axe");
+    expect(mine).toContain('Con "guard": true');
+    expect(mine).toContain('Con "food" eliges cuál');
+    expect(mine).toContain('- drink: tienes 1 de fuerza (potion "strength"');
+    expect(mine).toContain('2 de curación (potion "healing"');
+    expect(mine).toContain('1 de veneno (potion "poison"');
+    const tank = section(promptFor(KITS.tank), "TU KIT").join("\n");
+    expect(tank).toContain('Con "guard": true');
+    expect(section(promptFor(KITS.classic), "CAPACIDADES").join("\n")).toContain('"weapon" en attack');
+  });
 });
+

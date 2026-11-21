@@ -26,6 +26,8 @@ const FIXED: Record<string, IconRef> = {
   enchanted_golden_apple: { name: "gapple" },
   cobblestone: { name: "tile", material: "stone" },
   shield: { name: "shield" },
+  potion: { name: "potion" },
+  splash_potion: { name: "splash_potion" },
   water_bucket: { name: "water_bucket" },
   lava_bucket: { name: "lava_bucket" },
 };
