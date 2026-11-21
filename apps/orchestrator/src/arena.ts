@@ -203,6 +203,15 @@ export async function prepareFighter(
     throw new Error(`${username} no está conectado al servidor de Minecraft`);
   }
 
+  // El color del equipo tiñe el nametag. Si el equipo ya existe de una pelea anterior,
+  // `team add` no lo cambia; se reaplican el color y la pertenencia en cada preparación.
+  const team = `phack_${side}`;
+  await sendAll(rcon, [
+    `team add ${team}`,
+    `team modify ${team} color ${side}`,
+    `team join ${team} ${username}`,
+  ]);
+
   await sendAll(rcon, [
     // Primero la vida máxima y después la cura: al revés quedaría con la vida de antes.
     `attribute ${username} minecraft:generic.max_health base set ${MAX_HEALTH}`,
