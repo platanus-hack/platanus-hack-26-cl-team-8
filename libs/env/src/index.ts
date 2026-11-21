@@ -36,6 +36,7 @@ const EnvSchema = z.object({
    */
   MATCH_MAX_SECONDS: z.coerce.number().int().min(0).default(1800),
   AGENT_TICK_MS: z.coerce.number().int().positive().default(1500),
+  AGENT_OBSERVATION_RADIUS: z.coerce.number().int().min(8).max(64).default(16),
   DATA_DIR: z.string().default("./data"),
 
   // Cámara

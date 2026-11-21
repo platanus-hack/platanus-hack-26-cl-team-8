@@ -2,8 +2,8 @@ import { truncate } from "./util";
 
 /** Ajustes de red. Es un objeto mutable para que los tests puedan acortar los tiempos. */
 export const httpConfig = {
-  /** Tiempo máximo por intento. */
-  timeoutMs: 15_000,
+  /** Incluye respuestas con planos de cientos de bloques; el caller puede abortar antes. */
+  timeoutMs: 60_000,
   /** Reintentos ante 429 / 5xx / error de red. */
   retries: 1,
 };

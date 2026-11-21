@@ -22,6 +22,12 @@ const base: ObservationInput = {
 };
 
 describe("buildObservation", () => {
+  it("conserva la posición conocida del rival aunque un obstáculo tape la línea de visión", () => {
+    const obs = buildObservation({ ...base, opponentState: { position: { x: 0, y: 65, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, lineOfSight: false, equipment: [] } });
+    expect(obs.opponentVisible).toBe(false);
+    expect(obs.opponentRelative).not.toBeNull();
+    expect(obs.opponentState?.lineOfSight).toBe(false);
+  });
   it("incluye los campos del contrato con el rival visible", () => {
     const obs = buildObservation(base);
     expect(obs.distance).toBe(5);
@@ -64,15 +70,14 @@ describe("buildObservation", () => {
     const obs = buildObservation(base);
     expect("pearlCooldown" in obs).toBe(false);
     expect("buildCooldown" in obs).toBe(false);
-    const past = buildObservation({ ...base, pearlReadyAt: base.now - 1, buildReadyAt: 0 });
+    const past = buildObservation({ ...base, pearlReadyAt: base.now - 1 });
     expect("pearlCooldown" in past).toBe(false);
     expect("buildCooldown" in past).toBe(false);
   });
 
   it("informa en segundos lo que falta de cada recarga", () => {
-    const obs = buildObservation({ ...base, pearlReadyAt: base.now + 3_240, buildReadyAt: base.now + 500 });
+    const obs = buildObservation({ ...base, pearlReadyAt: base.now + 3_240 });
     expect(obs.pearlCooldown).toBe(3.2);
-    expect(obs.buildCooldown).toBe(0.5);
     const onlyPearl = buildObservation({ ...base, pearlReadyAt: base.now + 1_000 });
     expect(onlyPearl.pearlCooldown).toBe(1);
     expect("buildCooldown" in onlyPearl).toBe(false);

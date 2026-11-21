@@ -152,7 +152,8 @@ describe("buildSystemPrompt", () => {
       '- move: moverte con táctica: esquivar de lado ("strafe"), rodearlo ("circle"), mantener una distancia ("keep") o ir a un lugar ("goto").',
       "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.",
       "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.",
-      '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.',
+      '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.',
+      '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.',
       "- wait: quedarte quieto.",
       'Todas aceptan un argumento opcional "reason" con lo que piensas al decidir: texto libre, el público lo ve en vivo.',
     ]);
@@ -160,7 +161,7 @@ describe("buildSystemPrompt", () => {
 
   it("no menciona herramientas que el kit no tiene", () => {
     const tank = promptFor(KITS.tank);
-    for (const missing of ["shoot", "pearl", "build"]) {
+    for (const missing of ["shoot", "pearl"]) {
       expect(tank).not.toContain(`- ${missing}:`);
     }
     expect(tank).not.toContain("pearlCooldown");
@@ -220,10 +221,9 @@ describe("buildSystemPrompt", () => {
     expect(ender).toContain('"pearlCooldown"');
     const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
     expect(builder).toContain(`${titleOf(KITS.builder, "golden_apple")} (se puede comer siempre`);
-    expect(builder).toContain("cada muro gasta hasta 6");
-    expect(builder).toContain("con el rival a 4.5 bloques o más y contigo parado en el piso de la arena");
-    expect(builder).toContain("4 segundos de recarga");
-    expect(builder).toContain('"buildCooldown"');
+    expect(builder).toContain("define blocks como una lista ordenada");
+    expect(builder).toContain("No hay formas fijas ni recarga artificial");
+    expect(builder).toContain("construction");
   });
 
   it("avisa que los corazones amarillos no se acumulan solo a quien lleva manzanas doradas", () => {
@@ -261,7 +261,7 @@ describe("buildSystemPrompt", () => {
     for (const tool of ["build", "shield", "water", "lava"]) expect(tools).toContain(`- ${tool}:`);
     const mine = section(prompt, "TU KIT").join("\n");
     expect(mine).toContain("Lana roja (128 en total)");
-    expect(mine).toContain("Una torre gasta 3");
+    expect(mine).toContain("define blocks como una lista ordenada");
     expect(mine).toContain("- shield: tu Escudo va en la mano secundaria");
     expect(mine).toContain("- water: tienes 1 Cubo de agua");
     expect(mine).toContain("- lava: tienes 1 Cubo de lava");
@@ -272,10 +272,21 @@ describe("buildSystemPrompt", () => {
     expect(classic).toContain("Puedes romper bloques que alguien colocó (dig)");
     expect(classic).toContain("no se rompen");
     expect(classic).toContain("no puedes fabricar (craftear)");
-    expect(classic).toContain("No tienes bloques para colocar");
+    expect(classic).toContain("geometría libre");
     expect(classic).toContain('"blocksBetween"');
     const builder = section(promptFor(KITS.builder), "CAPACIDADES").join("\n");
     expect(builder).toContain("Puedes colocar bloques (build)");
+  });
+
+  it("reconsidera los recursos en cada turno y explica la cobertura espacial sin imponer una estrategia", () => {
+    const perception = section(promptFor(KITS.builder), "PERCEPCIÓN Y RECURSOS").join("\n");
+    expect(perception).toContain("En CADA decisión reconsidera");
+    expect(perception).toContain("TODOS los recursos que aún tienes");
+    expect(perception).toContain("combinar varios mediante acciones sucesivas");
+    expect(perception).toContain("no una estrategia obligatoria");
+    expect(perception).toContain("Fuera de cobertura no has observado el terreno");
+    expect(perception).toContain("lineOfSight");
+    expect(perception).toContain("resources dicen qué conservas ahora");
   });
 
   it("explica cómo elegir arma, comida y pociones, y el escudo entre golpes", () => {

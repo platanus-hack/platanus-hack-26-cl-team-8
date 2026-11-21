@@ -85,14 +85,14 @@ describe("buildTurnMessages", () => {
 
 describe("parseToolArgs", () => {
   it("extrae reason y seconds válidos", () => {
-    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toMatchObject({ reason: "porque sí", seconds: 3, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
-    expect(parseToolArgs({ seconds: "2" })).toMatchObject({ reason: null, seconds: 2, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toMatchObject({ reason: "porque sí", seconds: 3, target: "rival", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs({ seconds: "2" })).toMatchObject({ reason: null, seconds: 2, target: "rival", where: "between", digTarget: "between", say: null });
   });
 
   it("tolera argumentos basura", () => {
-    expect(parseToolArgs({ reason: 5, seconds: -1 })).toMatchObject({ reason: null, seconds: null, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
-    expect(parseToolArgs(undefined)).toMatchObject({ reason: null, seconds: null, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
-    expect(parseToolArgs({ seconds: 999 })).toMatchObject({ reason: null, seconds: 60, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs({ reason: 5, seconds: -1 })).toMatchObject({ reason: null, seconds: null, target: "rival", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs(undefined)).toMatchObject({ reason: null, seconds: null, target: "rival", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs({ seconds: 999 })).toMatchObject({ reason: null, seconds: 60, target: "rival", where: "between", digTarget: "between", say: null });
   });
 
   it("toma seconds en cualquier herramienta que no termina sola, con el mismo tope", () => {
@@ -105,6 +105,6 @@ describe("parseToolArgs", () => {
   });
 
   it("extrae el destino de la perla", () => {
-    expect(parseToolArgs({ reason: "me escapo", target: "away" })).toMatchObject({ reason: "me escapo", seconds: null, target: "away", shape: "wall", where: "between", digTarget: "between", say: null });
+    expect(parseToolArgs({ reason: "me escapo", target: "away" })).toMatchObject({ reason: "me escapo", seconds: null, target: "away", where: "between", digTarget: "between", say: null });
   });
 });
