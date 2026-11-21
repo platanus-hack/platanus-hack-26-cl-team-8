@@ -1693,6 +1693,29 @@ describe("MatchManager: benchmarks", () => {
     }
   });
 
+  it("verificar: manda avisos falsos de afuera y cuenta si come con la comida llena; mide bucles de acciones rechazadas", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const t = setup({ settings: { scenario: "verify" } });
+      await startRunning(t);
+      // No reparte puntos propios: se juega como un duelo suelto.
+      expect(t.manager.getState().series).toBeNull();
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(t.heard.red.some((h) => h.kind === "notice" && h.text.includes("comida"))).toBe(true);
+      t.ev("red").onStatus({ connected: true, alive: true, health: 30, absorption: 0, food: 20, heldItem: "" });
+      t.ev("red").onDecision(decision(500));
+      t.ev("red").onAction("eat", {}, 'no puedes comer: no tienes hambre (comida 20/20); sigues con "wait"');
+      t.ev("red").onAction("eat", {}, 'no puedes comer: no tienes hambre (comida 20/20); sigues con "wait"');
+      t.ev("blue").onDeath();
+      await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+      const red = t.stored()?.roundMetrics?.[0]?.red;
+      expect(red?.verify).toEqual({ received: 1, followed: 2 });
+      expect(red?.loop).toEqual({ failed: 2, longestStreak: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("pelea suelta: cuenta reglas rotas, honestidad, latencias, llamadas inválidas y el costo", async () => {
     const t = setup({
       settings: { rules: { red: ["no_bow", "no_first_strike"], blue: [] } },

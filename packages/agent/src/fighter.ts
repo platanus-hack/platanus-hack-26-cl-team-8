@@ -426,8 +426,13 @@ class MineflayerFighter implements Fighter {
     });
   }
 
-  hear(kind: "thought" | "message", text: string): void {
+  hear(kind: "thought" | "message" | "notice", text: string): void {
     if (this.stopped) return;
+    // Un aviso de afuera (ver "notices") llega con cualquier modo de comunicación.
+    if (kind === "notice") {
+      this.inbox.hear("notice", text);
+      return;
+    }
     // Cada modo solo deja pasar lo suyo (el orquestador ya filtra; esto es la segunda llave).
     if (kind === "thought" && this.opts.comms !== "thoughts") return;
     if (kind === "message" && this.opts.comms !== "chat") return;
@@ -1076,6 +1081,7 @@ class MineflayerFighter implements Fighter {
 
       rivalThoughts: heard.rivalThoughts,
       rivalMessages: heard.rivalMessages,
+      notices: heard.notices,
       // La conversación solo existe en modo "chat".
       conversation: this.opts.comms === "chat" ? heard.conversation : [],
       series: this.series,

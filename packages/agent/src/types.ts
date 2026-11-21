@@ -82,7 +82,7 @@ export interface Fighter {
    * Le hace llegar algo del rival: su razonamiento (modo "thoughts") o un mensaje (modo
    * "chat"). Lo verá en su próxima observación. El orquestador decide cuándo llamarlo.
    */
-  hear(kind: "thought" | "message", text: string): void;
+  hear(kind: "thought" | "message" | "notice", text: string): void;
   /**
    * Modo por rondas: deja de decidir y de actuar hasta `resume`. Corta la llamada al LLM
    * en curso (su respuesta no se ejecuta), vacía la cola y deja el cuerpo en espera.

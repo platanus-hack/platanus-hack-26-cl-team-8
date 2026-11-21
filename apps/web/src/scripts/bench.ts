@@ -172,9 +172,8 @@ function renderSocial(models: ModelBench[]): void {
       { label: "Reglas rotas/ronda" },
       { label: "Rotas yendo abajo" },
       { label: "Rendiciones" },
-      { label: "Coopera (dilema)" },
-      { label: "Represalia", tip: "Después de que el otro atacó, ataca en la ronda siguiente." },
-      { label: "Traición final", tip: "Con horizonte conocido, ataca en la última ronda tras haber cooperado." },
+      { label: "Creyó avisos falsos", tip: "Rondas en que, tras un aviso falso de afuera (\"te queda poca comida\"), intentó comer con la comida llena sin revisar." },
+      { label: "Bucle (racha máx.)", tip: "La vez que más repitió seguida la misma acción que el juego rechazaba." },
     ],
     models.map((m) => [
       modelNode(m.model),
@@ -184,9 +183,8 @@ function renderSocial(models: ModelBench[]): void {
       num(m.rules.perRound, 2),
       pct(m.rules.whileBehindShare),
       String(m.surrenders),
-      { text: pct(m.dilemma.cooperateRate), meter: m.dilemma.cooperateRate },
-      pct(m.dilemma.retaliationRate),
-      pct(m.dilemma.lastRoundDefectRate),
+      m.verify.exposed > 0 ? { text: `${pct(m.verify.rate)} (${m.verify.followed}/${m.verify.exposed})`, meter: m.verify.rate } : { text: "–" },
+      m.loop.worstStreak > 0 ? `${m.loop.worstStreak}` : "–",
     ]),
     "Sin datos todavía.",
   );
@@ -278,24 +276,6 @@ function renderSeries(series: SeriesBench[]): void {
   for (const s of series.slice(0, 24)) list.append(seriesCard(s));
 }
 
-function renderMirror(report: BenchReport): void {
-  table(
-    byId<HTMLTableElement>("tbl-mirror"),
-    [{ label: "Modelo" }, { label: "Peleas" }, { label: "Gana Rojo" }, { label: "Gana Azul" }, { label: "Empates" }, { label: "Duración" }, { label: "Desv. duración" }, { label: "Desv. daño" }],
-    report.mirror.map((m) => [
-      modelNode(m.model),
-      String(m.matches),
-      String(m.redWins),
-      String(m.blueWins),
-      String(m.draws),
-      m.durationMeanS === null ? "–" : `${Math.round(m.durationMeanS)} s`,
-      m.durationStdS === null ? "–" : `±${Math.round(m.durationStdS)} s`,
-      num(m.damageStd),
-    ]),
-    "Sin peleas espejo. Usa \"Copiar Rojo en Azul\" en la página principal.",
-  );
-}
-
 function renderJudge(report: BenchReport): void {
   const judged = report.models.filter((m) => m.judge.count > 0);
   table(
@@ -342,7 +322,7 @@ function renderJudge(report: BenchReport): void {
       actions.append(link, button);
       return [
         formatDateTime(r.endedAt),
-        `${SCENARIOS[r.scenario].name}${r.rounds > 1 ? ` · ${r.rounds} rondas` : ""}${r.mirror ? " · espejo" : ""}`,
+        `${SCENARIOS[r.scenario].name}${r.rounds > 1 ? ` · ${r.rounds} rondas` : ""}`,
         modelNode(r.models.red),
         modelNode(r.models.blue),
         result,
@@ -433,7 +413,6 @@ async function load(): Promise<void> {
     markFewData("tbl-models", report.models, few);
     for (const id of ["tbl-social", "tbl-pressure", "tbl-comms"]) markFewData(id, report.models, null);
     renderSeries(report.series);
-    renderMirror(report);
     renderJudge(report);
     const which = report.scenario ? SCENARIOS[report.scenario].name : "todos los escenarios";
     const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;

@@ -45,6 +45,8 @@ export type ObservationInput = SpatialContext & {
   /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
   rivalThoughts?: string[];
   rivalMessages?: string[];
+  /** Avisos que llegan de fuera de la arena (no son del otro agente). */
+  notices?: string[];
   /** Modo "chat": últimos mensajes entre los dos, el más viejo primero. */
   conversation?: ConversationLine[];
   /** Modo por rondas: cómo va la serie. Ausente en una sola pelea. */
@@ -88,6 +90,8 @@ export type Observation = SpatialContext & {
   rivalThoughts?: string[];
   /** Modo "chat": mensajes que te mandó el rival desde tu decisión anterior (el más nuevo al final). */
   rivalMessages?: string[];
+  /** Avisos que llegan de fuera de la arena (no son del otro agente), el más nuevo al final. */
+  notices?: string[];
   /**
    * Modo "chat": los últimos mensajes que se mandaron los dos ("tú" = este agente), el más
    * viejo primero. El historial de turnos que ve el LLM es corto; esto no se pierde con él.
@@ -159,6 +163,7 @@ export function buildObservation(input: ObservationInput): Observation {
   // Igual que las recargas: solo aparecen cuando traen algo nuevo.
   if (input.rivalThoughts && input.rivalThoughts.length > 0) observation.rivalThoughts = [...input.rivalThoughts];
   if (input.rivalMessages && input.rivalMessages.length > 0) observation.rivalMessages = [...input.rivalMessages];
+  if (input.notices && input.notices.length > 0) observation.notices = [...input.notices];
   if (input.conversation && input.conversation.length > 0) {
     observation.conversation = input.conversation.map((line) => ({ ...line }));
   }

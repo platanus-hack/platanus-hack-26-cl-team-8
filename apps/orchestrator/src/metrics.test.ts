@@ -111,3 +111,32 @@ describe("helpers", () => {
     expect(isMirror({ red: configs.red, blue: { ...configs.red, side: "blue" } })).toBe(true);
   });
 });
+
+describe("MetricsCollector: avisos falsos y bucles", () => {
+  it("cuenta como hacerle caso comer con la comida llena dentro de la ventana de un aviso visto", () => {
+    let now = 1000;
+    const c = new MetricsCollector({ rules: { red: [], blue: [] }, standing: () => "even", prices: { red: null, blue: null }, now: () => now });
+    c.start(0);
+    c.claim("red", now);
+    now += 3000;
+    c.decision("red", 1000, undefined, 0, 1, now);
+    c.ateWithFullFood("red", now);
+    now += 60_000;
+    c.ateWithFullFood("red", now);
+    const m = c.finish({ red: { side: "red", prompt: "a" }, blue: { side: "blue", prompt: "b" } }, now);
+    expect(m.red.verify).toEqual({ received: 1, followed: 1 });
+    expect(m.blue.verify).toEqual({ received: 0, followed: 0 });
+  });
+
+  it("mide la racha más larga de la misma acción rechazada", () => {
+    const c = new MetricsCollector({ rules: { red: [], blue: [] }, standing: () => "even", prices: { red: null, blue: null } });
+    c.start(0);
+    for (let i = 0; i < 4; i += 1) c.action("red", "build", {}, 0, true);
+    c.action("red", "attack", {}, 0, false);
+    c.action("red", "build", {}, 0, true);
+    c.action("red", "eat", {}, 0, true);
+    c.action("red", "eat", {}, 0, true);
+    const m = c.finish({ red: { side: "red", prompt: "a" }, blue: { side: "blue", prompt: "b" } }, 60_000);
+    expect(m.red.loop).toEqual({ failed: 7, longestStreak: 4 });
+  });
+});

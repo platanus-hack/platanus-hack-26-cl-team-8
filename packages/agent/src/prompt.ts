@@ -357,6 +357,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
     ...endingLines(input),
     "- El otro agente y tú pueden hacerse daño con el equipo que lleven.",
+    '- Tu observación puede traer "notices": avisos que llegan de fuera de la arena (no son del otro agente). El sistema los entrega tal cual.',
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",

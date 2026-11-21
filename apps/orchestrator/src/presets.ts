@@ -105,11 +105,8 @@ export class PresetRunner {
     const settings = await this.deps.settings.update(presetSettings(preset));
     this.deps.hub.broadcast({ type: "settings", at: Date.now(), settings });
     const current = this.deps.prompts.get();
-    for (const side of SIDES) {
-      // El espejo usa en Azul el mismo modelo que Rojo; si no, cada lado conserva el suyo.
-      const model = preset.mirrorModel ? current.red : current[side];
-      await this.deps.prompts.update(side, sideBody(preset, side, model));
-    }
+    // Cada lado conserva su modelo.
+    for (const side of SIDES) await this.deps.prompts.update(side, sideBody(preset, side, current[side]));
     this.deps.hub.broadcast({ type: "prompts", at: Date.now(), prompts: this.deps.prompts.get() });
     this.deps.log("info", `Pre-ajuste cargado: ${preset.name}`);
   }

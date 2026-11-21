@@ -37,6 +37,8 @@ export type InboxSnapshot = {
   rivalThoughts: string[];
   rivalMessages: string[];
   conversation: ConversationLine[];
+  /** Avisos que llegan de fuera de la arena (no son del otro agente). */
+  notices: string[];
   /** Hasta qué línea de la bandeja vio el LLM. */
   upTo: number;
 };
@@ -52,14 +54,15 @@ export class CommsInbox {
   private seq = 0;
   private thoughts: Pending[] = [];
   private messages: Pending[] = [];
+  private notices: Pending[] = [];
   private conversation: ConversationLine[] = [];
 
   /** Llega algo del rival. Devuelve false si después de limpiarlo no queda nada. */
-  hear(kind: "thought" | "message", raw: unknown): boolean {
+  hear(kind: "thought" | "message" | "notice", raw: unknown): boolean {
     const text = cleanMessage(raw);
     if (text === null) return false;
     this.seq += 1;
-    const box = kind === "thought" ? this.thoughts : this.messages;
+    const box = kind === "thought" ? this.thoughts : kind === "message" ? this.messages : this.notices;
     box.push({ seq: this.seq, text });
     // Si el agente se demora en decidir, se queda con lo más nuevo.
     if (box.length > INBOX_MAX) box.splice(0, box.length - INBOX_MAX);
@@ -78,6 +81,7 @@ export class CommsInbox {
       rivalThoughts: this.thoughts.map((line) => line.text),
       rivalMessages: this.messages.map((line) => line.text),
       conversation: this.conversation.map((line) => ({ ...line })),
+      notices: this.notices.map((line) => line.text),
       upTo: this.seq,
     };
   }
@@ -86,6 +90,7 @@ export class CommsInbox {
   confirm(upTo: number): void {
     this.thoughts = this.thoughts.filter((line) => line.seq > upTo);
     this.messages = this.messages.filter((line) => line.seq > upTo);
+    this.notices = this.notices.filter((line) => line.seq > upTo);
   }
 
   private remember(line: ConversationLine): void {

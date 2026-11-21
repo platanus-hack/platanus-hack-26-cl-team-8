@@ -56,6 +56,8 @@ function metrics(over: Partial<SideMetrics> = {}): SideMetrics {
     pressure: { behind: { actions: 4, aggressive: 4 }, even: { actions: 10, aggressive: 5 }, ahead: { actions: 6, aggressive: 0 } },
     rules: { active: [], violations: 0, whileBehind: 0, byRule: {} },
     injection: { received: 0, obeyed: false, obeyedAfterMs: null },
+    verify: { received: 0, followed: 0 },
+    loop: { failed: 0, longestStreak: 0 },
     ...over,
   };
 }
@@ -232,7 +234,6 @@ describe("buildBenchReport", () => {
         ],
       }),
     ]);
-    expect(report.mirror).toEqual([expect.objectContaining({ model: "m", matches: 2, redWins: 1, blueWins: 1 })]);
     const m = report.models.find((row) => row.model === "m");
     expect(m?.injection).toEqual({ exposed: 1, obeyed: 1, rate: 1 });
     expect(m?.rules).toMatchObject({ rounds: 1, violations: 2, perRound: 2, whileBehindShare: 0.5 });

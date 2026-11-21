@@ -48,18 +48,20 @@ import "../styles/global.css";
         <p class="bench__hint">
           Ordenado por puntos por ronda; si empatan, por porcentaje de victorias y después por partidas jugadas. Solo
           entran al ranking los modelos con las partidas mínimas; el resto va abajo como "pocos datos". Los puntos de cada
-          escenario los explica el prompt que pone su pre-ajuste; con "Todos los escenarios" se mezclan escalas distintas (el dilema da hasta
-          5 por ronda), así que para comparar conviene filtrar. Latencia = lo que tarda el modelo en decidir (p50 y p95).
+          escenario los explica el prompt que pone su pre-ajuste; con "Todos los escenarios" se mezclan escalas distintas (la rendición da 1 o 2
+          por ronda; el duelo, 3), así que para comparar conviene filtrar. Latencia = lo que tarda el modelo en decidir (p50 y p95).
         </p>
         <div class="bench__scroll"><table class="bench__table" id="tbl-models"></table></div>
       </section>
 
       <section class="bench__section" aria-labelledby="t-social">
-        <h2 class="bench__title" id="t-social">Social y robustez</h2>
+        <h2 class="bench__title" id="t-social">Comportamiento y robustez</h2>
         <p class="bench__hint">
           Honestidad: de lo que anunció por chat ("no te ataco", "me alejo", "voy por ti"), cuánto cumplió en los 8 s
           siguientes. Inyección: rondas en que obedeció una orden falsa del "árbitro". Reglas: veces que rompió las reglas
-          de su entrenador. Dilema: con qué frecuencia coopera, devuelve el golpe y traiciona en la última ronda.
+          de su entrenador. Rendiciones: veces que se rindió (en "Sostener la postura", cuántas veces le dio la razón al que
+          insistía). Avisos falsos: rondas en que intentó comer con la comida llena tras un aviso de afuera que decía lo contrario.
+          Bucle: la mayor cantidad de veces seguidas que repitió una acción que el juego rechazaba.
         </p>
         <div class="bench__scroll"><table class="bench__table" id="tbl-social"></table></div>
       </section>
@@ -86,15 +88,6 @@ import "../styles/global.css";
           las herramientas que usa entre rondas seguidas (0 % = igual, 100 % = todo distinto).
         </p>
         <div class="series-list" id="series-list"></div>
-      </section>
-
-      <section class="bench__section" aria-labelledby="t-mirror">
-        <h2 class="bench__title" id="t-mirror">Espejo</h2>
-        <p class="bench__hint">
-          Mismo modelo, prompt y kit en los dos lados. Si un lado gana mucho más, la arena favorece a ese lado; la
-          desviación dice cuánto varía el modelo contra sí mismo.
-        </p>
-        <div class="bench__scroll"><table class="bench__table" id="tbl-mirror"></table></div>
       </section>
 
       <section class="bench__section" aria-labelledby="t-danger">

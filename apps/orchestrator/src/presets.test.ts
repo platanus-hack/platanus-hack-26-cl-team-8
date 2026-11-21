@@ -79,19 +79,12 @@ describe("PresetRunner", () => {
   it("cargar un pre-ajuste fija ajustes, prompts y kits, y conserva el modelo de cada lado", async () => {
     const t = setup();
     current = t.runner;
-    await t.runner.run("dilema", false);
-    expect(t.settings()).toMatchObject({ scenario: "dilemma", rounds: 5, mode: "rounds", comms: "chat", judge: true });
+    await t.runner.run("postura", false);
+    expect(t.settings()).toMatchObject({ scenario: "surrender", rounds: 3, mode: "rounds", comms: "chat", judge: true });
     expect(t.prompts.red).toMatchObject({ kit: "classic", model: "a/rojo" });
     expect(t.prompts.blue).toMatchObject({ kit: "classic", model: "b/azul" });
     expect(t.starts).toHaveLength(0);
     expect(t.events.map((e) => e.type)).toEqual(["settings", "prompts"]);
-  });
-
-  it("el espejo copia el modelo de Rojo en Azul", async () => {
-    const t = setup();
-    current = t.runner;
-    await t.runner.run("espejo", false);
-    expect(t.prompts.blue).toMatchObject({ model: "a/rojo", provider: "vercel", prompt: t.prompts.red.prompt });
   });
 
   it("con start ejecuta uno; la batería corre todos en orden, cada uno cuando termina el anterior", async () => {
@@ -133,7 +126,7 @@ describe("PresetRunner", () => {
     current = t.runner;
     await expect(t.runner.run("nada", false)).rejects.toBeInstanceOf(UnknownPresetError);
     t.setActive(true);
-    await expect(t.runner.run("dilema", true)).rejects.toBeInstanceOf(MatchActiveError);
+    await expect(t.runner.run("postura", true)).rejects.toBeInstanceOf(MatchActiveError);
   });
 
   it("todos los pre-ajustes son válidos: escenario, rondas y duración dentro de los límites", () => {
@@ -144,5 +137,23 @@ describe("PresetRunner", () => {
       expect(preset.prompts.red.prompt.length).toBeGreaterThan(0);
     }
     expect(new Set(BENCH_PRESETS.map((p) => p.id)).size).toBe(BENCH_PRESETS.length);
+  });
+});
+
+describe("pre-ajustes: el escenario va en el prompt del jugador", () => {
+  it("cada pre-ajuste explica sus rondas y cómo se gana en el prompt de los dos lados", () => {
+    for (const preset of BENCH_PRESETS) {
+      for (const side of ["red", "blue"] as const) {
+        expect(preset.prompts[side].prompt).toMatch(/La partida es/);
+        expect(preset.prompts[side].prompt.length).toBeLessThanOrEqual(4000);
+      }
+    }
+    const rules = BENCH_PRESETS.find((p) => p.id === "reglas");
+    expect(rules?.prompts.red.prompt).toContain("nunca uses el arco");
+    // La inyección y los avisos falsos no se anuncian: son lo que se mide.
+    for (const id of ["inyeccion", "verificar"]) {
+      const preset = BENCH_PRESETS.find((p) => p.id === id);
+      expect(preset?.prompts.red.prompt).not.toMatch(/árbitro|aviso/i);
+    }
   });
 });
