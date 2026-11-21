@@ -1,11 +1,18 @@
 import { MODEL_PRICE_CAP, type AllowedModel, type ModelsResponse } from "@phack/protocol";
+import { DEFAULT_PRIORITY_LINES, DEFAULT_REFERENCE_ID, resolveCatalog } from "./tournament/catalog";
+import type { CatalogModel } from "./tournament/types";
 import { errorMessage, type LogFn } from "./util";
 
 /**
- * Modelos permitidos: los del catálogo público de Vercel AI Gateway que saben llamar
- * herramientas y no pasan de MODEL_PRICE_CAP. El orquestador baja el catálogo, lo filtra,
- * lo sirve en GET /api/models y lo hace cumplir al guardar un prompt y al iniciar una pelea.
+ * Modelos permitidos: la misma lista que juega el torneo. Del catálogo público de Vercel
+ * AI Gateway quedan los que saben llamar herramientas y no pasan de MODEL_PRICE_CAP
+ * (parseCatalog); de esos, la referencia del torneo y una versión por línea prioritaria
+ * (rosterOf, con resolveCatalog). El orquestador baja el catálogo, lo filtra, lo sirve en
+ * GET /api/models y lo hace cumplir al guardar un prompt y al iniciar una pelea.
  */
+
+/** Candidatos del torneo sin contar la referencia (igual que --max-candidates por defecto). */
+export const ROSTER_MAX_CANDIDATES = 8;
 
 /** Catálogo público del gateway: no pide clave. */
 export const CATALOG_URL = "https://ai-gateway.vercel.sh/v1/models";
@@ -78,25 +85,76 @@ export function parseCatalog(data: unknown, alwaysAllowed: readonly string[] = [
   return models;
 }
 
+/**
+ * La lista que juega el torneo: de los modelos que pasan parseCatalog, la referencia
+ * (DeepSeek) y una versión por línea prioritaria, en ese orden. Los ids de `alwaysAllowed`
+ * que pasen parseCatalog se agregan al final. Si el catálogo no trae la referencia devuelve
+ * una lista vacía (la descarga cuenta como fallida y se conserva la lista anterior).
+ * Nunca lanza.
+ */
+export function rosterOf(data: unknown, alwaysAllowed: readonly string[] = []): AllowedModel[] {
+  const allowed = new Map(parseCatalog(data, alwaysAllowed).map((model) => [model.id, model] as const));
+  return rosterIds(eligibleModels(data, allowed), alwaysAllowed)
+    .filter((id) => allowed.has(id))
+    .map((id) => allowed.get(id)!);
+}
+
+/**
+ * Las entradas crudas del catálogo cuyo id pasó parseCatalog (o el set dado), sin repetir.
+ * El CLI del torneo resuelve sobre esto para que su lista sea la misma que la de la web.
+ */
+export function eligibleModels(data: unknown, allowed?: ReadonlyMap<string, unknown> | ReadonlySet<string>): CatalogModel[] {
+  const ids = allowed ?? new Set(parseCatalog(data, [DEFAULT_REFERENCE_ID]).map((model) => model.id));
+  const list = typeof data === "object" && data !== null ? (data as { data?: unknown }).data : undefined;
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const out: CatalogModel[] = [];
+  for (const item of list) {
+    if (typeof item !== "object" || item === null) continue;
+    const id = (item as { id?: unknown }).id;
+    if (typeof id !== "string" || !ids.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(item as CatalogModel);
+  }
+  return out;
+}
+
+function rosterIds(models: CatalogModel[], alwaysAllowed: readonly string[]): string[] {
+  let ids: string[];
+  try {
+    const res = resolveCatalog(models, {
+      priorityLines: DEFAULT_PRIORITY_LINES,
+      referenceId: DEFAULT_REFERENCE_ID,
+      maxCandidates: ROSTER_MAX_CANDIDATES,
+    });
+    ids = [res.reference.id, ...res.candidates.flatMap((line) => (line.chosen ? [line.chosen.id] : []))];
+  } catch {
+    // Sin la referencia en el catálogo no hay torneo posible.
+    return [];
+  }
+  for (const id of alwaysAllowed) if (!ids.includes(id)) ids.push(id);
+  return ids;
+}
+
 function fallbackModel(id: string, name: string, inputPerMillion: number, outputPerMillion: number): AllowedModel {
   return { id, name, inputPrice: inputPerMillion / 1_000_000, outputPrice: outputPerMillion / 1_000_000 };
 }
 
 /**
- * Lista fija para cuando no se puede bajar el catálogo. Ids y precios (dólares por millón
- * de tokens de entrada y de salida) verificados en el catálogo el 2026-11-21.
+ * Lista fija para cuando no se puede bajar el catálogo: la misma que da rosterOf con el
+ * catálogo del 2026-11-21 (tournament/catalog.fixture.json), en el mismo orden. Precios en
+ * dólares por millón de tokens de entrada y de salida.
  */
 export const FALLBACK_MODELS: readonly AllowedModel[] = [
   fallbackModel("deepseek/deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast", 0.6, 2.4),
-  fallbackModel("anthropic/claude-haiku-5.5", "Claude Haiku 5.5", 0.1, 0.5),
-  fallbackModel("openai/gpt-6-luna", "GPT-6 Luna", 0.1, 0.5),
+  fallbackModel("openai/gpt-6-luna-fast", "GPT-6 Luna (Fast)", 0.2, 1),
   fallbackModel("google/gemini-3.8-flash", "Gemini 3.8 Flash", 0.75, 3.75),
-  fallbackModel("meta/muse-ember", "Muse Ember", 0.1, 0.5),
-  fallbackModel("mistral/mistral-large-4", "Mistral Large 4", 0.7, 2.1),
+  fallbackModel("anthropic/claude-haiku-5.5", "Claude Haiku 5.5", 0.1, 0.5),
+  fallbackModel("alibaba/qwen3.8-flash", "Qwen 3.8 Flash", 0.15, 0.47),
   fallbackModel("zai/glm-5.3-flash", "GLM 5.3 Flash", 0.15, 0.5),
+  fallbackModel("xiaomi/mimo-v2.6-flash", "MiMo V2.6 Flash", 0.14, 0.28),
   fallbackModel("minimax/minimax-m3.1-flash", "MiniMax-M3.1-Flash", 0.15, 0.6),
-  fallbackModel("moonshotai/kimi-k2.6", "Kimi K2.6", 0.95, 4),
-  fallbackModel("amazon/nova-2-lite", "Nova 2 Lite", 0.33, 2.75),
+  fallbackModel("meta/muse-ember", "Muse Ember", 0.1, 0.5),
 ];
 
 // ---------- Descarga y caché ----------
@@ -171,8 +229,10 @@ export class ModelCatalog {
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const models = parseCatalog(await res.json(), [this.opts.defaultModel]);
-      if (models.length === 0) throw new Error("el catálogo no trae ningún modelo permitido");
+      const models = rosterOf(await res.json(), [this.opts.defaultModel]);
+      if (models.length === 0) {
+        throw new Error(`el catálogo no trae ningún modelo permitido (o falta la referencia ${DEFAULT_REFERENCE_ID})`);
+      }
       this.models = models;
       this.ids = new Set(models.map((model) => model.id));
       this.source = "catalog";
