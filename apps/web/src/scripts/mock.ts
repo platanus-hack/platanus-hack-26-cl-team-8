@@ -100,6 +100,7 @@ const prompts: PromptsResponse = {
 const settings: MatchSettings = {
   comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
   timer: params.get("timer") !== "off",
+  timerSeconds: null,
   mode: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? "rounds" : "single",
 };
 
@@ -110,6 +111,7 @@ const defaults: ServerDefaults = {
     mock: "mock-scripted",
     vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
   },
+  matchDurationSeconds: MATCH_DURATION_MS / 1000,
 };
 
 /** El precio viaja en dólares por token; aquí se escribe por millón, que es como se lee. */
@@ -262,6 +264,11 @@ function mockSeries(playing: boolean): Series {
   };
 }
 
+/** Lo que dura la pelea de la maqueta: lo elegido en los ajustes o los 3 minutos de siempre. */
+function matchDurationMs(): number {
+  return (settings.timerSeconds ?? MATCH_DURATION_MS / 1000) * 1000;
+}
+
 function buildState(phase: MatchPhase): MatchState {
   const now = Date.now();
   const configs = { red: { ...prompts.red }, blue: { ...prompts.blue } };
@@ -305,7 +312,7 @@ function buildState(phase: MatchPhase): MatchState {
       id: "mock-match",
       phase,
       startedAt: runningSince,
-      endsAt: settings.timer ? runningSince + MATCH_DURATION_MS : null,
+      endsAt: settings.timer ? runningSince + matchDurationMs() : null,
       countdownEndsAt: null,
       agents: structuredClone(running),
       configs,
@@ -577,7 +584,7 @@ function hit(attacker: Side, amount: number): void {
 
 function loopTick(): void {
   // Antes de que el reloj llegue a cero, la pelea "empieza" de nuevo.
-  if (runningSince + MATCH_DURATION_MS - Date.now() < 6000) runningSince = Date.now();
+  if (runningSince + matchDurationMs() - Date.now() < 6000) runningSince = Date.now();
 
   // Cada paso es una decisión: un pensamiento y su acción. Usa lo que el kit de ese lado
   // permite: la perla y el muro solo salen si el kit los trae, y quien no tiene arco
@@ -677,7 +684,7 @@ function pastMatch(
   result: MatchResult,
   configs: PromptsResponse,
   final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
-  matchSettings: MatchSettings = { comms: "none", timer: true, mode: "single" },
+  matchSettings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single" },
   series: Series | null = null,
 ): MatchRecord {
   const endedAt = Date.now() - minutesAgo * MINUTE;
@@ -723,7 +730,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
       blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
     },
-    { comms: "none", timer: true, mode: "rounds" },
+    { comms: "none", timer: true, timerSeconds: null, mode: "rounds" },
     FINISHED_SERIES,
   ),
   pastMatch(
@@ -736,7 +743,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
       blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
     },
-    { comms: "chat", timer: false, mode: "single" },
+    { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
   ),
   pastMatch(
     "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
@@ -804,6 +811,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer? }");
     if (body.data.comms !== undefined) settings.comms = body.data.comms;
     if (body.data.timer !== undefined) settings.timer = body.data.timer;
+    if (body.data.timerSeconds !== undefined) settings.timerSeconds = body.data.timerSeconds;
     if (body.data.mode !== undefined) settings.mode = body.data.mode;
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;

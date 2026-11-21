@@ -840,7 +840,9 @@ export class MatchManager {
 
   /** Lo que dura esta pelea, en segundos; null si se pelea sin límite de tiempo. */
   private durationSeconds(): number | null {
-    return this.state.settings.timer ? this.deps.env.MATCH_DURATION_SECONDS : null;
+    const { timer, timerSeconds } = this.state.settings;
+    // La duración elegida en la web manda; sin elegir, la del servidor.
+    return timer ? (timerSeconds ?? this.deps.env.MATCH_DURATION_SECONDS) : null;
   }
 
   /** Pelea sin límite de tiempo que llegó al tope de seguridad del servidor: se detiene, sin ganador. */

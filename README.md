@@ -302,7 +302,7 @@ En el marcador hay un cuadro por ronda bajo el reloj, del color de quien la gan�
 
 En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.
 
-- **Encendido** (por defecto): la pelea dura `MATCH_DURATION_SECONDS` y, si nadie cae, gana quien tenga más vida.
+- **Encendido** (por defecto): la pelea dura lo que se elija ahí mismo, en minutos u horas (`timerSeconds` en `PUT /api/settings`, entre 1 minuto y 4 horas); sin elegir, vale `MATCH_DURATION_SECONDS` del servidor. Si nadie cae, gana quien tenga más vida. En el modo por rondas esa duración es la de cada ronda.
 - **Apagado**: la pelea no se acaba sola. Sigue hasta que uno caiga o alguien la detenga; el reloj de la web cuenta hacia arriba y al agente se le dice que no hay límite.
 
 Para que una pelea olvidada no gaste tokens toda la noche, el servidor detiene (sin ganador) las peleas sin límite que pasan de `MATCH_MAX_SECONDS` (30 minutos por defecto; `0` quita el tope).

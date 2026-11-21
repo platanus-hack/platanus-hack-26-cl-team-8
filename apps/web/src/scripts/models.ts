@@ -134,6 +134,11 @@ export function onDefaultsChange(listener: () => void): void {
   listeners.push(listener);
 }
 
+/** Los valores por defecto del servidor; null mientras no llegan. */
+export function getDefaults(): ServerDefaults | null {
+  return defaults;
+}
+
 export function setDefaults(next: ServerDefaults): void {
   defaults = next;
   for (const listener of listeners) listener();

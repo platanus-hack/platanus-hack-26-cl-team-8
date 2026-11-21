@@ -248,6 +248,22 @@ const stats = [
                 <span class="switch__state" id="timer-state">Encendido</span>
               </span>
             </label>
+            <!-- Cuánto dura, cuando el límite está encendido: una cantidad y su unidad. -->
+            <div class="duration" id="timer-duration">
+              <input
+                type="number"
+                id="timer-amount"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                aria-label="Duración de la pelea"
+                aria-describedby="timer-description"
+              />
+              <select id="timer-unit" aria-label="Unidad de la duración">
+                <option value="60">minutos</option>
+                <option value="3600">horas</option>
+              </select>
+            </div>
             <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
           </div>
         </div>

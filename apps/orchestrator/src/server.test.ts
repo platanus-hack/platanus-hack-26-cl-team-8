@@ -90,14 +90,14 @@ type ServerOptions = {
 };
 
 /** Ajustes guardados por PUT /api/settings; cada servidor de prueba parte de los de por defecto. */
-let settings: MatchSettings = { comms: "none", timer: true, mode: "single" };
+let settings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single" };
 
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
-  settings = { comms: "none", timer: true, mode: "single" };
+  settings = { comms: "none", timer: true, timerSeconds: null, mode: "single" };
   app = await buildServer({
     hub: new Hub(),
     match: {
@@ -135,20 +135,37 @@ describe("PUT /api/settings", () => {
 
   it("cambia solo lo que viene: apagar el límite de tiempo no toca la comunicación", async () => {
     const s = await server();
-    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true, mode: "single" });
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false, mode: "single" });
-    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single" });
+    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single" });
+    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
   });
 
   it("acepta el modo de la partida y cambia solo eso", async () => {
     const s = await server();
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
-    expect((await put(s, { mode: "rounds" })).json()).toEqual({ comms: "none", timer: false, mode: "rounds" });
-    expect((await put(s, { mode: "single" })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
+    expect((await put(s, { timer: false })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
+    expect((await put(s, { mode: "rounds" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "rounds" });
+    expect((await put(s, { mode: "single" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
     const bad = await put(s, { mode: "torneo" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toContain("mode = single o rounds");
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
+  });
+
+  it("guarda la duración elegida y la suelta con null", async () => {
+    const s = await server();
+    expect((await put(s, { timerSeconds: 5400 })).json()).toMatchObject({ timer: true, timerSeconds: 5400 });
+    // Apagar el límite no borra la duración: queda para cuando se vuelva a encender.
+    expect((await put(s, { timer: false })).json()).toMatchObject({ timer: false, timerSeconds: 5400 });
+    expect((await put(s, { timerSeconds: null })).json()).toMatchObject({ timerSeconds: null });
+  });
+
+  it("rechaza una duración fuera de rango o que no es un entero", async () => {
+    const s = await server();
+    for (const timerSeconds of [59, 4 * 60 * 60 + 1, 90.5, "120", -1]) {
+      const res = await put(s, { timerSeconds });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain("timerSeconds entre 60 y 14400");
+    }
   });
 
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
@@ -157,7 +174,7 @@ describe("PUT /api/settings", () => {
       const res = await put(s, payload);
       expect(res.statusCode).toBe(400);
     }
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
   });
 });
 
@@ -257,7 +274,7 @@ function matchRecord(id: string): MatchRecord {
     durationMs: 4000,
     configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
     final: { red: agentStatus("red"), blue: agentStatus("blue") },
-    settings: { comms: "none", timer: true, mode: "single" },
+    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single" },
     series: null,
     result: { winner: "blue", reason: "kill" },
   };
@@ -272,7 +289,7 @@ function liveState(id: string): MatchState {
     countdownEndsAt: null,
     agents: { red: agentStatus("red"), blue: agentStatus("blue") },
     configs: { red: { side: "red", prompt: "en vivo rojo" }, blue: { side: "blue", prompt: "en vivo azul" } },
-    settings: { comms: "chat", timer: false, mode: "single" },
+    settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
     series: null,
     result: null,
   };
@@ -299,7 +316,7 @@ describe("rutas de prompts marcados", () => {
       note: "aguantó",
       config: { side: "blue", prompt: "en vivo azul" },
       rival: { side: "red", prompt: "en vivo rojo" },
-      settings: { comms: "chat", timer: false, mode: "single" },
+      settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
       outcome: null,
     });
     const list = await s.inject({ method: "GET", url: API_ROUTES.flags });

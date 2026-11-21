@@ -690,6 +690,11 @@ export const MODE_LABELS: Record<MatchMode, { name: string; description: string 
   },
 };
 
+/** Duración mínima y máxima que se puede elegir para una pelea (o una ronda), en segundos. */
+export const MIN_TIMER_SECONDS = 60;
+export const MAX_TIMER_SECONDS = 4 * 60 * 60;
+const TimerSecondsSchema = z.number().int().min(MIN_TIMER_SECONDS).max(MAX_TIMER_SECONDS);
+
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
   comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
@@ -699,11 +704,18 @@ export const MatchSettingsSchema = z.object({
    * alguien la detenga (el servidor tiene un tope de seguridad aparte, MATCH_MAX_SECONDS).
    */
   timer: z.boolean().catch(true).default(true),
+  /**
+   * Cuánto dura la pelea (o cada ronda) cuando el límite está encendido, en segundos.
+   * null = lo que tenga el servidor por defecto (MATCH_DURATION_SECONDS; la web lo lee de
+   * ServerDefaults.matchDurationSeconds). Con el límite apagado no se usa, pero se
+   * conserva para cuando se vuelva a encender.
+   */
+  timerSeconds: TimerSecondsSchema.nullable().catch(null).default(null),
   /** Una pelea o una serie por rondas (ver MATCH_MODES). */
   mode: MatchModeSchema.catch(DEFAULT_MODE).default(DEFAULT_MODE),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
-export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true, mode: DEFAULT_MODE };
+export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true, timerSeconds: null, mode: DEFAULT_MODE };
 
 export const TIMER_LABELS = {
   on: "Si se acaba el tiempo y nadie ha caído, gana quien tenga más vida.",
@@ -712,8 +724,13 @@ export const TIMER_LABELS = {
 
 /** Se manda solo lo que cambia; al menos uno. */
 export const UpdateSettingsBodySchema = z
-  .object({ comms: CommsModeSchema.optional(), timer: z.boolean().optional(), mode: MatchModeSchema.optional() })
-  .refine((body) => body.comms !== undefined || body.timer !== undefined || body.mode !== undefined);
+  .object({
+    comms: CommsModeSchema.optional(),
+    timer: z.boolean().optional(),
+    timerSeconds: TimerSecondsSchema.nullable().optional(),
+    mode: MatchModeSchema.optional(),
+  })
+  .refine((body) => Object.values(body).some((value) => value !== undefined));
 export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
 
 // ---------- Estado de la pelea ----------
@@ -1086,7 +1103,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, mode? } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode? } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
@@ -1130,6 +1147,8 @@ export const ServerDefaultsSchema = z.object({
     mock: z.string(),
     vercel: z.string(),
   }),
+  /** Duración por defecto de una pelea con límite de tiempo, en segundos (MATCH_DURATION_SECONDS). */
+  matchDurationSeconds: z.number().default(180),
 });
 export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 

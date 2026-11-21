@@ -1628,6 +1628,47 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   font-size: 15px;
 }
 
+/* Duración de la pelea: cantidad y unidad, en una línea, con el mismo aspecto que los desplegables. */
+.duration {
+  display: flex;
+  gap: 8px;
+}
+
+.duration[hidden] {
+  display: none;
+}
+
+.duration input,
+.duration select {
+  height: 38px;
+  border: 1px solid transparent;
+  background-color: var(--surface);
+  font-size: 14px;
+}
+
+.duration input {
+  width: 84px;
+  padding: 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.duration select {
+  padding: 0 34px 0 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238d9098' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  appearance: none;
+  cursor: pointer;
+}
+
+.duration input:hover,
+.duration select:hover,
+.duration input:focus,
+.duration select:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
 .comms__description {
   font-size: 13px;
   line-height: 1.45;

@@ -53,6 +53,7 @@ async function main(): Promise<void> {
   const defaults: ServerDefaults = {
     provider: env.LLM_PROVIDER,
     models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
+    matchDurationSeconds: env.MATCH_DURATION_SECONDS,
   };
 
   // Modelos permitidos: el catálogo se baja en segundo plano; mientras tanto vale la lista fija.
