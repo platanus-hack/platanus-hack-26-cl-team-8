@@ -182,7 +182,7 @@ function breakLine(arena: ArenaScenario): string {
   if (arena.kind === "islands") {
     return "- Puedes romper bloques (dig), también el terreno de las islas. No se rompen ni se colocan la roca madre (bedrock), las barreras y otros bloques administrativos (bloques de comandos, de estructuras, portales, generadores). Lo que rompes cae y lo recoges al pasar encima.";
   }
-  return "- Puedes romper bloques que alguien colocó (dig). El piso y la pared y el techo invisibles de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.";
+  return "- Puedes romper bloques que alguien colocó (dig). El piso y los muros de vidrio de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.";
 }
 
 function capabilitiesSection(kit: Kit, arena: ArenaScenario): string[] {
@@ -270,10 +270,10 @@ function arenaLine(arena: ArenaScenario): string {
     ].join("\n");
   }
   if (arena.kind === "built") {
-    // El piso incluye la fila del borde, donde va la pared: lo caminable es un bloque menos por lado.
+    // El piso incluye la fila de los muros: lo caminable es un bloque menos por lado.
     const width = arena.floor.halfX * 2 - 1;
     const depth = arena.floor.halfZ * 2 - 1;
-    return `- Una plataforma de unos ${width} x ${depth} bloques, de piso plano y sin nada encima. No tiene muros a la vista: la cierran una pared invisible en el borde y un techo invisible a ${arena.wallHeight} bloques del piso, que no se atraviesan; afuera solo hay vacío.`;
+    return `- Un recinto de unos ${width} x ${depth} bloques, de piso plano, rodeado por muros de vidrio de ${arena.wallHeight} bloques de alto y abierto arriba; fuera de los muros solo hay vacío.`;
   }
   const diameter = arena.radius * 2 + 1;
   return `- Una plataforma circular de unos ${diameter} bloques de diámetro, sin muros, con obstáculos y telarañas sobre el piso; el borde da al vacío y caer ahí mata.`;

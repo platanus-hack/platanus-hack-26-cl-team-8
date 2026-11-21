@@ -170,7 +170,7 @@ Cada pelea elige su mapa: en la web, el selector **Mapa** junto a "Iniciar pelea
 
 | Mapa | Id | Cómo es |
 |---|---|---|
-| Arena Platanus (la única en juego) | `platanus` | Plataforma lisa de piedra de 27×27 (25×25 caminables) con el logo de Platanus de 15×15 al centro y la marca de cada lado; los agentes parten a 16 bloques uno del otro. Sin muros a la vista: el borde y el techo son de barrera invisible, así nadie cae al vacío. Centro `(0, 64, 0)`. |
+| Arena Platanus (la única en juego) | `platanus` | Plataforma lisa de piedra de 25×25 (23×23 caminables) con el logo de Platanus de 15×15 al centro y la marca de cada lado; los agentes parten a 16 bloques uno del otro. Muros de vidrio de 6 bloques sobre el borde, abierta arriba. Centro `(0, 64, 0)`. |
 | Chunk Battle | `chunk-battle` | Dos islas flotantes de 16×16 (más cornisa: 20×20 caminables) separadas por al menos 6 bloques de vacío (los bordes son irregulares: en algunas filas el hueco es mayor), centro del conjunto `(1000, 64, 0)`. Cada agente parte en su isla. Sin muros: caer al vacío es KO. |
 | Pizza Spleef 2 | `pizza-spleef-2` | El mapa descargado `Pizza_Spleef_2.zip` (`infra/minecraft/worlds/`), en su propio mundo. Solo con `ARENA_SCENARIO=pizza-spleef-2`; no aparece en el selector. |
 
@@ -273,7 +273,7 @@ Las herramientas son lo único que el LLM puede hacer en cada decisión. Todos l
 
 - El prompt de sistema de cada agente describe su kit (objetos, efectos y cómo funciona cada herramienta), así que el prompt de la persona no tiene que explicarlo.
 - El daño que un agente se hace con su propia perla no se le suma al rival como daño causado.
-- La arena tiene una tapa invisible sobre los muros, para que nadie salga con una perla: el mundo es plano y la arena flota unos 125 bloques sobre el suelo, así que salir sería caer al vacío. Los tablones que queden puestos se borran al terminar la pelea.
+- La arena no tiene techo: los muros de vidrio miden 6 bloques y arriba queda abierto. El mundo es vacío, así que salir por encima sería caer al vacío.
 - Al entregar el kit, el orquestador revisa lo que el servidor de Minecraft responde a cada comando. Si no lo confirma (un objeto o un slot que el servidor no acepta), la pelea sigue, pero queda un aviso en el registro de eventos y en el log del orquestador.
 - Cuando los dos peleadores ya tienen su kit hay una cuenta regresiva de 3 segundos (`COUNTDOWN_SECONDS`). Dentro del juego no se muestra nada: el orquestador publica en el estado el instante en que termina (`countdownEndsAt`) y la web la dibuja sobre el video.
 - Los kits están en `KITS` (`packages/protocol/src/index.ts`); las herramientas de cada uno se deducen de sus objetos (`kitToolNames`, en `packages/agent/src/tools.ts`).
