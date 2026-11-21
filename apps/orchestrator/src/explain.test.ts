@@ -33,6 +33,8 @@ function status(side: Side, extra: Partial<AgentStatus> = {}): AgentStatus {
 function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Partial<AgentStatus> = {}): MatchRecord {
   return {
     id: "m1",
+    arena: "platanus",
+    seed: null,
     startedAt: 0,
     endedAt: 42_400,
     durationMs: 42_400,

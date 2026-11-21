@@ -12,7 +12,7 @@ import {
  * Mapa que está mirando la cámara. El escenario es por pelea (la web o el torneo eligen
  * Platanus o Chunk Battle, que viven en el mismo mundo en lugares distintos), así que la
  * cámara se entera del mapa de la pelea en curso y se reencuadra:
- *  1. por el orquestador (GET /api/state trae `scenario`), que lo sabe desde "preparing";
+ *  1. por el orquestador (GET /api/state trae `arena`), que lo sabe desde "preparing";
  *  2. si el orquestador no tiene pelea (p. ej. la corre el CLI del torneo, que no pasa por
  *     él) o no responde, por dónde están los peleadores, preguntando por RCON.
  * Hasta saber algo, el de ARENA_SCENARIO (el por defecto del servidor).
@@ -67,7 +67,7 @@ export type OrchestratorView = { phase: string; scenario: ArenaScenarioId };
 /** Lee la respuesta de GET /api/state; null si no tiene la forma esperada. */
 export function orchestratorView(body: unknown): OrchestratorView | null {
   const parsed = MatchStateSchema.safeParse(body);
-  return parsed.success ? { phase: parsed.data.phase, scenario: parsed.data.scenario } : null;
+  return parsed.success ? { phase: parsed.data.phase, scenario: parsed.data.arena } : null;
 }
 
 /**

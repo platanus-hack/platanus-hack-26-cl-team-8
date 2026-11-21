@@ -1,20 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadEnv } from "@phack/env";
 import {
+  AGENT_USERNAMES,
   ARENA,
   ARENA_SCENARIOS,
+  ARENA_WORLD,
   ARENAS,
   DEFAULT_ARENA_SCENARIO,
   KITS,
   KIT_LIST,
+  SELECTABLE_ARENA_SCENARIOS,
   arenaFor,
+  isSelectableArenaScenario,
+  kitForArena,
   type BuiltArena,
+  type IslandsArena,
   type TemplateArena,
 } from "@phack/protocol";
 import {
   activeArena,
+  arenaBuildCommands,
   buildArena,
   clearPlacedBlocksCommands,
+  planArena,
+  resetArenaForRound,
+  toSetup,
+  worldRuleCommands,
   fighterKitCommands,
   forceloadCommand,
   prepareFighter,
@@ -104,7 +115,8 @@ describe("escenario activo", () => {
     for (const id of ARENA_SCENARIOS) {
       expect(loadEnv({ ARENA_SCENARIO: id }).ARENA_SCENARIO).toBe(id);
       expect(ARENAS[id].id).toBe(id);
-      expect(ARENAS[id].level).toBe(id);
+      // Los construidos comparten el mundo "arena"; la pizza tiene el suyo (= su id).
+      expect(ARENAS[id].level).toBe(isSelectableArenaScenario(id) ? ARENA_WORLD : id);
     }
     expect(() => loadEnv({ ARENA_SCENARIO: "lava" })).toThrow();
   });
@@ -363,5 +375,169 @@ describe("clearPlacedBlocksCommands", () => {
 
   it("Pizza Spleef 2: no toca el mapa (se restaura con su plantilla antes de la pelea siguiente)", () => {
     expect(clearPlacedBlocksCommands(ARENAS["pizza-spleef-2"])).toEqual([]);
+  });
+});
+
+// ---------- Mapa por pelea (Platanus y Chunk Battle en el mundo "arena") ----------
+
+const CHUNK = ARENAS["chunk-battle"] as IslandsArena;
+
+/** RCON falso que responde como Paper 1.20.4 a los comandos de construcción. */
+function fakeRcon(placeResponse = (command: string) => `Loaded template "${command.split(" ")[2]}" at 0, 0, 0`) {
+  return vi.fn(async (command: string) => {
+    if (command.startsWith("place template ")) return placeResponse(command);
+    if (command.startsWith("tp ")) return "Teleported";
+    if (command.startsWith("item replace ")) return "Replaced a slot";
+    return "";
+  });
+}
+
+describe("mundo arena", () => {
+  it("los seleccionables comparten el mundo arena; la pizza tiene el suyo", () => {
+    expect([...SELECTABLE_ARENA_SCENARIOS]).toEqual(["platanus", "chunk-battle"]);
+    for (const id of ARENA_SCENARIOS) {
+      expect(ARENAS[id].kind === "template").toBe(!isSelectableArenaScenario(id));
+    }
+    expect(isSelectableArenaScenario("pizza-spleef-2")).toBe(false);
+    expect(isSelectableArenaScenario("duel")).toBe(false);
+  });
+
+  it("los escenarios construidos no se pisan en el mundo arena", () => {
+    const platanus = forceloadCommand(ARENAS.platanus).split(" ").slice(2).map(Number);
+    const chunk = forceloadCommand(CHUNK).split(" ").slice(2).map(Number);
+    expect(platanus[2]! + 64).toBeLessThan(chunk[0]!);
+  });
+
+  it("dos islas de 20 de superficie (núcleo 16×16) con un hueco de 6 de vacío", () => {
+    const [red, blue] = CHUNK.islands;
+    expect(red.core.maxX - red.core.minX + 1).toBe(16);
+    expect(blue.from.x - red.to.x - 1).toBe(CHUNK.gap);
+    expect(CHUNK.gap).toBe(6);
+  });
+});
+
+describe("kit en Chunk Battle", () => {
+  it("a un kit sin bloques ni pico se le suman en casillas libres; el resto queda igual", () => {
+    const kit = kitForArena(KITS.classic, CHUNK);
+    expect(kit.items.slice(0, KITS.classic.items.length)).toEqual(KITS.classic.items);
+    const extras = kit.items.slice(KITS.classic.items.length);
+    expect(extras.map((i) => [i.item, i.count])).toEqual([
+      ["cobblestone", 32],
+      ["iron_pickaxe", 1],
+    ]);
+    const used = KITS.classic.items.map((i) => i.slot);
+    for (const extra of extras) expect(used).not.toContain(extra.slot);
+    expect(new Set(kit.items.map((i) => i.slot)).size).toBe(kit.items.length);
+  });
+
+  it("no toca lo que el kit ya trae, ni los kits de los demás mapas", () => {
+    const builder = kitForArena(KITS.builder, CHUNK);
+    expect(builder.items.filter((i) => i.item === "cobblestone")).toHaveLength(0);
+    expect(builder.items.some((i) => i.item === "iron_pickaxe")).toBe(true);
+    expect(kitForArena(KITS.classic, ARENAS.platanus)).toBe(KITS.classic);
+    for (const kit of KIT_LIST) {
+      const commands = fighterKitCommands("AgenteRojo", kitForArena(kit, CHUNK));
+      expect(commands.some((c) => c.includes("_pickaxe"))).toBe(true);
+    }
+  });
+});
+
+describe("plan de una pelea", () => {
+  it("Chunk Battle: la semilla decide islas y spawns; sin semilla se sortea", () => {
+    const setup = planArena("chunk-battle", 99);
+    expect(setup.arena).toBe(CHUNK);
+    expect(setup.seed).toBe(99);
+    expect(setup.spawns.red).toEqual(setup.chunkBattle!.red.spawn);
+    expect(teleportCommand("blue", setup)).toBe(
+      `tp AgenteAzul ${setup.spawns.blue.x + 0.5} ${setup.spawns.blue.y} ${setup.spawns.blue.z + 0.5} 90 0`,
+    );
+    expect(arenaBuildCommands(setup)).toEqual(arenaBuildCommands(planArena(CHUNK, 99)));
+    expect(worldRuleCommands(setup).at(-1)).toBe(`setworldspawn ${setup.spawns.red.x} ${setup.spawns.red.y} ${setup.spawns.red.z}`);
+    const random = planArena("chunk-battle", undefined, () => 0.5);
+    expect(random.seed).toBe(2 ** 30);
+  });
+
+  it("Platanus y la pizza no usan la semilla: la registran y usan sus spawns fijos", () => {
+    const setup = planArena("platanus", 3);
+    expect(setup).toMatchObject({ seed: 3, chunkBattle: null, spawns: ARENAS.platanus.spawns });
+    expect(planArena("pizza-spleef-2").seed).toBeNull();
+    expect(arenaBuildCommands(setup)).toEqual(arenaBuildCommands(ARENAS.platanus));
+    expect(() => planArena("lava")).toThrow("Escenario de arena desconocido");
+  });
+
+  it("construye el escenario explícito y teletransporta a las islas que construyó", async () => {
+    const send = fakeRcon();
+    const setup = planArena("chunk-battle", 5);
+    expect(await buildArena({ send }, async () => {}, setup)).toBe(setup);
+    const sent = send.mock.calls.map(([command]) => command);
+    expect(sent[0]).toBe(forceloadCommand(CHUNK));
+    expect(sent.slice(1)).toEqual(arenaBuildCommands(setup));
+    await prepareFighter({ send }, "red", KITS.classic, () => {}, setup);
+    expect(send.mock.calls.map(([command]) => command)).toContain(teleportCommand("red", setup));
+  });
+
+  it("con un escenario suelto, el teletransporte usa las islas de la última construcción", async () => {
+    const send = fakeRcon();
+    const built = await buildArena({ send }, async () => {}, CHUNK);
+    expect(built.seed).not.toBeNull();
+    expect(toSetup(CHUNK)).toBe(built);
+    expect(teleportCommand("blue", CHUNK)).toBe(teleportCommand("blue", built));
+  });
+
+  it("reintenta cualquier comando de construcción que cae en un chunk aún sin cargar", async () => {
+    const setup = planArena(CHUNK, 3);
+    const commands = arenaBuildCommands(setup);
+    const lateFill = commands.find((c, i) => i > 0 && c.startsWith("fill "))!;
+    const latePlace = commands.find((c) => c.startsWith("place template phack:chunk/"))!;
+    const pending = new Set([lateFill, latePlace]);
+    const base = fakeRcon();
+    const send = vi.fn(async (command: string) => {
+      if (pending.delete(command)) return "That position is not loaded";
+      return base(command);
+    });
+    await buildArena({ send }, async () => {}, setup);
+    const sent = send.mock.calls.map(([command]) => command);
+    expect(sent.filter((c) => c === lateFill)).toHaveLength(2);
+    expect(sent.filter((c) => c === latePlace)).toHaveLength(2);
+  });
+
+  it("falla con un mensaje claro si falta el datapack de las islas", async () => {
+    const send = fakeRcon((command) => `There is no template with id "${command.split(" ")[2]}"`);
+    await expect(buildArena({ send }, async () => {}, planArena(CHUNK, 1))).rejects.toThrow("datapack phack-chunkbattle");
+  });
+
+  it("entre rondas: Platanus borra lo colocado; Chunk Battle rehace las mismas islas con los peleadores a salvo arriba", async () => {
+    const platanus = fakeRcon();
+    await resetArenaForRound({ send: platanus }, async () => {}, planArena("platanus"));
+    expect(platanus.mock.calls.map(([c]) => c)).toEqual(clearPlacedBlocksCommands(ARENAS.platanus));
+
+    const send = fakeRcon();
+    const setup = planArena(CHUNK, 12);
+    await resetArenaForRound({ send }, async () => {}, setup);
+    const sent = send.mock.calls.map(([c]) => c);
+    const rebuild = sent.indexOf(forceloadCommand(CHUNK));
+    expect(rebuild).toBeGreaterThan(0);
+    // Primero arriba con caída lenta, luego la misma construcción, y al final sin caída lenta.
+    for (const username of Object.values(AGENT_USERNAMES)) {
+      expect(sent.indexOf(`effect give ${username} minecraft:slow_falling 30 0 true`)).toBeLessThan(rebuild);
+      expect(sent.at(-2) === `effect clear ${username} minecraft:slow_falling` || sent.at(-1) === `effect clear ${username} minecraft:slow_falling`).toBe(true);
+    }
+    expect(sent.slice(rebuild + 1, sent.length - 4)).toEqual(arenaBuildCommands(setup));
+    expect(clearPlacedBlocksCommands(CHUNK)).toEqual([]);
+  });
+
+  it("entre rondas en Chunk Battle nadie pierde la caída lenta en el aire: primero vuelve a su spawn", async () => {
+    // Si la caída lenta se quitara con los peleadores a ~30 bloques sobre las islas, el que
+    // espera su turno (el otro lado se prepara primero) podría caer y morir antes de la ronda.
+    const send = fakeRcon();
+    const setup = planArena(CHUNK, 12);
+    await resetArenaForRound({ send }, async () => {}, setup);
+    const sent = send.mock.calls.map(([c]) => c);
+    for (const side of ["red", "blue"] as const) {
+      const home = sent.lastIndexOf(teleportCommand(side, setup));
+      const clear = sent.indexOf(`effect clear ${AGENT_USERNAMES[side]} minecraft:slow_falling`);
+      expect(home).toBeGreaterThan(sent.indexOf(forceloadCommand(CHUNK)));
+      expect(home).toBeLessThan(clear);
+    }
   });
 });

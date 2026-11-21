@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { clampToArena, distanceToWall, distanceXZ, retreatTarget, round1 } from "./geometry";
+import { ARENAS, type IslandsArena } from "@phack/protocol";
+import { clampToArena, distanceToWall, distanceXZ, islandAt, movementZone, retreatTarget, round1 } from "./geometry";
 
 const center = { x: 0, y: 64, z: 0 };
 const radius = 12;
@@ -89,5 +90,28 @@ describe("geometry", () => {
     expect(target.x).toBeCloseTo(-6);
     expect(target.z).toBeCloseTo(0);
     expect(distanceXZ(target, center)).toBeLessThanOrEqual(radius - 1.5 + 1e-9);
+  });
+});
+
+describe("movementZone: islas", () => {
+  const arena = ARENAS["chunk-battle"] as IslandsArena;
+  const [red, blue] = arena.islands;
+  const islands = { center: arena.center, radius: arena.radius, islands: arena.islands };
+
+  it("con islas, la zona es la isla donde está (el centro del mapa es vacío)", () => {
+    const onRed = { x: red.from.x + 2, y: 65, z: 0 };
+    const zone = movementZone(islands, onRed);
+    expect(zone.radius).toBe(10);
+    expect(zone.center.x).toBe((red.from.x + red.to.x + 1) / 2);
+    expect(islandAt(islands, { x: blue.to.x, y: 65, z: 3 })).toBe(blue);
+    // En el puente, la más cercana.
+    expect(islandAt(islands, { x: red.to.x + 2, y: 65, z: 0 })).toBe(red);
+    // Retirarse nunca saca de la isla.
+    const target = retreatTarget({ self: onRed, opponent: { x: blue.from.x, y: 65, z: 0 }, ...zone });
+    expect(distanceXZ(target, zone.center)).toBeLessThanOrEqual(zone.radius);
+  });
+
+  it("sin islas, el círculo de la arena", () => {
+    expect(movementZone({ center, radius }, { x: 3, y: 65, z: 3 })).toEqual({ center, radius });
   });
 });

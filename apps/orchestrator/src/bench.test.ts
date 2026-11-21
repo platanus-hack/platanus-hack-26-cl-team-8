@@ -85,6 +85,8 @@ function record(opts: {
   });
   const r: MatchRecord = {
     id: `m${clock}`,
+    arena: "platanus",
+    seed: null,
     startedAt: clock,
     endedAt: clock + 60_000,
     durationMs: 60_000,

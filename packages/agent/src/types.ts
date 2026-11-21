@@ -1,4 +1,4 @@
-import type { CommsMode, Horizon, Kit, ScenarioId, Side } from "@phack/protocol";
+import type { ArenaScenario, CommsMode, Horizon, Kit, ScenarioId, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 import type { Observation } from "./observation";
 import type { ContextProfile } from "./context-profile";
@@ -86,6 +86,12 @@ export type FighterOptions = {
   tickMs: number;
   /** Radio horizontal de observación en bloques (16 por defecto). */
   observationRadius?: number;
+  /**
+   * Mapa de ESTA pelea (geometría, islas y límites para construir). Lo pasa el orquestador
+   * con el escenario de la pelea; si falta, se toma una sola vez al crear el luchador de
+   * ARENA_SCENARIO (compatibilidad). El prompt de sistema lo describe.
+   */
+  arena?: ArenaScenario;
   events: FighterEvents;
 };
 

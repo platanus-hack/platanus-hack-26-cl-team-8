@@ -25,7 +25,6 @@ import {
   SIDES,
   formatTranscript,
   availableArenaScenarios,
-  isSelectableArenaScenario,
   kitForArena,
   kitOf,
   parseTranscript,
@@ -502,7 +501,8 @@ export class MatchManager {
     this.state = {
       id: "",
       phase: "idle",
-      arena: deps.env.ARENA_SCENARIO,
+      // Recién encendido: el mapa que index.ts deja construido (la cámara lo encuadra).
+      arena: this.readyArena(),
       seed: null,
       startedAt: null,
       endsAt: null,
@@ -531,6 +531,15 @@ export class MatchManager {
     return availableArenaScenarios(this.deps.env.ARENA_SCENARIO);
   }
 
+  /**
+   * Mapa de la próxima pelea sin cuerpo de inicio: el de los ajustes si este servidor lo
+   * tiene; si no, ARENA_SCENARIO. Es el que se construye al arrancar el orquestador.
+   */
+  readyArena(): ArenaScenarioId {
+    const wanted = this.deps.settings.get().arena;
+    return wanted && this.availableArenas().includes(wanted) ? wanted : this.deps.env.ARENA_SCENARIO;
+  }
+
   /** Plan de la arena para un mapa pedido; lanza ArenaUnavailableError si no se puede. */
   private plan(arena: ArenaScenarioId | null | undefined, seed: number | null | undefined): ArenaSetup {
     const id = arena ?? this.deps.env.ARENA_SCENARIO;
@@ -546,9 +555,14 @@ export class MatchManager {
   start(opts: StartOptions = {}): MatchState {
     if (this.shuttingDown || this.isActive()) throw new MatchActiveError();
     const { settings, notes } = effectiveSettings(this.deps.settings.get());
-    const setup = this.plan(opts.arena ?? settings.arena, null);
-    // Los ajustes congelados dicen el mapa con que de verdad se juega.
-    settings.arena = isSelectableArenaScenario(setup.arena.id) ? setup.arena.id : null;
+    // Un mapa guardado en los ajustes que este servidor ya no tiene (cambió ARENA_SCENARIO)
+    // no impide pelear: se juega en el por defecto y se avisa. El del cuerpo sí es un error.
+    let wanted: ArenaScenarioId | null | undefined = opts.arena ?? settings.arena;
+    if (opts.arena === undefined && wanted && !this.availableArenas().includes(wanted)) {
+      notes.push(`El mapa "${wanted}" de los ajustes no está en este servidor: se juega en el por defecto`);
+      wanted = null;
+    }
+    const setup = this.plan(wanted, null);
     this.begin({
       // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
       configs: this.deps.prompts.get(),
@@ -581,12 +595,10 @@ export class MatchManager {
     }
     if (this.shuttingDown || this.isActive()) throw new MatchActiveError();
     const setup = this.plan(opts.arena, opts.seed);
-    const settings = tournamentSettings(opts.durationSeconds);
-    settings.arena = isSelectableArenaScenario(setup.arena.id) ? setup.arena.id : null;
     const ctx = this.begin({
       configs,
       setup,
-      settings,
+      settings: tournamentSettings(opts.durationSeconds),
       notes: [],
       explain: opts.explain ?? false,
       routing,

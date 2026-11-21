@@ -201,6 +201,8 @@ function series(opts: {
   const sameModel = opts.models.red === opts.models.blue;
   const record: MatchRecord = {
     id: `mock-bench-${opts.seed}`,
+    arena: "platanus",
+    seed: null,
     startedAt: clock - durationMs,
     endedAt: clock,
     durationMs,

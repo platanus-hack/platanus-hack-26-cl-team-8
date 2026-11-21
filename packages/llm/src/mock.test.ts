@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLlmClient } from "./index";
-import { buildArgs, createMockClient, decide, MOCK_TOOL_NAMES, mockSay, readObservation, readStyle, type MockObservation } from "./mock";
+import { buildArgs, createMockClient, crossingDecision, decide, MOCK_TOOL_NAMES, mockSay, readIslands, readObservation, readStyle, type MockObservation } from "./mock";
 import { TOOLS } from "./test-helpers";
 import type { ChatMessage, ToolCall, ToolDef } from "./types";
 
@@ -414,5 +414,84 @@ describe("mock: rendición", () => {
     expect(calm.toolCalls[0]?.name).toBe("wait");
     const without = await llm.complete({ messages: obs(["ríndete"]), tools: [wait] });
     expect(without.toolCalls[0]?.name).toBe("wait");
+  });
+});
+
+describe("mock en Chunk Battle: cruza el hueco entre islas", () => {
+  // La línea que el prompt de sistema del agente escribe para las islas (ver arenaLine).
+  const SYSTEM = [
+    "LA ARENA",
+    "- Dos islas flotantes de unos 20 x 20 bloques, con terreno propio (relieve, árboles, estructuras), separadas en el eje X por un hueco de al menos 6 bloques de vacío: los bordes de las islas son irregulares y en algunas filas el hueco es mayor.",
+    "- Coordenadas: la isla oeste ocupa x=977..996 y la este x=1003..1022, las dos de z=-10..9; el suelo de ambas está alrededor de y=64.",
+  ].join("\n");
+  const DIG: ToolDef = {
+    name: "dig",
+    description: "Romper bloques",
+    parameters: { type: "object", properties: { target: { type: "string", enum: ["between", "nearest"] } } },
+  };
+  const TOOLS_CB: ToolDef[] = [...TOOLS, BUILD, DIG];
+  const onRed = { distance: 20, health: 20, opponentHealth: 20, position: { x: 990.5, y: 65, z: 0.5 }, opponentRelative: { x: 20, y: 0, z: 0 }, inventory: { cobblestone: 32 } };
+
+  it("lee las islas del prompt de sistema; sin esa línea no hay islas", () => {
+    expect(readIslands(observation({}, SYSTEM))).toEqual({ west: [977, 996], east: [1003, 1022], z: [-10, 9], groundY: 64 });
+    expect(readIslands(observation({}))).toBeNull();
+  });
+
+  it("con el rival en la otra isla y bloques, a veces tiende el puente sobre las 6 celdas de vacío", () => {
+    const islands = readIslands(observation({}, SYSTEM))!;
+    const obs = readObservation(observation(onRed, SYSTEM));
+    const decision = crossingDecision(obs, islands, 0);
+    expect(decision?.preferences[0]).toBe("build");
+    const blocks = (decision?.args?.build as { blocks: { x: number; y: number; z: number; material: string }[] }).blocks;
+    expect(blocks.map((b) => b.x)).toEqual([997, 998, 999, 1000, 1001, 1002]);
+    expect(blocks.every((b) => b.y === 64 && b.z === 0 && b.material === "cobblestone")).toBe(true);
+    // Desde la isla este, el puente empieza por su lado.
+    const fromBlue = readObservation(observation({ ...onRed, position: { x: 1010.5, y: 65, z: 2.5 }, opponentRelative: { x: -20, y: 0, z: 0 } }, SYSTEM));
+    const back = (crossingDecision(fromBlue, islands, 0)?.args?.build as { blocks: { x: number }[] }).blocks.map((b) => b.x);
+    expect(back).toEqual([1002, 1001, 1000, 999, 998, 997]);
+    // El relieve de cada isla varía: el puente va a la altura del bloque que pisa (no del
+    // suelo nominal), para que la primera celda se apoye en el borde de su isla.
+    const lowBlue = readObservation(observation({ ...onRed, position: { x: 1010.5, y: 64, z: 2.5 }, opponentRelative: { x: -20, y: 1, z: 0 } }, SYSTEM));
+    expect((crossingDecision(lowBlue, islands, 0)?.args?.build as { blocks: { y: number }[] }).blocks.every((b) => b.y === 63)).toBe(true);
+    // "A veces": un turno de cada dos; sin bloques, en la misma isla o con el puente hecho, nunca.
+    expect(crossingDecision(obs, islands, 1)).toBeNull();
+    expect(crossingDecision(readObservation(observation({ ...onRed, inventory: {} }, SYSTEM)), islands, 0)).toBeNull();
+    expect(crossingDecision(readObservation(observation({ ...onRed, opponentRelative: { x: 4, y: 0, z: 0 } }, SYSTEM)), islands, 0)).toBeNull();
+    expect(crossingDecision(readObservation(observation({ ...onRed, construction: { status: "complete" } }, SYSTEM)), islands, 0)).toBeNull();
+  });
+
+  it("con el mapa (world) a la vista, el puente va del borde real de su isla al de la otra", () => {
+    // Bordes irregulares: en esta fila la isla oeste termina en x=995 y la este empieza en
+    // x=1004 (8 celdas de vacío, no 6). Cada celda nueva se apoya en la anterior.
+    const world = {
+      format: "cuboids-v1",
+      palette: [{ name: "grass_block", solid: true, hazard: false }, { name: "short_grass", solid: false, hazard: false }],
+      regions: [[977, 60, -10, 995, 64, 9, 0, 1], [1004, 60, -10, 1022, 64, 9, 0, 1], [996, 65, 0, 996, 65, 0, 1, 1]],
+    };
+    const islands = readIslands(observation({}, SYSTEM))!;
+    const blocks = (b: unknown) => (b as { args: { build: { blocks: { x: number; y: number; z: number }[] } } }).args.build.blocks;
+    const fromRed = blocks(crossingDecision(readObservation(observation({ ...onRed, world }, SYSTEM)), islands, 0));
+    expect(fromRed.map((b) => b.x)).toEqual([996, 997, 998, 999, 1000, 1001, 1002, 1003]);
+    expect(fromRed.every((b) => b.y === 64 && b.z === 0)).toBe(true);
+    const fromBlue = blocks(crossingDecision(readObservation(observation({ ...onRed, world, position: { x: 1010.5, y: 65, z: 0.5 }, opponentRelative: { x: -20, y: 0, z: 0 } }, SYSTEM)), islands, 0));
+    expect(fromBlue.map((b) => b.x)).toEqual([1003, 1002, 1001, 1000, 999, 998, 997, 996]);
+    // Si en esa fila no hay suelo propio bajo los pies, no adivina: no construye.
+    const air = { ...world, regions: [[1004, 60, -10, 1022, 64, 9, 0, 1]] };
+    expect(crossingDecision(readObservation(observation({ ...onRed, world: air }, SYSTEM)), islands, 0)).toBeNull();
+  });
+
+  it("el cliente manda el plano del puente con build y, con bloques en medio y el rival cerca, rompe con dig", async () => {
+    const client = createMockClient();
+    const res = await client.complete({ messages: observation(onRed, SYSTEM), tools: TOOLS_CB });
+    expect(res.toolCalls[0]?.name).toBe("build");
+    expect((res.toolCalls[0]?.args.blocks as unknown[]).length).toBe(6);
+    // Un turno después ya no insiste: se acerca como siempre (approach cruza el puente).
+    expect((await client.complete({ messages: observation(onRed, SYSTEM), tools: TOOLS_CB })).toolCalls[0]?.name).toBe("approach");
+
+    const near = { ...onRed, distance: 3, opponentRelative: { x: 3, y: 0, z: 0 }, blocksBetween: 2 };
+    const islands = readIslands(observation({}, SYSTEM))!;
+    expect(crossingDecision(readObservation(observation(near, SYSTEM)), islands, 1)).toMatchObject({ preferences: ["dig"], args: { dig: { target: "between" } } });
+    // Sin la línea de las islas, el mismo estado no construye.
+    expect((await createMockClient().complete({ messages: observation(onRed), tools: TOOLS_CB })).toolCalls[0]?.name).toBe("approach");
   });
 });

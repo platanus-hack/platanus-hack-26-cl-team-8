@@ -48,7 +48,7 @@ describe("pickScenario", () => {
     expect(pickScenario({ phase: "running", scenario: "pizza-spleef-2" }, [], BUILT)).toBeNull();
   });
 
-  it("acepta el estado de un orquestador más viejo (sin scenario = Platanus)", () => {
+  it("acepta el estado de un orquestador más viejo (sin arena = Platanus)", () => {
     const state = {
       id: "",
       phase: "idle",
@@ -62,7 +62,7 @@ describe("pickScenario", () => {
       result: null,
     };
     expect(orchestratorView(state)).toEqual({ phase: "idle", scenario: "platanus" });
-    expect(orchestratorView({ ...state, phase: "running", scenario: "chunk-battle" })).toEqual({ phase: "running", scenario: "chunk-battle" });
+    expect(orchestratorView({ ...state, phase: "running", arena: "chunk-battle" })).toEqual({ phase: "running", scenario: "chunk-battle" });
     expect(orchestratorView({ nada: true })).toBeNull();
   });
 });
@@ -98,7 +98,7 @@ describe("trackOnce", () => {
     startedAt: 1,
     endsAt: 2,
     result: null,
-    scenario,
+    arena: scenario,
     agents: {
       red: { side: "red", username: "AgenteRojo", connected: true, alive: true, health: 20, food: 20, damageDealt: 0, decisions: 0, lastThought: "", lastAction: "" },
       blue: { side: "blue", username: "AgenteAzul", connected: true, alive: true, health: 20, food: 20, damageDealt: 0, decisions: 0, lastThought: "", lastAction: "" },

@@ -60,8 +60,9 @@ precios, catálogo (sha256 + `catalog.json` crudo), límites, regla de calibraci
 prompt fijo, las tools del agente, la geometría del escenario (en Chunk Battle también los
 metadatos de las islas), la duración o el tick, el hash ya no coincide y `run` se niega con
 un mensaje claro: hay que crear otro torneo. El id es `pvp-<escenario>-v2+<hash>`: `v2` marca
-las tools `place_block`/`break_block`, el kit con herramientas y bloques, y el mapa por
-partida (los torneos `v1` ya no se reanudan).
+el mapa por partida (Platanus o Chunk Battle en el mismo mundo, con la semilla de la
+partida decidiendo las islas) y, en Chunk Battle, los bloques y el pico que el mapa suma al
+kit para cruzar con `build`/`dig` (los torneos `v1` ya no se reanudan).
 
 Con el catálogo del 21-11-2026 y el plan por defecto entran las 8 prioritarias: GPT-6 Luna
 Fast, Claude Haiku 5.5, Qwen 3.8 Flash y MiMo V2.6 Flash con razonamiento apagado; Gemini
@@ -71,9 +72,9 @@ Fast, Claude Haiku 5.5, Qwen 3.8 Flash y MiMo V2.6 Flash con razonamiento apagad
 
 - Cada partida tiene un id estable `stage:escenario:s<semilla>:<a>~<b>:<ida|vuelta>` (a < b
   por key). La **ida** pone a A en rojo; la **vuelta**, en azul.
-- **Mapa y semilla.** El escenario del torneo (`--scenario platanus|chunk-battle` en `plan` y
-  `create`; por defecto `ARENA_SCENARIO`) y la semilla de cada `MatchSpec` llegan a la pelea
-  real (`MatchManager.runOnce({ scenario, seed })`), que construye ese mapa por RCON sin
+- **Mapa y semilla.** El escenario del torneo (`--scenario platanus|chunk-battle`, o `--map`,
+  en `plan` y `create`; por defecto `ARENA_SCENARIO`) y la semilla de cada `MatchSpec` llegan
+  a la pelea real (`MatchManager.runOnce({ arena, seed })`), que construye ese mapa por RCON sin
   reiniciar Minecraft. En Platanus la semilla solo etiqueta réplicas (el estado inicial es el
   mismo). En **Chunk Battle** decide las islas (tema de cada lado y capas de mineral del
   núcleo): la ida y la vuelta comparten islas con los lados cambiados, así que la pareja

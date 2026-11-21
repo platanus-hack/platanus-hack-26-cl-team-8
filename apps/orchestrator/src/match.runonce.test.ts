@@ -78,6 +78,7 @@ describe("MatchManager.runOnce", () => {
 
   function setupOnce(opts: { connect?: (events: FighterEvents) => Promise<void> } = {}) {
     const env: MatchEnv = {
+      ARENA_SCENARIO: "platanus",
       LLM_PROVIDER: "vercel",
       LLM_MODEL: "",
       VERCEL_API_KEY: "vck",

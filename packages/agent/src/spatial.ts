@@ -1,5 +1,5 @@
 import type { Bounds } from "./construction";
-import { isBreakable } from "./items";
+import { isBreakable, type BreakRule } from "./items";
 import type { Vec3Like } from "./geometry";
 
 export type WorldCell = { name: string; solid: boolean };
@@ -53,7 +53,7 @@ export function packWorld(raw: RawSpatialSnapshot) {
 }
 
 /** Snapshot íntegro del volumen, incluidos piso, paredes y techo. El aire conocido es implícito. */
-export function scanWorld(bounds: Bounds, read: (position: Vec3Like) => WorldCell | null, canModify: (position: Vec3Like) => boolean, coverage: { center: Vec3Like; radius: number }) {
+export function scanWorld(bounds: Bounds, read: (position: Vec3Like) => WorldCell | null, canModify: (position: Vec3Like) => boolean, coverage: { center: Vec3Like; radius: number }, breakRule: BreakRule = "placed") {
   bounds = {
     min: { x: Math.max(bounds.min.x, Math.ceil(coverage.center.x - coverage.radius)), y: bounds.min.y, z: Math.max(bounds.min.z, Math.ceil(coverage.center.z - coverage.radius)) },
     max: { x: Math.min(bounds.max.x, Math.floor(coverage.center.x + coverage.radius)), y: bounds.max.y, z: Math.min(bounds.max.z, Math.floor(coverage.center.z + coverage.radius)) },
@@ -72,11 +72,21 @@ export function scanWorld(bounds: Bounds, read: (position: Vec3Like) => WorldCel
         if (["air", "cave_air", "void_air"].includes(cell.name)) continue;
         blocks.push([x, y, z, cell.name]);
         materials[cell.name] = { solid: cell.solid, hazard: ["lava", "fire", "cobweb"].includes(cell.name) };
-        if (canModify(position) && isBreakable(cell.name)) breakable.push([x, y, z]);
+        if (canModify(position) && isBreakable(cell.name, breakRule)) breakable.push([x, y, z]);
       }
     }
   }
   return packWorld({ bounds, coverage, blocks, unknown, materials, breakable });
+}
+
+/**
+ * Para colocar un bloque: la cara `aim` del bloque de apoyo `support` se alcanza si el rayo
+ * no cruza OTRO bloque. El propio apoyo no tapa su cara: así se alcanza la cara lateral del
+ * borde desde encima (el servidor acepta el clic; es lo que hace un jugador agachado al
+ * tender un puente sobre el vacío).
+ */
+export function faceInSight(from: Vec3Like, aim: Vec3Like, support: Vec3Like, read: (position: Vec3Like) => WorldCell | null): boolean {
+  return lineOfSight(from, aim, (p) => (p.x === support.x && p.y === support.y && p.z === support.z ? { name: "air", solid: false } : read(p)));
 }
 
 /** Línea de visión hasta el objetivo; desconocido no se considera transparente. */

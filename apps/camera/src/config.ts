@@ -106,6 +106,7 @@ export function loadConfig(): CameraConfig {
     "CAMERA_HEIGHT",
     "CAMERA_FPS",
     "RTMP_URL",
+    "ORCHESTRATOR_PORT",
   ]);
   return {
     mode: readMode(),

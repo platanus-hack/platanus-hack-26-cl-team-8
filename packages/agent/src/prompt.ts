@@ -50,8 +50,11 @@ export type SystemPromptInput = {
   /** Instrucciones escritas por el usuario en la web: definen el objetivo del agente. */
   strategy: string;
   tickMs: number;
-  /** Escenario de la pelea. Si falta, el de ARENA_SCENARIO (o el por defecto). */
-  arena?: ArenaScenarioId;
+  /**
+   * Mapa de la pelea (el objeto de ARENAS o su id). Si falta, el de ARENA_SCENARIO (o el
+   * por defecto) — solo por compatibilidad: el luchador pasa el de su pelea.
+   */
+  arena?: ArenaScenario | ArenaScenarioId;
   /** Duración de la pelea en segundos. */
   durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
@@ -174,12 +177,20 @@ function kitSection(kit: Kit, refill = false): string[] {
  * Sección CAPACIDADES: lo que el cuerpo puede y no puede hacer en general, más allá de
  * cada herramienta. Evita que el modelo planee cosas imposibles (fabricar, romper la arena).
  */
-function capabilitiesSection(kit: Kit): string[] {
+/** Qué se puede romper con dig en este mapa: solo lo colocado, o también el terreno. */
+function breakLine(arena: ArenaScenario): string {
+  if (arena.kind === "islands") {
+    return "- Puedes romper bloques (dig), también el terreno de las islas. No se rompen ni se colocan la roca madre (bedrock), las barreras y otros bloques administrativos (bloques de comandos, de estructuras, portales, generadores). Lo que rompes cae y lo recoges al pasar encima.";
+  }
+  return "- Puedes romper bloques que alguien colocó (dig). El piso, los muros de vidrio y el techo invisible de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.";
+}
+
+function capabilitiesSection(kit: Kit, arena: ArenaScenario): string[] {
   const tools = kitToolNames(kit);
   const lines = [
     "CAPACIDADES",
     "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2. Además de acercarte (approach) y alejarte (retreat), con move puedes esquivar de lado, rodear al rival, mantener una distancia o ir a un lugar o a coordenadas absolutas con style=goto y position.",
-    '- Puedes romper bloques que alguien colocó (dig). El piso, los muros de vidrio y el techo invisible de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.',
+    breakLine(arena),
   ];
   if (tools.includes("build")) {
     lines.push('- Puedes colocar bloques (build) con geometría libre. Diseña tú qué construir y dónde; los materiales del inventario y la física determinan qué se puede ejecutar.');
@@ -247,6 +258,17 @@ function endingLines(input: SystemPromptInput): string[] {
 
 /** Cómo es el recinto, según el escenario: solo lo físico (forma, tamaño, límites). */
 function arenaLine(arena: ArenaScenario): string {
+  if (arena.kind === "islands") {
+    const [first] = arena.islands;
+    const width = Math.abs(first.to.x - first.from.x) + 1;
+    const depth = Math.abs(first.to.z - first.from.z) + 1;
+    const [west, east] = [...arena.islands].sort((a, b) => a.from.x - b.from.x) as [typeof first, typeof first];
+    const span = (i: typeof first) => `x=${Math.min(i.from.x, i.to.x)}..${Math.max(i.from.x, i.to.x)}`;
+    return [
+      `- Dos islas flotantes de unos ${width} x ${depth} bloques, con terreno propio (relieve, árboles, estructuras), separadas en el eje X por un hueco de al menos ${arena.gap} bloques de vacío: los bordes de las islas son irregulares y en algunas filas el hueco es mayor. Cada agente empieza en una isla distinta. No hay muros: alrededor y debajo de las islas solo hay vacío, y caer ahí mata.`,
+      `- Coordenadas: la isla oeste ocupa ${span(west)} y la este ${span(east)}, las dos de z=${Math.min(first.from.z, first.to.z)}..${Math.max(first.from.z, first.to.z)}; el suelo de ambas está alrededor de y=${first.from.y}.`,
+    ].join("\n");
+  }
   if (arena.kind === "built") {
     // El piso incluye la fila de los muros: lo caminable es un bloque menos por lado.
     const width = arena.floor.halfX * 2 - 1;
@@ -266,7 +288,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const strategy =
     input.strategy.trim().length > 0 ? input.strategy.trim() : "(sin instrucciones: decide tú qué quieres hacer)";
   const seconds = Math.round((input.tickMs / 1000) * 10) / 10;
-  const arena = arenaFor(input.arena ?? process.env.ARENA_SCENARIO);
+  const arena = typeof input.arena === "object" ? input.arena : arenaFor(input.arena ?? process.env.ARENA_SCENARIO);
   const openEnded = kitToolNames(input.kit).filter(isOpenEnded).join(", ");
   return [
     `Eres "${input.username}", el agente ${SIDE_NAMES[input.side]}. Estás encerrado en una arena de Minecraft junto a otro agente, "${input.opponentUsername}". Cada uno es un modelo de lenguaje que sigue las instrucciones de su propio entrenador; no sabes cuáles son las del otro.`,
@@ -292,11 +314,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     ...kitSection(input.kit, input.rounds?.refillKit === true),
     "",
-    ...capabilitiesSection(input.kit),
+    ...capabilitiesSection(input.kit, arena),
     "",
     "PERCEPCIÓN Y RECURSOS",
     '- world conserva todos los bloques dentro del radio horizontal indicado en coverage, en toda la altura de bounds. format=cuboids-v1: palette identifica los materiales y sus propiedades; cada regions=[x0,y0,z0,x1,y1,z1,indiceMaterial,modificable] representa una caja homogénea de celdas, con ambos extremos incluidos. modificable=1 permite dig; 0 protege la arena. Una región puede contener un solo bloque. unknown usa cajas [x0,y0,z0,x1,y1,z1] no recibidas. Solo el resto DENTRO del radio Y bounds es aire conocido. Fuera de cobertura no has observado el terreno: nunca lo supongas vacío. Coordenadas absolutas: X/Z horizontales, Y altura.',
-    '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. El historial contiene resúmenes de estado y resultados: usa el mapa e inventario de la observación ACTUAL para actuar.',
+    `- buildBounds da los límites generales para construir o romper; ${arena.kind === "islands" ? "abarca las dos islas y el hueco entre ellas, y lo administrativo está protegido" : "el piso, las paredes y el techo están protegidos"}. El historial contiene resúmenes de estado y resultados: usa el mapa e inventario de la observación ACTUAL para actuar.`,
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
     '- resources describe tu inventario ACTUAL por casilla: cantidad, durabilityLeft (los usos que le quedan a lo que se desgasta) y uses, con la herramienta y los argumentos que lo usan; un uso con blocked no se puede hacer ahora, y dice por qué. equipment es lo que llevas puesto (armadura y mano secundaria); effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
     "",

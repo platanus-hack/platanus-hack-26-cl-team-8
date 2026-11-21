@@ -8,6 +8,8 @@ dist/
 !.env.example
 *.log
 data/
+# ...salvo el "data/" de los datapacks de Minecraft (las estructuras de Chunk Battle van al repo).
+!infra/minecraft/datapacks/*/data/
 .DS_Store
 # Entorno local sin Docker (scripts/local): jar y mundo de Minecraft, datos, logs.
 .local/

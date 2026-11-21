@@ -15,8 +15,34 @@ export const isPearl = (name: string): boolean => name === "ender_pearl";
  */
 const BUILD_BLOCK_NAMES: ReadonlySet<string> = new Set(["cobblestone", "dirt", "obsidian"]);
 export const isBuildBlock = (name: string): boolean =>
-  name.endsWith("_planks") || name.endsWith("_wool") || BUILD_BLOCK_NAMES.has(name);
+  (name.endsWith("_planks") || name.endsWith("_wool") || BUILD_BLOCK_NAMES.has(name)) && !isAdminBlock(name);
 export const isPickaxe = (name: string): boolean => name.endsWith("_pickaxe");
+
+/**
+ * Lista negra: bloques administrativos o indestructibles que nunca se rompen ni se colocan,
+ * en ningún mapa (barreras, roca madre, bloques de comandos y de estructuras, luz
+ * invisible, portales, generadores de mobs).
+ */
+export const ADMIN_BLOCKS: ReadonlySet<string> = new Set([
+  "barrier",
+  "bedrock",
+  "command_block",
+  "chain_command_block",
+  "repeating_command_block",
+  "structure_block",
+  "structure_void",
+  "jigsaw",
+  "light",
+  "end_portal",
+  "end_portal_frame",
+  "end_gateway",
+  "nether_portal",
+  "reinforced_deepslate",
+  "spawner",
+]);
+
+/** ¿Es un bloque de la lista negra (ADMIN_BLOCKS)? Acepta el id con o sin "minecraft:". */
+export const isAdminBlock = (name: string): boolean => ADMIN_BLOCKS.has(name.replace(/^minecraft:/, ""));
 
 /**
  * Bloques de la arena: no se rompen nunca (piso con el logo del centro, muros de vidrio con
@@ -29,8 +55,7 @@ export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
   "sea_lantern",
   "red_concrete",
   "blue_concrete",
-  "barrier",
-  "bedrock",
+  ...ADMIN_BLOCKS,
   // Los bloques del logo del piso.
   ...Object.values(FLOOR_LOGO_PALETTE).map((entry) => entry.block),
 ]);
@@ -38,8 +63,18 @@ export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
 /** Lo que no es un bloque que se pueda romper: aire y líquidos. */
 const NOT_SOLID: ReadonlySet<string> = new Set(["air", "cave_air", "void_air", "water", "lava", "fire"]);
 
-/** ¿Se puede romper este bloque? Solo lo colocado por los luchadores, nunca la arena. */
-export const isBreakable = (name: string): boolean => !NOT_SOLID.has(name) && !ARENA_BLOCKS.has(name);
+/**
+ * Qué se puede romper en un mapa: "placed" = solo lo colocado por los luchadores, nunca la
+ * arena (Platanus y la pizza: su piso y sus muros son la arena); "terrain" = también el
+ * terreno del mapa (las islas de Chunk Battle), menos la lista negra.
+ */
+export type BreakRule = "placed" | "terrain";
+
+/** ¿Se puede romper este bloque? Con "placed", nunca la arena; con "terrain", todo menos ADMIN_BLOCKS. */
+export const isBreakable = (name: string, rule: BreakRule = "placed"): boolean => {
+  if (NOT_SOLID.has(name)) return false;
+  return rule === "terrain" ? !isAdminBlock(name) : !ARENA_BLOCKS.has(name);
+};
 
 /** Calidad de un material de herramienta: más alto, rompe más rápido. */
 const TIER: Record<string, number> = { wooden: 1, golden: 2, stone: 3, iron: 4, diamond: 5, netherite: 6 };

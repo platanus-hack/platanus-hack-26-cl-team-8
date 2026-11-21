@@ -313,8 +313,9 @@ export async function clearPlacedBlocks(rcon: RconLike, target: ArenaTarget = ac
  * Battle se reconstruye entera con el MISMO plan (mismas islas, misma semilla): el puente
  * y lo cavado no deben seguir en la ronda siguiente. Como la reconstrucción vacía primero
  * todo el volumen, los peleadores esperan arriba, flotando con caída lenta, y la caída
- * lenta se les quita al terminar (no debe durar en la ronda: cambiaría la pelea).
- * Después hay que llevarlos a su spawn (resetFighterForRound o prepareFighter).
+ * lenta se les quita al terminar, ya de vuelta en su spawn (no debe durar en la ronda:
+ * cambiaría la pelea). Después hay que curarlos y darles el kit (resetFighterForRound o
+ * prepareFighter).
  */
 export async function resetArenaForRound(rcon: RconLike, sleep: SleepFn, setup: ArenaSetup): Promise<void> {
   const { arena } = setup;
@@ -336,7 +337,12 @@ export async function resetArenaForRound(rcon: RconLike, sleep: SleepFn, setup: 
     }),
   );
   await buildArena(rcon, sleep, setup);
-  await sendAll(rcon, users.map((username) => `effect clear ${username} minecraft:slow_falling`));
+  // Primero de vuelta al spawn y recién ahí sin caída lenta: quitarla arriba los dejaría
+  // cayendo ~30 bloques mientras se prepara el otro lado (con un servidor lento, a la muerte).
+  await sendAll(rcon, [
+    ...(["red", "blue"] as const).map((side) => teleportCommand(side, setup)),
+    ...users.map((username) => `effect clear ${username} minecraft:slow_falling`),
+  ]);
 }
 
 /**
