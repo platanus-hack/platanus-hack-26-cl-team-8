@@ -277,3 +277,24 @@ describe("buildSystemPrompt", () => {
   });
 });
 
+describe("buildSystemPrompt: límite de tiempo", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: KITS.classic,
+    strategy: "",
+    tickMs: 1500,
+    comms: "none" as const,
+  };
+
+  it("con límite dice cuánto dura la partida", () => {
+    expect(buildSystemPrompt({ ...base, durationSeconds: 120 })).toContain("La partida dura 120 segundos");
+  });
+
+  it("sin límite no nombra ninguna duración y dice cómo termina", () => {
+    const prompt = buildSystemPrompt({ ...base, durationSeconds: null });
+    expect(prompt).toContain("La partida no tiene límite de tiempo");
+    expect(prompt).not.toContain("La partida dura");
+  });
+});

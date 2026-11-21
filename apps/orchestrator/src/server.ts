@@ -204,9 +204,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (!body.success) {
         return reply
           .code(400)
-          .send(errorBody("Cuerpo inválido: se espera un JSON { comms } con comms = none, thoughts o chat"));
+          .send(
+            errorBody(
+              "Cuerpo inválido: se espera un JSON { comms?, timer? } con comms = none, thoughts o chat y timer = true o false",
+            ),
+          );
       }
-      const updated = await settings.update(body.data);
+      // Solo lo que vino: una clave ausente no debe pisar el ajuste guardado.
+      const change: Partial<MatchSettings> = {};
+      if (body.data.comms !== undefined) change.comms = body.data.comms;
+      if (body.data.timer !== undefined) change.timer = body.data.timer;
+      const updated = await settings.update(change);
       deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
       return updated;
     });

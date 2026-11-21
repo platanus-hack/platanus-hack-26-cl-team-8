@@ -275,6 +275,15 @@ Qué decir, cómo, en qué idioma y cuándo lo decide cada agente. El sistema lo
 - **El prompt de sistema cuenta la mecánica, no aconseja.** Explica `say`, `rivalMessages`, `conversation` y que `reason` es privado. No sugiere qué decir, cómo leer lo que oye ni si creerle.
 - El proveedor `mock` no tiene modelo detrás: contesta con una frase fija cuando el rival le dijo algo y, si no, habla más o menos un turno de cada cuatro. Sirve para ver el modo `chat` sin claves.
 
+## Límite de tiempo
+
+En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.
+
+- **Encendido** (por defecto): la pelea dura `MATCH_DURATION_SECONDS` y, si nadie cae, gana quien tenga más vida.
+- **Apagado**: la pelea no se acaba sola. Sigue hasta que uno caiga o alguien la detenga; el reloj de la web cuenta hacia arriba y al agente se le dice que no hay límite.
+
+Para que una pelea olvidada no gaste tokens toda la noche, el servidor detiene (sin ganador) las peleas sin límite que pasan de `MATCH_MAX_SECONDS` (30 minutos por defecto; `0` quita el tope).
+
 ## Transcripciones
 
 Cada pelea deja su transcripción completa en `DATA_DIR/transcripts/<id>.jsonl`: una entrada por línea, en el orden en que pasó, escrita mientras la pelea ocurre (si el servidor se cae, queda lo que alcanzó a pasar). Parte con `start` (configs con el proveedor, modelo y kit reales, ajustes, el prompt de sistema completo de cada agente, tick y duración) y trae las fases, cada decisión, lo que pensó, dijo e hizo cada agente, el daño, los cambios de estado, el registro de eventos, el resultado (`end`) y el "por qué ganó" (`explanation`). También quedan las peleas que fallaron o se detuvieron antes de empezar. El formato es `TranscriptEntrySchema`, en `packages/protocol`.

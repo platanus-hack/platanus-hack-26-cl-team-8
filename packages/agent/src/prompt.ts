@@ -45,7 +45,7 @@ export type SystemPromptInput = {
   strategy: string;
   tickMs: number;
   /** Duración de la pelea en segundos. */
-  durationSeconds: number;
+  durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
 };
@@ -287,7 +287,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "LA ARENA",
     `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
-    `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
+    input.durationSeconds === null
+      ? "- La partida no tiene límite de tiempo: sigue hasta que alguno de los dos muera o hasta que la detengan desde afuera. No hay reaparición."
+      : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
     "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
     "- La vida y la comida van de 0 a 20.",
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,

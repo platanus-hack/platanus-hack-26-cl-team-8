@@ -45,7 +45,7 @@ function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Parti
       },
       blue: { side: "blue", prompt: "Eres defensivo:\n\nmantén distancia y usa el arco." },
     },
-    settings: { comms: "none" },
+    settings: { comms: "none", timer: true },
     final: { red: status("red", red), blue: status("blue", blue) },
     result,
   };

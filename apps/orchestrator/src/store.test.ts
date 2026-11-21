@@ -43,7 +43,7 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende" },
     },
     final: { red: status("red"), blue: status("blue") },
-    settings: { comms: "none" },
+    settings: { comms: "none", timer: true },
     result: { winner: "red", reason: "kill" },
   };
 }
@@ -317,14 +317,19 @@ describe("MatchStore.update", () => {
 
 describe("parseSettings", () => {
   it("vuelve a los ajustes por defecto si el archivo está corrupto o trae basura", () => {
-    expect(parseSettings("{no")).toEqual({ comms: "none" });
-    expect(parseSettings("{}")).toEqual({ comms: "none" });
-    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none" });
-    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat" });
+    expect(parseSettings("{no")).toEqual({ comms: "none", timer: true });
+    expect(parseSettings("{}")).toEqual({ comms: "none", timer: true });
+    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none", timer: true });
+    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat", timer: true });
+  });
+
+  it("guarda el límite de tiempo apagado; un archivo de antes lo trae encendido", () => {
+    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ comms: "chat", timer: false });
+    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ comms: "none", timer: true });
   });
 
   it("un registro de historial sin ajustes vale como sin comunicación", () => {
     const { settings: _omit, ...old } = record("viejo");
-    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none" });
+    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none", timer: true });
   });
 });

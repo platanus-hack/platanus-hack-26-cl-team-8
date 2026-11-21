@@ -10,6 +10,7 @@
  *   /?mock&static       sin el bucle de golpes y pensamientos (todo quieto)
  *   /?mock&delay=4000   simula un video atrasado 4 s: el marcador espera ese tiempo
  *   /?mock&comms=chat   los agentes se hablan (también comms=thoughts)
+ *   /?mock&timer=off    pelea sin límite de tiempo: el reloj cuenta hacia arriba
  *
  * Reemplaza las tres entradas de datos de la página: la API HTTP (api.ts), el
  * websocket (socket.ts) y el video (player.ts). Los botones "Iniciar pelea" y
@@ -82,9 +83,13 @@ const prompts: PromptsResponse = {
   },
 };
 
-/** Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo. */
+/**
+ * Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo,
+ * y con ?timer=off, sin límite de tiempo.
+ */
 const settings: MatchSettings = {
   comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
+  timer: params.get("timer") !== "off",
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
@@ -258,7 +263,7 @@ function buildState(phase: MatchPhase): MatchState {
       id: "mock-match",
       phase,
       startedAt: runningSince,
-      endsAt: runningSince + MATCH_DURATION_MS,
+      endsAt: settings.timer ? runningSince + MATCH_DURATION_MS : null,
       countdownEndsAt: null,
       agents: structuredClone(running),
       configs,
@@ -440,7 +445,7 @@ export function mockTranscriptText(): string {
       settings: { ...settings },
       systemPrompts: { red: prompts.red.prompt, blue: prompts.blue.prompt },
       tickMs: LOOP_MS,
-      durationSeconds: MATCH_DURATION_MS / 1000,
+      durationSeconds: settings.timer ? MATCH_DURATION_MS / 1000 : null,
     },
     { type: "phase", at: start, phase: "running" },
     ...transcript,
@@ -616,8 +621,9 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.settings) return settings;
   if (method === "PUT" && path === API_ROUTES.settings) {
     const body = UpdateSettingsBodySchema.safeParse(init?.body);
-    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms } con comms = none, thoughts o chat");
-    settings.comms = body.data.comms;
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer? }");
+    if (body.data.comms !== undefined) settings.comms = body.data.comms;
+    if (body.data.timer !== undefined) settings.timer = body.data.timer;
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;
   }

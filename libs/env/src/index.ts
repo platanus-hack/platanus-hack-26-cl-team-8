@@ -29,6 +29,12 @@ const EnvSchema = z.object({
   ORCHESTRATOR_HOST: z.string().default("0.0.0.0"),
   ORCHESTRATOR_PORT: z.coerce.number().int().default(8787),
   MATCH_DURATION_SECONDS: z.coerce.number().int().positive().default(180),
+  /**
+   * Tope de seguridad para las peleas SIN límite de tiempo: pasado este tiempo el servidor
+   * la detiene (sin ganador), para que una pelea olvidada no gaste tokens toda la noche.
+   * 0 = sin tope.
+   */
+  MATCH_MAX_SECONDS: z.coerce.number().int().min(0).default(1800),
   AGENT_TICK_MS: z.coerce.number().int().positive().default(1500),
   DATA_DIR: z.string().default("./data"),
 

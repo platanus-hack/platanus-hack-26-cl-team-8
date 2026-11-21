@@ -47,7 +47,7 @@ export type FighterOptions = {
   /** Qué sabe del rival además de lo que ve (ver CommsMode). */
   comms: CommsMode;
   /** Duración de la pelea en segundos (contexto para el prompt). */
-  durationSeconds: number;
+  durationSeconds: number | null;
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;
