@@ -1,0 +1,217 @@
+# Arena de prompts — stack completo en un solo servidor.
+#
+#   docker compose up -d --build                    # todo menos el túnel
+#   docker compose --profile tunnel up -d --build   # + Cloudflare Tunnel
+#
+# Las variables se interpolan desde `.env` (copia `.env.example`). Todas tienen
+# valor por defecto, así que el stack levanta sin `.env` en modo LLM "mock".
+#
+# Los nombres de host entre contenedores son los nombres de servicio:
+# minecraft, mediamtx, orchestrator, camera, web, cloudflared.
+
+name: phack2026
+
+# Entorno común de las apps de Node (ver libs/env/src/index.ts).
+x-node-env: &node-env
+  NODE_ENV: production
+  TZ: ${TZ:-America/Santiago}
+  MC_HOST: minecraft
+  MC_PORT: "25565"
+  MC_VERSION: ${MC_VERSION:-1.20.4}
+  RCON_HOST: minecraft
+  RCON_PORT: "25575"
+  RCON_PASSWORD: ${RCON_PASSWORD:-phack-rcon}
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  LLM_MODEL: ${LLM_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  ORCHESTRATOR_PORT: "8787"
+  MATCH_DURATION_SECONDS: ${MATCH_DURATION_SECONDS:-180}
+  AGENT_TICK_MS: ${AGENT_TICK_MS:-1500}
+  DATA_DIR: /data
+  CAMERA_USERNAME: ${CAMERA_USERNAME:-Camara}
+  CAMERA_WIDTH: ${CAMERA_WIDTH:-1280}
+  CAMERA_HEIGHT: ${CAMERA_HEIGHT:-720}
+  CAMERA_FPS: ${CAMERA_FPS:-30}
+  RTMP_URL: rtmp://mediamtx:1935/live/arena
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  minecraft:
+    # Java 21 corre Paper 1.20.4 sin problemas (requiere Java 17+).
+    image: itzg/minecraft-server:java21
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: ${MC_VERSION:-1.20.4}
+      # Heap de la JVM. El límite del contenedor (mem_limit) deja margen para el resto de la JVM.
+      MEMORY: ${MC_MEMORY:-2G}
+      TZ: ${TZ:-America/Santiago}
+      MOTD: "Arena de prompts - Platanus Hackathon 2026"
+      # Los bots entran con nombre de usuario plano, sin cuenta de Mojang.
+      ONLINE_MODE: "FALSE"
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: ${RCON_PASSWORD:-phack-rcon}
+      BROADCAST_RCON_TO_OPS: "false"
+      # Mundo plano, sin estructuras ni criaturas.
+      LEVEL_TYPE: FLAT
+      GENERATE_STRUCTURES: "false"
+      SPAWN_ANIMALS: "false"
+      SPAWN_MONSTERS: "false"
+      SPAWN_NPCS: "false"
+      ALLOW_NETHER: "false"
+      # NO usar "peaceful": regenera vida y congela el hambre, lo que arruina el duelo.
+      # Con "normal" + SPAWN_MONSTERS=false no hay mobs y el PvP funciona normal.
+      DIFFICULTY: normal
+      PVP: "true"
+      MODE: survival
+      # 0 = cualquiera puede romper/poner bloques y pegar cerca del spawn.
+      SPAWN_PROTECTION: "0"
+      VIEW_DISTANCE: "6"
+      SIMULATION_DISTANCE: "4"
+      MAX_PLAYERS: "10"
+      # Evita expulsiones por "flying is not enabled" al teletransportar bots o con la cámara flotando.
+      ALLOW_FLIGHT: "TRUE"
+      ENABLE_COMMAND_BLOCK: "false"
+      # Copia infra/minecraft/config/* directo a /data en cada arranque
+      # (bukkit.yml con connection-throttle desactivado: ver ese archivo).
+      COPY_CONFIG_DEST: /data
+      SYNC_SKIP_NEWER_IN_DESTINATION: "false"
+      # Se ejecutan por RCON cuando el servidor termina de arrancar.
+      RCON_CMDS_STARTUP: |-
+        gamerule doMobSpawning false
+        gamerule doDaylightCycle false
+        gamerule doWeatherCycle false
+        time set noon
+        weather clear
+        forceload add -32 -32 31 31
+    volumes:
+      - minecraft-data:/data
+      # ",z": etiqueta SELinux compartida (Fedora/RHEL con SELinux activo); sin efecto en otros hosts.
+      - ./infra/minecraft/config:/config:ro,z
+    ports:
+      # Solo loopback del servidor: para entrar con un cliente real usa un túnel SSH
+      # (ssh -L 25565:127.0.0.1:25565 usuario@servidor). RCON no se publica.
+      - "127.0.0.1:25565:25565"
+    mem_limit: 3g
+    healthcheck:
+      # `mc-health` viene incluido en la imagen de itzg.
+      test: ["CMD", "mc-health"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      # El primer arranque descarga Paper y genera el mundo.
+      start_period: 180s
+    logging: *logging
+
+  mediamtx:
+    # Imagen "scratch": no tiene shell ni curl, por eso no lleva healthcheck.
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    volumes:
+      # Montaje de UN archivo: si cambia en el host hay que reiniciar el contenedor
+      # (docker compose restart mediamtx); scripts/deploy.sh ya lo hace.
+      - ./infra/mediamtx/mediamtx.yml:/mediamtx.yml:ro,z
+    # Sin puertos publicados: RTMP (1935) y HLS (8888) solo se usan dentro de la red de compose.
+    logging: *logging
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *node-env
+    volumes:
+      - orchestrator-data:/data
+    depends_on:
+      # "started" y no "healthy": el primer arranque de Minecraft puede tardar minutos y
+      # no debe bloquear la web ni la API. El orquestador reintenta RCON hasta que responda.
+      minecraft:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    logging: *logging
+
+  camera:
+    build:
+      context: .
+      dockerfile: apps/camera/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *node-env
+      # Propias de la cámara (apps/camera/src/config.ts las lee directo de process.env).
+      CAMERA_ORBIT_SECONDS: ${CAMERA_ORBIT_SECONDS:-0}
+      CAMERA_VIEW_DISTANCE: ${CAMERA_VIEW_DISTANCE:-4}
+      CAMERA_BITRATE_KBPS: ${CAMERA_BITRATE_KBPS:-2500}
+      CAMERA_SILENT_AUDIO: ${CAMERA_SILENT_AUDIO:-}
+    # Por si el render usa un navegador headless (Chromium necesita /dev/shm grande).
+    shm_size: 512m
+    depends_on:
+      # "started": la cámara reintenta sola la conexión hasta que Minecraft esté listo.
+      minecraft:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+    logging: *logging
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Vacío = mismo origen (/api y /live detrás de Caddy). Ver .env.example.
+        PUBLIC_API_BASE: ${PUBLIC_API_BASE:-}
+        PUBLIC_HLS_URL: ${PUBLIC_HLS_URL:-/live/arena/index.m3u8}
+    restart: unless-stopped
+    volumes:
+      # El Caddyfile del repo manda aunque la imagen traiga uno propio:
+      # así se puede ajustar el proxy sin reconstruir la web.
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      orchestrator:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+    healthcheck:
+      # Asume imagen final basada en caddy:alpine (trae wget de busybox).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging: *logging
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      web:
+        condition: service_started
+    logging: *logging
+
+volumes:
+  minecraft-data:
+  orchestrator-data:

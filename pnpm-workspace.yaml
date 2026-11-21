@@ -1,0 +1,18 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "libs/*"
+
+# Dependencias nativas que necesitan correr sus scripts de build.
+# pnpm 10 lee `onlyBuiltDependencies`; pnpm 11 lee `allowBuilds`.
+onlyBuiltDependencies:
+  - canvas
+  - gl
+  - esbuild
+  - sharp
+
+allowBuilds:
+  canvas: true
+  gl: true
+  esbuild: true
+  sharp: true

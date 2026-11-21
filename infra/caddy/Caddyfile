@@ -1,0 +1,55 @@
+# Caddy del contenedor "web": un solo origen para todo.
+#
+#   /            sitio estático de Astro (/srv)
+#   /api/*       -> orchestrator:8787 (ruta sin cambios; incluye el websocket /api/ws)
+#   /live/*      -> mediamtx:8888     (ruta sin cambios; HLS en /live/arena/index.m3u8)
+#
+# TLS lo termina Cloudflare: aquí solo HTTP en :80.
+
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+
+	# Usado por el healthcheck de docker compose.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# API + websocket (reverse_proxy maneja el Upgrade sin configuración extra).
+	handle /api/* {
+		reverse_proxy orchestrator:8787
+	}
+
+	# Video HLS.
+	handle /live/* {
+		# Los playlists cambian cada fracción de segundo: nunca se cachean
+		# (el prefijo ">" reemplaza el header que mande MediaMTX).
+		@playlist path *.m3u8
+		header @playlist >Cache-Control "no-store"
+
+		reverse_proxy mediamtx:8888 {
+			# Sin buffer: las partes de LL-HLS se entregan apenas llegan.
+			flush_interval -1
+		}
+	}
+
+	# Sitio estático.
+	handle {
+		root * /srv
+
+		# Astro pone hash en el nombre de todo lo que vive en /_astro/.
+		@hashed path /_astro/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# Todo lo demás (HTML incluido) se revalida siempre.
+		header ?Cache-Control "no-cache"
+
+		# Archivo exacto, carpeta con index.html, o el index como respaldo.
+		try_files {path} {path}/index.html /index.html
+		file_server
+	}
+}

@@ -1,0 +1,15 @@
+# El contexto de build de todas las imágenes es la raíz del repo.
+node_modules
+**/node_modules
+.git
+.gitignore
+data
+dist
+**/dist
+.astro
+**/.astro
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

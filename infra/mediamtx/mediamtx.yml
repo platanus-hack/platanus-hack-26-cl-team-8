@@ -1,0 +1,51 @@
+# MediaMTX — recibe el RTMP de la cámara y lo sirve como HLS de baja latencia.
+#
+#   publicador:  rtmp://mediamtx:1935/live/arena      (contenedor "camera", ffmpeg)
+#   lectores:    http://mediamtx:8888/live/arena/index.m3u8
+#                -> público en /live/arena/index.m3u8 a través de Caddy
+#
+# Las claves que no aparecen aquí usan el valor por defecto de MediaMTX.
+# Referencia: https://github.com/bluenviron/mediamtx/blob/main/mediamtx.yml
+
+logLevel: info
+logDestinations: [stdout]
+
+# Servicios auxiliares apagados.
+api: false
+metrics: false
+pprof: false
+playback: false
+
+# Protocolos que no se usan.
+rtsp: false
+webrtc: false
+srt: false
+
+# ---------- Ingesta RTMP ----------
+rtmp: true
+rtmpAddress: :1935
+
+# ---------- Salida HLS ----------
+hls: true
+hlsAddress: :8888
+# TLS lo termina Cloudflare; aquí es HTTP plano dentro de la red de compose.
+hlsEncryption: false
+# El playlist existe apenas publica la cámara, sin esperar al primer espectador.
+hlsAlwaysRemux: true
+# Low-Latency HLS (fMP4 + partes). Si algún reproductor da problemas, cambia a "fmp4".
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+# Duración mínima del segmento: el segmento real se corta en el siguiente keyframe,
+# así que la cámara debe emitir un keyframe por segundo (GOP = FPS).
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+# CORS abierto: el sitio es de un solo origen, pero así también funciona en desarrollo
+# (astro dev en otro puerto) y con reproductores externos.
+hlsAllowOrigins: ["*"]
+
+# ---------- Rutas ----------
+# Solo existe la ruta de la arena; cualquier otra se rechaza.
+paths:
+  live/arena:
+    source: publisher

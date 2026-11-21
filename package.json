@@ -1,0 +1,19 @@
+{
+  "name": "phack2026",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @phack/web dev",
+    "dev:orchestrator": "pnpm --filter @phack/orchestrator dev",
+    "dev:camera": "pnpm --filter @phack/camera dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

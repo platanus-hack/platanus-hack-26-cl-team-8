@@ -1,0 +1,20 @@
+{
+  "name": "@phack/env",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@phack/tsconfig": "workspace:*",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.3"
+  }
+}

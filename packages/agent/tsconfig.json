@@ -1,0 +1,4 @@
+{
+  "extends": "@phack/tsconfig/base.json",
+  "include": ["src"]
+}

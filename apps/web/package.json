@@ -1,0 +1,22 @@
+{
+  "name": "@phack/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@phack/protocol": "workspace:*",
+    "astro": "^5.18.0",
+    "hls.js": "^1.5.0"
+  },
+  "devDependencies": {
+    "@phack/tsconfig": "workspace:*",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.3"
+  }
+}

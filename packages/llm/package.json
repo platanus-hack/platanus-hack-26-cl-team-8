@@ -1,0 +1,22 @@
+{
+  "name": "@phack/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@phack/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@phack/tsconfig": "workspace:*",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
+  }
+}

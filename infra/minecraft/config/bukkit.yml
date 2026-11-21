@@ -1,0 +1,7 @@
+# Se copia a /data/bukkit.yml en cada arranque (COPY_CONFIG_DEST=/data en docker-compose.yml).
+# Paper completa con sus valores por defecto todas las claves que falten aquí.
+settings:
+  # Por defecto Bukkit rechaza conexiones seguidas desde la misma IP durante 4 s
+  # ("Connection throttled!"). Los dos agentes salen del mismo contenedor
+  # (misma IP) casi al mismo tiempo, así que hay que desactivarlo.
+  connection-throttle: -1
