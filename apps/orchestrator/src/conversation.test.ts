@@ -147,7 +147,7 @@ describe("Conversation", () => {
   it("una duración real que llega después de la frase siguiente no mueve nada", async () => {
     let resolve: (ms: number) => void = () => {};
     const { released, conversation, clock } = setup({
-      onRelease: (side, text) => (text === "uno" ? new Promise<number>((r) => (resolve = r)) : undefined),
+      onRelease: (_side, text) => (text === "uno" ? new Promise<number>((r) => (resolve = r)) : undefined),
     });
     conversation.say("red", "uno");
     clock.advance(MIN_SPEECH_MS + TURN_GAP_MS);

@@ -12,6 +12,7 @@ import {
   FlagBodySchema,
   MAX_PROMPT_LENGTH,
   SideSchema,
+  TOURNAMENT_ROUTES,
   UpdatePromptBodySchema,
   UpdateSettingsBodySchema,
   formatTranscript,
@@ -39,6 +40,7 @@ import type { JudgeOutcome } from "./judge";
 import { UnknownPresetError } from "./presets";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
+import type { TournamentReader } from "./tournament";
 import { isSpeechId } from "./speech";
 import { isTranscriptId } from "./transcript";
 
@@ -99,6 +101,8 @@ export type ServerDeps = {
   speech?: { get(speechId: string): Promise<Buffer | null> };
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
+  /** Torneos guardados en DATA_DIR (solo lectura) y lock del CLI que los corre. */
+  tournaments?: TournamentReader;
 };
 
 export type ModelPolicy = { isAllowed(id: string): boolean };
@@ -320,6 +324,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   app.post(API_ROUTES.matchStart, async (_req, reply) => {
+    // El CLI del torneo usa el mismo servidor de Minecraft y los mismos bots.
+    const lock = await deps.tournaments?.lock();
+    if (lock) {
+      return reply
+        .code(409)
+        .send(errorBody(`Hay un torneo corriendo ("${lock.id}"): la arena está ocupada hasta que termine o se pause`));
+    }
     try {
       return deps.match.start();
     } catch (err) {
@@ -493,6 +504,23 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get(API_ROUTES.defaults, async () => deps.defaults);
 
   app.get(API_ROUTES.models, async () => deps.models.snapshot());
+  // ---------- Torneo (solo lectura) ----------
+
+  const tournaments = deps.tournaments;
+  app.get(TOURNAMENT_ROUTES.list, async () => (tournaments ? tournaments.list() : []));
+
+  app.get<{ Params: { id: string } }>(TOURNAMENT_ROUTES.report, async (req, reply) => {
+    const report = tournaments ? await tournaments.report(req.params.id) : null;
+    if (!report) return reply.code(404).send(errorBody("No existe ese torneo"));
+    return report;
+  });
+
+  // Las keys traen "/" (ids del gateway): la web las manda codificadas y Fastify las decodifica.
+  app.get<{ Params: { id: string; a: string; b: string } }>(TOURNAMENT_ROUTES.pair, async (req, reply) => {
+    const attempts = tournaments ? await tournaments.pair(req.params.id, req.params.a, req.params.b) : null;
+    if (!attempts) return reply.code(404).send(errorBody("No existe ese torneo"));
+    return attempts;
+  });
 
   // ---------- WebSocket (solo servidor -> cliente) ----------
 

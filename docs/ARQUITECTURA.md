@@ -6,11 +6,11 @@ Este documento describe el diseño según los contratos del repo: `packages/prot
 
 | Pieza | Responsabilidad | No hace |
 |---|---|---|
-| `packages/protocol` | Tipos y esquemas zod compartidos: `ARENA`, `Side`, `KITS`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`, `MODEL_PRICE_CAP`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
+| `packages/protocol` | Tipos y esquemas zod compartidos: `ARENAS`/`arenaFor` (escenarios de arena; `ARENA` = el por defecto), `Side`, `KITS`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`, `MODEL_PRICE_CAP`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
 | `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `vercel` (Vercel AI Gateway, vía el SDK `ai`) y `mock` (guion fijo, sin red, para pruebas). | Saber de Minecraft. |
 | `packages/agent` | `createFighter(opts)` devuelve un `Fighter` (`connect`, `start`, `stop`): un bot de mineflayer con el ciclo percibir → LLM → actuar. Recibe su kit en `opts.kit` y ofrece al LLM solo las herramientas de ese kit. Informa lo que pasa a través de `FighterEvents`. | Teletransportarse, darse el kit o cambiar su modo de juego: eso lo hace el orquestador por RCON. |
 | `apps/orchestrator` | Único dueño del estado. API HTTP + websocket, ciclo de vida de la pelea, RCON, decisión del ganador, historial en `DATA_DIR`, lista de modelos permitidos. | Renderizar video. |
-| `apps/camera` | Bot espectador (`CAMERA_USERNAME`) ubicado en `ARENA.camera`; renderiza y publica RTMP en `RTMP_URL`. | Conocer el estado de la pelea. |
+| `apps/camera` | Bot espectador (`CAMERA_USERNAME`) ubicado en la `camera`/`cameraWide` del escenario de `ARENA_SCENARIO`; renderiza y publica RTMP en `RTMP_URL`. | Conocer el estado de la pelea. |
 | `apps/web` | Sitio Astro: reproductor HLS, telemetría en vivo por websocket, editor de prompts (con el kit y el modelo de cada lado), botones de iniciar/detener, historial. | Guardar estado propio. |
 | `infra/*` | Caddy (un solo origen), MediaMTX (RTMP → HLS), configuración de Minecraft. | |
 
@@ -66,7 +66,7 @@ La cámara no depende del orquestador ni del estado de la pelea: transmite la ar
 
 1. **Editar prompts.** `PUT /api/prompts/:side` con `{ prompt, provider?, model?, kit? }` (máx. `MAX_PROMPT_LENGTH` caracteres). El kit va junto con el prompt; sin `kit`, o con un id desconocido, vale `DEFAULT_KIT`. Un modelo que no está en la lista de permitidos se rechaza con `400` (ver [Modelos permitidos](#modelos-permitidos)). Los prompts editados son los de la **próxima** pelea; el orquestador avisa a todos con un evento `prompts`. Editar durante una pelea no cambia la pelea en curso.
 2. **Iniciar.** `POST /api/match/start`. Si ya hay una pelea en `preparing` o `running`, responde `409`. Si no, crea un `MatchState` nuevo en fase `preparing` y **congela** los prompts pendientes en `state.configs`.
-3. **Preparar.** Por RCON el orquestador deja la arena lista (centro `ARENA.center`, radio `ARENA.radius`, muros de `ARENA.wallHeight`). Crea un `LlmClient` por agente (el `provider`/`model` del `AgentConfig`, o `LLM_PROVIDER`/`LLM_MODEL` si vienen vacíos; si el modelo ya no está permitido, el modelo por defecto del servidor) y un `Fighter` por lado con los nombres de `AGENT_USERNAMES` y el kit de su `AgentConfig`. Tras `connect()`, teletransporta a cada uno a `ARENA.spawns[side]`, le da su kit y fija el modo de juego.
+3. **Preparar.** Por RCON el orquestador deja lista la arena del escenario `ARENA_SCENARIO` (ver [Escenarios de arena](#escenarios-de-arena)): carga con `forceload` el piso y ambas cámaras y la reconstruye o restaura entre peleas. Crea un `LlmClient` por agente (el `provider`/`model` del `AgentConfig`, o `LLM_PROVIDER`/`LLM_MODEL` si vienen vacíos; si el modelo ya no está permitido, el modelo por defecto del servidor) y un `Fighter` por lado con los nombres de `AGENT_USERNAMES` y el kit de su `AgentConfig`. Tras `connect()`, teletransporta a cada uno a los `spawns[side]` del escenario, le da su kit y fija el modo de juego.
 4. **Cuenta regresiva.** Con los dos peleadores listos, el orquestador pone `state.countdownEndsAt = ahora + COUNTDOWN_SECONDS` (3 segundos), envía el `state` de inmediato y espera hasta ese instante. La fase sigue siendo `preparing` y dentro del juego no se muestra nada: la web dibuja el "3, 2, 1" a partir de `countdownEndsAt`. La pausa cubre además la invulnerabilidad inicial de un jugador que acaba de entrar al mundo. Si la pelea se detiene o falla durante la cuenta, `countdownEndsAt` vuelve a `null` y la pelea no empieza.
 5. **Pelear.** Fase `running`, con `startedAt` y `endsAt = startedAt + MATCH_DURATION_SECONDS`; en esa misma actualización `countdownEndsAt` vuelve a `null`. Cada `Fighter` corre su ciclo cada `AGENT_TICK_MS`: arma una observación, llama al LLM con el prompt del usuario y las herramientas de su kit, y ejecuta lo que el LLM pide. Todo lo que ocurre vuelve al orquestador por `FighterEvents`, que actualiza `AgentStatus` (vida, comida, `damageDealt`, `decisions`, `lastThought`, `lastAction`) y lo retransmite por websocket.
 6. **Terminar.** La pelea termina por una de estas razones (`WinReason`):
@@ -189,6 +189,19 @@ Los datos guardados con los proveedores que ya no existen se convierten al leerl
 - `infra/minecraft/config/bukkit.yml` desactiva el `connection-throttle` de Bukkit: los dos agentes se conectan desde la misma IP (el contenedor del orquestador) casi al mismo tiempo, y con el valor por defecto el segundo sería rechazado.
 - Video: la cámara publica H.264 por RTMP en `live/arena`; MediaMTX lo sirve como LL-HLS con segmentos de 1 s y partes de 200 ms (`infra/mediamtx/mediamtx.yml`). `hlsAlwaysRemux: true` hace que el playlist exista apenas publica la cámara. Caddy marca los `.m3u8` con `Cache-Control: no-store`.
 
+## Escenarios de arena
+
+La variable `ARENA_SCENARIO` elige el mapa; su valor es también el nombre del mundo del servidor (`LEVEL` en `docker-compose.yml`, `level-name` en `scripts/local/minecraft.sh`), así que cada escenario tiene su propio mundo y cambiar de uno a otro no pisa el otro. Los datos (centro, radio jugable, spawns, cámaras) están en `ARENAS` de `packages/protocol`; el orquestador, la cámara y el prompt del agente usan `arenaFor(ARENA_SCENARIO)`. `ARENA` sigue exportado y es el escenario por defecto.
+
+| Escenario | Mundo | Preparación entre peleas |
+| --- | --- | --- |
+| `platanus` (por defecto) | Vacío (void: flat con una capa de aire y bioma `the_void`), lo crea el servidor. | `apps/orchestrator/src/platanus.ts` construye todo desde cero: limpia a aire el volumen de la arena, piso de concreto negro de 57×45 centrado en (0, 64, 0), el isotipo de Platanus (`platanus-logo.txt`, 41×41: `Y` concreto amarillo, `C` concreto blanco) con un `/fill` por tramo contiguo de cada fila, muros de vidrio de 5 bloques sobre el borde y **sin techo**. Luego elimina ítems, flechas y orbes de experiencia. Spawns a x = ±16, z = 0. |
+| `pizza-spleef-2` | Importado una sola vez de `infra/minecraft/worlds/pizza-spleef-2.zip`, solo cuando es el escenario activo. | Comprueba un bloque del mapa (detecta un mundo equivocado), restaura la pizza desde su plantilla mediana original y limpia restos del combate. Radio 25; el borde da al vacío. |
+
+En Docker, `itzg/minecraft-server` copia `WORLD` a `/data/$LEVEL` si esa carpeta no existe; por eso el `entrypoint` del servicio `minecraft` define `WORLD` solo cuando `LEVEL` es `pizza-spleef-2` (con un `WORLD` fijo, el primer arranque de `platanus` importaría la pizza). `GENERATOR_SETTINGS` solo afecta a mundos nuevos: el mapa importado trae los suyos.
+
+En ambos casos el primer comando que toca chunks se reintenta mientras el servidor responda que la zona no cargó. La cámara se ubica en +Z mirando al norte: el lado rojo (x negativo) queda a la izquierda, igual que en la web.
+
 ## Benchmarks
 
 El tablero vive en `/bench` y se arma con `GET /api/bench?scenario=&min=`. La lógica pura está en `packages/protocol/src/bench.ts` y lo que se mide en cada ronda, en `apps/orchestrator/src/metrics.ts`.
@@ -210,10 +223,10 @@ El tablero vive en `/bench` y se arma con `GET /api/bench?scenario=&min=`. La l�
 
 ## Cómo agregar un escenario nuevo
 
-Hoy existe un solo escenario: duelo 1 contra 1 en una arena circular cerrada. Un "escenario" es la combinación de **mapa + kit + reglas de victoria + herramientas disponibles para los agentes**. Para agregar otro (por ejemplo: arena con lava, duelo solo con arcos, o 2 contra 2), estos son los puntos de extensión, en el orden recomendado:
+Hoy hay dos escenarios de arena (ver arriba) con las mismas reglas: duelo 1 contra 1. Un "escenario" es la combinación de **mapa + kit + reglas de victoria + herramientas disponibles para los agentes**. Para agregar otro (por ejemplo: arena con lava, duelo solo con arcos, o 2 contra 2), estos son los puntos de extensión, en el orden recomendado:
 
 1. **Describirlo en el contrato (`packages/protocol`).**
-   - Agregar un identificador, por ejemplo `ScenarioIdSchema = z.enum(["duelo", "lava"])`, y un registro `SCENARIOS` con lo que hoy está fijo en `ARENA`: centro, radio, spawns por lado, posición de la cámara.
+   - Agregar el id a `ARENA_SCENARIOS` y su entrada a `ARENAS` (centro, radio, spawns por lado, cámaras; `kind: "built"` si se construye por RCON o `"template"` si se restaura de una plantilla del mapa). Repetir el id en el `z.enum` de `ARENA_SCENARIO` (`libs/env`), en `scripts/local/minecraft.sh` y, si trae mapa propio, en el `entrypoint` de `docker-compose.yml`.
    - Agregar `scenario` a `MatchStateSchema` y `MatchRecordSchema` **con `.default("duelo")`**, para que el historial ya guardado siga validando.
    - Si el escenario tiene otras formas de ganar, ampliar `WinReasonSchema`.
 

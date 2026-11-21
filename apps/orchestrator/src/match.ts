@@ -1,12 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { kitToolNames, type DecisionReport, type Fighter, type FighterEvents, type FighterOptions } from "@phack/agent";
+import {
+  kitToolNames,
+  type DecisionReport,
+  type Fighter,
+  type FighterEvents,
+  type FighterOptions,
+  type LlmErrorReport,
+} from "@phack/agent";
 import type { Env } from "@phack/env";
-import type { ApiKeys, LlmClient } from "@phack/llm";
+import type { ApiKeys, GatewayRouting, LlmClient } from "@phack/llm";
 import {
   MAX_HEALTH,
   AGENT_USERNAMES,
   COUNTDOWN_SECONDS,
   DEFAULT_KIT,
+  DEFAULT_SETTINGS,
   KITS,
   MAX_AGENT_MESSAGE_LENGTH,
   INJECTION_AT_SECONDS,
@@ -122,7 +130,12 @@ export type MatchDeps = {
     update(id: string, change: (record: MatchRecord) => MatchRecord): Promise<boolean>;
   };
   createFighter: (opts: FighterOptions) => Fighter;
-  createLlmClient: (opts: { provider: Provider; model?: string; apiKeys: ApiKeys }) => LlmClient;
+  createLlmClient: (opts: {
+    provider: Provider;
+    model?: string;
+    apiKeys: ApiKeys;
+    gatewayRouting?: GatewayRouting;
+  }) => LlmClient;
   /**
    * Transcripción de cada pelea (DATA_DIR/transcripts). append no espera ni lanza; read y
    * flush (opcionales) los usa el juez.
@@ -174,6 +187,128 @@ export class MatchActiveError extends Error {
 /** Marca interna: la pelea se terminó (stop/error) mientras se preparaba. */
 class CancelledError extends Error {}
 
+// ---------- Pelea única con configuración explícita (torneo) ----------
+
+/** Configuración explícita de un lado para `runOnce` (no usa los prompts de la web). */
+export type RunOnceSide = {
+  provider: Provider;
+  model: string;
+  prompt: string;
+  /** Enrutamiento de Vercel AI Gateway (p. ej. fijar "baseten"). */
+  gatewayRouting?: GatewayRouting;
+};
+
+export type RunOnceOptions = {
+  configs: Record<Side, RunOnceSide>;
+  durationSeconds: number;
+  /** Pedir el "por qué ganó" al LLM del servidor. Por defecto false. */
+  explain?: boolean;
+  /** Abortar = detener la pelea (resultado "stopped"). */
+  signal?: AbortSignal;
+};
+
+export type LatencySummary = { count: number; mean: number; p50: number; p95: number };
+
+/** Lo que el LLM de un lado hizo durante el duelo (solo cuenta la fase "running"). */
+export type SideOutcome = {
+  provider: Provider;
+  model: string;
+  /** Respuestas del LLM (una por llamada exitosa). */
+  decisions: number;
+  /** Decisiones sin acción válida (tool desconocida o argumentos inválidos). */
+  invalidActions: number;
+  tokensIn: number;
+  tokensOut: number;
+  /** Suma del costo informado por el proveedor (USD). */
+  costUsd: number;
+  /** Cuántas respuestas traían costo informado (0 = hay que estimar por tokens). */
+  costReportedCalls: number;
+  /** Latencia estado -> acción de cada decisión válida, en orden (ms). */
+  decisionLatenciesMs: number[];
+  latencyMs: LatencySummary;
+  llmErrors: number;
+  retryableLlmErrors: number;
+  /** Racha máxima de errores reintentables seguidos (una respuesta exitosa la corta). */
+  maxRetryableStreak: number;
+  lastLlmError: string | null;
+};
+
+export type MatchOutcome = {
+  id: string;
+  /** true si la pelea llegó a la fase "running" (solo entonces hay record). */
+  reachedRunning: boolean;
+  record: MatchRecord | null;
+  result: MatchResult;
+  /** Motivo del fallo si la pelea terminó en "error" (preparación, desconexión) o se detuvo. */
+  error: string | null;
+  /** Algún bot se desconectó en plena pelea. */
+  disconnected: boolean;
+  startedAt: number | null;
+  endedAt: number;
+  sides: Record<Side, SideOutcome>;
+};
+
+/** Resumen de latencias: media y percentiles por rango más cercano. Vacío = todo 0. */
+export function latencySummary(values: readonly number[]): LatencySummary {
+  const sorted = values.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  const n = sorted.length;
+  if (n === 0) return { count: 0, mean: 0, p50: 0, p95: 0 };
+  const rank = (p: number): number => sorted[Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))] ?? 0;
+  const mean = sorted.reduce((sum, v) => sum + v, 0) / n;
+  return { count: n, mean: Math.round(mean), p50: rank(0.5), p95: rank(0.95) };
+}
+
+type SideStatsAcc = Omit<SideOutcome, "provider" | "model" | "latencyMs"> & { streak: number };
+
+function emptyStatsAcc(): SideStatsAcc {
+  return {
+    decisions: 0,
+    invalidActions: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    costReportedCalls: 0,
+    decisionLatenciesMs: [],
+    llmErrors: 0,
+    retryableLlmErrors: 0,
+    maxRetryableStreak: 0,
+    lastLlmError: null,
+    streak: 0,
+  };
+}
+
+/** Hub que no envía nada: para correr peleas sin web (torneo por CLI). */
+export const NOOP_HUB: EventSink = { broadcast: () => {}, markStateDirty: () => {}, flushState: () => {} };
+
+/**
+ * Ajustes fijos de una pelea del torneo: una sola pelea a tiempo fijo, sin comunicación,
+ * sin voz y sin juez, para que todas las partidas se jueguen igual.
+ */
+export function tournamentSettings(durationSeconds: number): MatchSettings {
+  return {
+    ...DEFAULT_SETTINGS,
+    comms: "none",
+    timer: true,
+    timerSeconds: Math.max(1, Math.round(durationSeconds)),
+    mode: "single",
+    voice: false,
+    scenario: "duel",
+    rounds: 1,
+    judge: false,
+    rules: { red: [], blue: [] },
+  };
+}
+
+type BeginOptions = {
+  configs: PromptsResponse;
+  settings: MatchSettings;
+  notes: string[];
+  explain: boolean;
+  routing: Partial<Record<Side, GatewayRouting>>;
+  /** true = la configuración viene del torneo: no se aplica la lista de modelos permitidos. */
+  explicit: boolean;
+};
+
 type MatchContext = {
   id: string;
   createdAt: number;
@@ -213,6 +348,24 @@ type MatchContext = {
   unseenInjections: Record<Side, number>;
   /** Órdenes falsas programadas para la ronda en juego (escenario "injection"). */
   injectionTimers: ReturnType<typeof setTimeout>[];
+  /** Pedir el "por qué ganó" al terminar (las peleas del torneo no lo piden). */
+  explain: boolean;
+  /** Enrutamiento de Vercel AI Gateway por lado (torneo). */
+  routing: Partial<Record<Side, GatewayRouting>>;
+  /** Configuración explícita (torneo): no pasa por la lista de modelos permitidos. */
+  explicit: boolean;
+  /** Torneo: lo que hizo el LLM de cada lado (ver SideOutcome). */
+  stats: Record<Side, SideStatsAcc>;
+  /** Motivo del fallo (para MatchOutcome). */
+  error: string | null;
+  disconnected: boolean;
+  record: MatchRecord | null;
+  /** Configuración resuelta (proveedor y modelo reales), para MatchOutcome. */
+  configs: PromptsResponse;
+  result: MatchResult | null;
+  /** Se resuelve al terminar toda la limpieza (finalized). */
+  done: Promise<void>;
+  resolveDone: () => void;
 };
 
 type StatusEntry = Extract<TranscriptEntry, { type: "status" }>;
@@ -326,13 +479,95 @@ export class MatchManager {
 
   /** Inicia una pelea con los prompts pendientes. Devuelve el estado en fase "preparing". */
   start(): MatchState {
+    const { settings, notes } = effectiveSettings(this.deps.settings.get());
+    this.begin({
+      // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
+      configs: this.deps.prompts.get(),
+      settings,
+      notes,
+      explain: true,
+      routing: {},
+      explicit: false,
+    });
+    return this.getState();
+  }
+
+  /**
+   * Corre UNA pelea con configuración explícita y espera a que termine (incluida la
+   * limpieza). No usa los prompts ni los ajustes de la web (ver tournamentSettings).
+   * Rechaza con MatchActiveError si ya hay otra. Nunca rechaza por fallos de la pelea:
+   * esos quedan en `result`/`error` del resultado.
+   */
+  async runOnce(opts: RunOnceOptions): Promise<MatchOutcome> {
+    if (opts.signal?.aborted) throw new Error("Pelea cancelada antes de empezar");
+    const configs: PromptsResponse = {
+      red: { side: "red", prompt: opts.configs.red.prompt, provider: opts.configs.red.provider, model: opts.configs.red.model },
+      blue: { side: "blue", prompt: opts.configs.blue.prompt, provider: opts.configs.blue.provider, model: opts.configs.blue.model },
+    };
+    const routing: Partial<Record<Side, GatewayRouting>> = {};
+    for (const side of SIDES) {
+      const r = opts.configs[side].gatewayRouting;
+      if (r) routing[side] = r;
+    }
+    const ctx = this.begin({
+      configs,
+      settings: tournamentSettings(opts.durationSeconds),
+      notes: [],
+      explain: opts.explain ?? false,
+      routing,
+      explicit: true,
+    });
+    const onAbort = (): void => {
+      if (!ctx.ended) ctx.error = ctx.error ?? "pelea detenida por quien la pidió";
+      void this.finish(ctx, { winner: null, reason: "stopped" });
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      await ctx.done;
+    } finally {
+      opts.signal?.removeEventListener("abort", onAbort);
+    }
+    return this.outcome(ctx);
+  }
+
+  private outcome(ctx: MatchContext): MatchOutcome {
+    const side = (s: Side): SideOutcome => {
+      const { streak: _streak, ...acc } = ctx.stats[s];
+      const config = ctx.configs[s];
+      return {
+        provider: config.provider ?? this.deps.env.LLM_PROVIDER,
+        model: config.model ?? "",
+        ...acc,
+        decisionLatenciesMs: [...acc.decisionLatenciesMs],
+        latencyMs: latencySummary(acc.decisionLatenciesMs),
+      };
+    };
+    const record = ctx.record ? structuredClone(ctx.record) : null;
+    return {
+      id: ctx.id,
+      reachedRunning: record !== null,
+      record,
+      result: ctx.result ?? { winner: null, reason: "error" },
+      error: ctx.error,
+      disconnected: ctx.disconnected,
+      startedAt: record?.startedAt ?? null,
+      endedAt: record?.endedAt ?? Date.now(),
+      sides: { red: side("red"), blue: side("blue") },
+    };
+  }
+
+  private begin(opts: BeginOptions): MatchContext {
     if (this.shuttingDown || this.isActive()) throw new MatchActiveError();
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
 
-    const { settings, notes } = effectiveSettings(this.deps.settings.get());
+    const { settings, notes } = opts;
+    let resolveDone: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
     // Con voz, cada frase ocupa lo que dura dicha a la velocidad de la voz; sin voz, a velocidad normal.
     const speed = settings.voice ? (this.deps.speechSpeed ?? DEFAULT_SPEECH_SPEED) : 1;
     const ctx: MatchContext = {
@@ -358,6 +593,17 @@ export class MatchManager {
       prices: { red: null, blue: null },
       unseenInjections: { red: 0, blue: 0 },
       injectionTimers: [],
+      explain: opts.explain,
+      routing: opts.routing,
+      explicit: opts.explicit,
+      stats: { red: emptyStatsAcc(), blue: emptyStatsAcc() },
+      error: null,
+      disconnected: false,
+      record: null,
+      configs: structuredClone(opts.configs),
+      result: null,
+      done,
+      resolveDone,
     };
     this.ctx = ctx;
     this.state = {
@@ -367,8 +613,7 @@ export class MatchManager {
       endsAt: null,
       countdownEndsAt: null,
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
-      // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
-      configs: this.deps.prompts.get(),
+      configs: opts.configs,
       settings,
       series: settings.mode === "rounds" ? newSeries(settings.rounds) : null,
       result: null,
@@ -377,7 +622,7 @@ export class MatchManager {
     this.record(ctx, { type: "phase", at: ctx.createdAt, phase: "preparing" });
     for (const note of notes) this.log(ctx, "warn", note);
     void this.run(ctx);
-    return this.getState();
+    return ctx;
   }
 
   /** Detiene la pelea en curso (si la hay). Idempotente. */
@@ -424,6 +669,7 @@ export class MatchManager {
         if (kit.id === "custom") config.customKit = kit;
         else delete config.customKit;
         this.state.configs[side] = config;
+        ctx.configs[side] = structuredClone(config);
         ctx.fighters[side] = this.deps.createFighter({
           side,
           username: AGENT_USERNAMES[side],
@@ -493,6 +739,8 @@ export class MatchManager {
       const gone = SIDES.find((side) => !this.state.agents[side].connected);
       if (gone) {
         this.log(ctx, "error", `${SIDE_LABEL[gone]} se desconectó del servidor antes de empezar la pelea`);
+        ctx.disconnected = true;
+        ctx.error = ctx.error ?? `${SIDE_LABEL[gone]} se desconectó del servidor antes de empezar la pelea`;
         await this.finish(ctx, { winner: null, reason: "error" });
         return;
       }
@@ -501,6 +749,7 @@ export class MatchManager {
     } catch (err) {
       if (ctx.ended || err instanceof CancelledError) return;
       this.log(ctx, "error", `No se pudo completar la pelea: ${errorMessage(err)}`);
+      ctx.error = errorMessage(err);
       await this.finish(ctx, { winner: null, reason: "error" });
     }
   }
@@ -859,7 +1108,7 @@ export class MatchManager {
     let model = provider === "mock" ? serverModel : config.model || serverModel;
     // Segundo control de la lista de permitidos (el primero está al guardar el prompt): cubre
     // prompts guardados antes de que existiera y modelos que salieron de la lista después.
-    if (provider !== "mock" && config.model && !models.isAllowed(config.model)) {
+    if (!ctx.explicit && provider !== "mock" && config.model && !models.isAllowed(config.model)) {
       this.log(
         ctx,
         "warn",
@@ -867,7 +1116,13 @@ export class MatchManager {
       );
       model = serverModel;
     }
-    return this.deps.createLlmClient({ provider, model, apiKeys: this.apiKeys() });
+    const gatewayRouting = ctx.routing[side];
+    return this.deps.createLlmClient({
+      provider,
+      model,
+      apiKeys: this.apiKeys(),
+      ...(gatewayRouting ? { gatewayRouting } : {}),
+    });
   }
 
   /**
@@ -953,6 +1208,8 @@ export class MatchManager {
         if (this.state.phase !== "running") return;
         if (!s.connected) {
           this.log(ctx, "error", `${SIDE_LABEL[side]} se desconectó del servidor en plena pelea`);
+          ctx.disconnected = true;
+          ctx.error = ctx.error ?? `${SIDE_LABEL[side]} se desconectó del servidor en plena pelea`;
           void this.finish(ctx, { winner: null, reason: "error" });
         } else if (!s.alive && s.health <= 0) {
           // Respaldo por si el agente no alcanza a emitir onDeath.
@@ -1009,7 +1266,35 @@ export class MatchManager {
           latency.count += 1;
           a.avgDecisionMs = Math.round(latency.totalMs / latency.count);
         }
+        const st = ctx.stats[side];
+        st.decisions += 1;
+        st.streak = 0;
+        if (d.usage) {
+          st.tokensIn += count(d.usage.inputTokens);
+          st.tokensOut += count(d.usage.outputTokens);
+        }
+        if (typeof d.costUsd === "number" && Number.isFinite(d.costUsd) && d.costUsd >= 0) {
+          st.costUsd += d.costUsd;
+          st.costReportedCalls += 1;
+        }
+        if (d.invalid === true) st.invalidActions += 1;
+        else if (typeof d.decisionMs === "number" && Number.isFinite(d.decisionMs) && d.decisionMs >= 0) {
+          st.decisionLatenciesMs.push(Math.round(d.decisionMs));
+        }
         hub.markStateDirty();
+      },
+      onLlmError: (e: LlmErrorReport) => {
+        if (!fighting()) return;
+        const st = ctx.stats[side];
+        st.llmErrors += 1;
+        st.lastLlmError = truncate(e.message, 300);
+        if (e.retryable) {
+          st.retryableLlmErrors += 1;
+          st.streak += 1;
+          st.maxRetryableStreak = Math.max(st.maxRetryableStreak, st.streak);
+        } else {
+          st.streak = 0;
+        }
       },
       onDamageTaken: (amount, health, bySelf) => {
         if (!fighting()) return;
@@ -1105,6 +1390,7 @@ export class MatchManager {
       // Si la pelea se canceló o falló en plena cuenta regresiva, ya no hay nada que contar.
       this.state.countdownEndsAt = null;
       this.state.result = result;
+      ctx.result = result;
       this.deps.hub.flushState();
       this.record(ctx, { type: "phase", at: endedAt, phase: "finished" });
 
@@ -1126,7 +1412,8 @@ export class MatchManager {
       // "Por qué ganó": se pide ya (en paralelo con la desconexión) y se adjunta después,
       // así nunca retrasa el cierre de la pelea.
       const final = record;
-      const explanation = reachedRunning && shouldExplain(result) ? this.explain(final) : null;
+      const explanation = ctx.explain && reachedRunning && shouldExplain(result) ? this.explain(final) : null;
+      if (reachedRunning) ctx.record = final;
 
       const stops = SIDES.map(async (side) => {
         const fighter = ctx.fighters[side];
@@ -1161,6 +1448,7 @@ export class MatchManager {
       // Toda pelea cierra su transcripción, también las que no llegaron a empezar.
       if (record) this.record(ctx, { type: "end", at: Date.now(), record });
       ctx.finalized = true;
+      ctx.resolveDone();
       if (!this.shuttingDown) {
         this.idleTimer = setTimeout(() => {
           this.idleTimer = null;

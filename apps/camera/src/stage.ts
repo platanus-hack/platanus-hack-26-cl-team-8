@@ -2,7 +2,8 @@
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import type { Bot } from "mineflayer";
-import { ARENA, SIDES, type Side } from "@phack/protocol";
+import { SIDES, type Side } from "@phack/protocol";
+import { activeArena } from "./arena";
 import type { Vec } from "./director";
 import { errorText, FatalError, log } from "./log";
 
@@ -189,6 +190,7 @@ export function createStage(opts: { width: number; height: number; viewDistance:
     markers[side] = mesh;
   }
 
+  const ARENA = activeArena();
   const center = new Vec3(ARENA.center.x, ARENA.center.y, ARENA.center.z);
   let ready = false;
 

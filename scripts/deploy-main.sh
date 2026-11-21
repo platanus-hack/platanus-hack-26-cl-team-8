@@ -137,6 +137,7 @@ fi
 rsync -az --delete \
   --exclude '.env' \
   --exclude '.deployed-sha' \
+  --exclude '/.map-backups/' \
   --exclude 'data/' \
   --exclude 'node_modules/' \
   -e "$RSYNC_RSH" \
@@ -192,4 +193,6 @@ remote "printf '%s\n' '$NEW_SHA' > .deployed-sha"
 
 FROM="${OLD_SHA:0:7}"
 echo "DESPLEGADO: ${FROM:-(primer despliegue)} -> $NEW_SHORT$([ -n "$RESTART" ] && echo " (reiniciados:$RESTART)")."
-[ -n "$STREAM_NOTE" ] && echo "${STREAM_NOTE# }"
+if [ -n "$STREAM_NOTE" ]; then
+  echo "${STREAM_NOTE# }"
+fi

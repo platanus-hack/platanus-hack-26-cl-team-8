@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA, MAX_HEALTH } from "@phack/protocol";
+import { MAX_HEALTH, arenaFor } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
 import { CommsInbox, type InboxSnapshot } from "./comms";
 import { HearWake } from "./wake";
@@ -33,6 +33,7 @@ import { describeResources, wornItem, type ResourceItem, type WornItem } from ".
 import { buildObservation, type Observation } from "./observation";
 import { ActionPlan, isOpenEnded, QUEUE_STEP_DEFAULT_MS, replyResults, stepSeconds, type PlanStep } from "./plan";
 import { buildSystemPrompt } from "./prompt";
+import { classifyLlmError, isValidAction } from "./decision";
 import { RoundGate, type SeriesView } from "./rounds";
 import {
   BOW_CHARGE_MS,
@@ -110,10 +111,12 @@ const GUARD_LOWER_MS = 100;
 const RETREAT_REPLAN_MS = 400;
 const EYE_HEIGHT = 1.62;
 
+/** Geometría de la arena de la pelea actual (ARENA_SCENARIO se lee diferido: el torneo lo fija por partida). */
+const currentArena = () => arenaFor(process.env.ARENA_SCENARIO);
 /** Altura de los pies de un luchador parado en el piso de la arena. */
-const FLOOR_Y = ARENA.center.y + 1;
+const floorY = (): number => currentArena().center.y + 1;
 /** Radio dentro del que caen las perlas: deja margen con el muro de la arena. */
-const SAFE_RADIUS = ARENA.radius - 1.5;
+const safeRadius = (): number => currentArena().radius - 1.5;
 /** Plazo para que un ítem de un solo uso (perla, bloques) llegue a la mano. */
 const EQUIP_TIMEOUT_MS = 1000;
 
@@ -145,14 +148,22 @@ const BUILD_CLEARANCE = 0.8;
 const AIR_BLOCKS = new Set(["air", "cave_air", "void_air"]);
 const BUILD_REACH = 4.5;
 const BUILD_STEP_TIMEOUT_MS = 10_000;
-const BUILD_BOUNDS = {
-  min: { x: ARENA.center.x - ARENA.radius, y: FLOOR_Y, z: ARENA.center.z - ARENA.radius },
-  max: { x: ARENA.center.x + ARENA.radius, y: ARENA.center.y + ARENA.wallHeight, z: ARENA.center.z + ARENA.radius },
-};
-const WORLD_BOUNDS = {
-  min: { x: BUILD_BOUNDS.min.x - 1, y: ARENA.center.y, z: BUILD_BOUNDS.min.z - 1 },
-  max: { x: BUILD_BOUNDS.max.x + 1, y: BUILD_BOUNDS.max.y + 1, z: BUILD_BOUNDS.max.z + 1 },
-};
+/** Volumen donde se puede construir y romper: el círculo jugable inscrito, del piso al tope. */
+function buildBounds(): { min: Vec3Like; max: Vec3Like } {
+  const { center, radius, wallHeight } = currentArena();
+  return {
+    min: { x: center.x - radius, y: center.y + 1, z: center.z - radius },
+    max: { x: center.x + radius, y: center.y + wallHeight, z: center.z + radius },
+  };
+}
+/** Lo que el agente ve del mundo: el volumen de construcción más un bloque alrededor. */
+function worldBounds(): { min: Vec3Like; max: Vec3Like } {
+  const b = buildBounds();
+  return {
+    min: { x: b.min.x - 1, y: currentArena().center.y, z: b.min.z - 1 },
+    max: { x: b.max.x + 1, y: b.max.y + 1, z: b.max.z + 1 },
+  };
+}
 /** Alcance para vaciar un cubo (el servidor no deja más de ~5 bloques desde los ojos). */
 const POUR_REACH = 4.6;
 /** Cuánto se espera a que el servidor vacíe el cubo antes de dar el intento por fallido. */
@@ -909,6 +920,8 @@ class MineflayerFighter implements Fighter {
     const bot = this.bot;
     if (!bot || !this.connected || !this.alive || this.gate.isPaused) return;
 
+    // Desde aquí corre la latencia de la decisión (estado -> acción válida).
+    const decisionStartedAt = Date.now();
     const heard = this.inbox.snapshot();
     const observation = this.observe(bot, heard);
     const observationJson = JSON.stringify(observation);
@@ -921,7 +934,11 @@ class MineflayerFighter implements Fighter {
     const abort = new AbortController();
     this.llmAbort = abort;
     const ticket = this.gate.ticket();
-    const timeout = setTimeout(() => abort.abort(), LLM_TIMEOUT_MS);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, LLM_TIMEOUT_MS);
     const llmStartedAt = Date.now();
     let response: LlmResponse;
     try {
@@ -930,6 +947,8 @@ class MineflayerFighter implements Fighter {
       // Una llamada cortada por la pausa entre rondas no es una falla.
       if (!this.stopped && this.gate.accepts(ticket)) {
         this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
+        const info = classifyLlmError(err, { timedOut });
+        this.safe(() => this.opts.events.onLlmError?.(info));
       }
       return;
     } finally {
@@ -951,11 +970,18 @@ class MineflayerFighter implements Fighter {
     };
     const usage = validUsage(response.usage);
     if (usage) report.usage = usage;
-    this.safe(() => this.opts.events.onDecision(report));
+    if (typeof response.costUsd === "number" && Number.isFinite(response.costUsd) && response.costUsd >= 0) {
+      report.costUsd = response.costUsd;
+    }
 
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
     const text = typeof response.text === "string" ? response.text : "";
     const normalized: LlmResponse = { text, toolCalls };
+    // No llamar herramientas es una decisión válida (no cambia nada); llamar una que no
+    // existe o con argumentos que no son un objeto, no.
+    if (toolCalls.length > 0 && !isValidAction(toolCalls[0])) report.invalid = true;
+    else report.decisionMs = Date.now() - decisionStartedAt;
+    this.safe(() => this.opts.events.onDecision(report));
 
     // Sin herramientas no cambia nada: el cuerpo sigue con su acción y con su cola.
     let ran: string[] = [];
@@ -1056,16 +1082,16 @@ class MineflayerFighter implements Fighter {
         absorption: readAbsorption(bot.entity),
       },
       opponent: opponent ? { position: opponent.position, health: readEntityHealth(opponent) } : null,
-      arena: { center: ARENA.center, radius: ARENA.radius },
+      arena: { center: currentArena().center, radius: currentArena().radius },
       currentAction: this.mode,
       lastActionResult: this.lastResult,
       queuedActions: this.plan.pending(),
       pearlReadyAt: this.pearlReadyAt,
       terrain: this.terrain(bot, opponent),
-      world: scanWorld(WORLD_BOUNDS, (p) => this.readWorldCell(bot, p), (p) => inside(p, BUILD_BOUNDS), {
+      world: scanWorld(worldBounds(), (p) => this.readWorldCell(bot, p), (p) => inside(p, buildBounds()), {
         center: bot.entity.position, radius: this.opts.observationRadius ?? 16,
       }),
-      buildBounds: BUILD_BOUNDS,
+      buildBounds: buildBounds(),
       resources: describeResources(this.resourceItems(bot), {
         health: bot.health, food: bot.food, pearlMinHealth: this.pearlMinHealth,
         pearlCooldown: Math.max(0, (this.pearlReadyAt - Date.now()) / 1000), tools: this.toolNames,
@@ -1129,7 +1155,7 @@ class MineflayerFighter implements Fighter {
   private startConstruction(bot: Bot, args: ParsedToolArgs): string {
     let plan = this.construction;
     if (args.blocks !== undefined) {
-      const blocks = parseBlueprint(args.blocks, BUILD_BOUNDS);
+      const blocks = parseBlueprint(args.blocks, buildBounds());
       if (typeof blocks === "string") return refusalText(blocks, this.mode);
       if (!plan || JSON.stringify(plan.blocks) !== JSON.stringify(blocks)) plan = new ConstructionPlan(blocks);
     }
@@ -1242,7 +1268,7 @@ class MineflayerFighter implements Fighter {
     const now = Date.now();
     if ((name === "move" || name === "dig") && args.positionInvalid) return refusalText("position debe contener x, y, z numéricos finitos", this.mode);
     if (name === "move" && args.position && args.style !== "goto") return refusalText("usa style=goto para moverte a position", this.mode);
-    if (name === "move" && args.position && !inside(args.position, { min: BUILD_BOUNDS.min, max: { ...BUILD_BOUNDS.max, y: BUILD_BOUNDS.max.y - 1 } })) return refusalText("destino fuera de la arena o sin altura para tu cuerpo", this.mode);
+    if (name === "move" && args.position && !inside(args.position, { min: buildBounds().min, max: { ...buildBounds().max, y: buildBounds().max.y - 1 } })) return refusalText("destino fuera de la arena o sin altura para tu cuerpo", this.mode);
     if (name === "build") return this.startConstruction(bot, args);
     const sameDig = name !== "dig" || (args.digTarget === this.digTarget && JSON.stringify(args.position) === JSON.stringify(this.digPosition));
     if (name === this.mode && sameDig) {
@@ -1426,7 +1452,7 @@ class MineflayerFighter implements Fighter {
     if (this.countItems(bot, isPearl) === 0) return "no puedes usar la perla: no te quedan perlas";
     if (now < this.pearlReadyAt) return `la perla está en recarga: faltan ${secondsLeft(this.pearlReadyAt, now)} s`;
     if (bot.health <= this.pearlMinHealth) return `no puedes usar la perla: te queda muy poca vida (caer quita ~${this.pearlHit})`;
-    if (bot.entity.position.y - FLOOR_Y > PEARL_MAX_HEIGHT) return "no puedes usar la perla desde altura";
+    if (bot.entity.position.y - floorY() > PEARL_MAX_HEIGHT) return "no puedes usar la perla desde altura";
     if (target === "rival") {
       if (!opponent) return "no ves al rival: no hay hacia dónde lanzar la perla";
       const dist = round1(distance3(bot.entity.position, opponent.position));
@@ -1466,7 +1492,7 @@ class MineflayerFighter implements Fighter {
     const eye = bot.entity.position.offset(0, EYE_HEIGHT, 0);
     const reachable = (block: Block): boolean => distance3(eye, block.position.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
     if (position) {
-      if (![position.x, position.y, position.z].every(Number.isSafeInteger) || !inside(position, BUILD_BOUNDS)) return "bloque fuera del volumen modificable o coordenadas no enteras";
+      if (![position.x, position.y, position.z].every(Number.isSafeInteger) || !inside(position, buildBounds())) return "bloque fuera del volumen modificable o coordenadas no enteras";
       const block = bot.blockAt(this.vec(bot, position.x, position.y, position.z));
       if (!block || !isBreakable(block.name)) return "ese bloque no se puede romper";
       if (!reachable(block)) return "bloque fuera de alcance: usa move con position para acercarte";
@@ -1503,7 +1529,7 @@ class MineflayerFighter implements Fighter {
         const y = Math.floor(from.y + (to.y - from.y) * k + lift);
         const z = Math.floor(from.z + (to.z - from.z) * k);
         const key = `${x},${y},${z}`;
-        if (seen.has(key) || !inside({ x, y, z }, BUILD_BOUNDS)) continue;
+        if (seen.has(key) || !inside({ x, y, z }, buildBounds())) continue;
         seen.add(key);
         const block = bot.blockAt(this.vec(bot, x, y, z));
         if (block && isBreakable(block.name)) found.push({ block, at: t });
@@ -1521,9 +1547,9 @@ class MineflayerFighter implements Fighter {
       for (let dy = -1; dy <= radius; dy += 1) {
         for (let dz = -radius; dz <= radius; dz += 1) {
           const y = Math.floor(base.y) + dy;
-          if (y < FLOOR_Y) continue;
+          if (y < floorY()) continue;
           const block = bot.blockAt(this.vec(bot, Math.floor(base.x) + dx, y, Math.floor(base.z) + dz));
-          if (!block || !inside(block.position, BUILD_BOUNDS) || !isBreakable(block.name)) continue;
+          if (!block || !inside(block.position, buildBounds()) || !isBreakable(block.name)) continue;
           found.push({ block, dist: distance3(eye, block.position.offset(0.5, 0.5, 0.5)) });
         }
       }
@@ -1540,7 +1566,7 @@ class MineflayerFighter implements Fighter {
       return block !== null && block.boundingBox === "block";
     });
     return {
-      height: position.y - FLOOR_Y,
+      height: position.y - floorY(),
       blocksBetween: opponent ? this.blocksBetween(bot, opponent).length : 0,
       enclosed,
     };
@@ -1846,7 +1872,7 @@ class MineflayerFighter implements Fighter {
     if (now - this.lastRetreatPlanAt < RETREAT_REPLAN_MS) return;
     this.lastRetreatPlanAt = now;
     const self = bot.entity.position;
-    const target = retreatTarget({ self, opponent: opponent.position, center: ARENA.center, radius: ARENA.radius });
+    const target = retreatTarget({ self, opponent: opponent.position, center: currentArena().center, radius: currentArena().radius });
     bot.pathfinder.setGoal(new goals.GoalNear(target.x, Math.floor(self.y), target.z, 1));
     this.goalKind = "point";
     this.followTarget = null;
@@ -1870,7 +1896,7 @@ class MineflayerFighter implements Fighter {
       this.strafeSwitchAt = now + STRAFE_SWITCH_MS;
     }
     const self = bot.entity.position;
-    const arena = { center: ARENA.center, radius: ARENA.radius };
+    const arena = { center: currentArena().center, radius: currentArena().radius };
     const rival = opponent ? opponent.position : null;
     const dist = rival ? round1(distance3(self, rival)) : null;
     let target: Vec3Like;
@@ -2102,7 +2128,7 @@ class MineflayerFighter implements Fighter {
       const self = bot.entity.position;
       const dx = landing.x - self.x;
       const dz = landing.z - self.z;
-      const pitch = pearlPitch(Math.hypot(dx, dz), self.y + PEARL_LAUNCH_HEIGHT - FLOOR_Y);
+      const pitch = pearlPitch(Math.hypot(dx, dz), self.y + PEARL_LAUNCH_HEIGHT - floorY());
       const yaw = Math.atan2(-dx, -dz);
       // Dos llamadas: look() no hace nada (ni fija la "última mirada enviada") cuando la
       // mirada pedida coincide con la actual, y podría quedar enviada una mirada vieja del
@@ -2140,22 +2166,22 @@ class MineflayerFighter implements Fighter {
       const scale = speed > PEARL_MAX_LEAD_SPEED ? PEARL_MAX_LEAD_SPEED / speed : 1;
       point = {
         x: opponent.position.x + this.opponentVelocity.x * scale * PEARL_LEAD_S,
-        y: FLOOR_Y,
+        y: floorY(),
         z: opponent.position.z + this.opponentVelocity.z * scale * PEARL_LEAD_S,
       };
     } else if (opponent) {
       point = retreatTarget({
         self,
         opponent: opponent.position,
-        center: ARENA.center,
-        radius: ARENA.radius,
+        center: currentArena().center,
+        radius: currentArena().radius,
         step: PEARL_AWAY_STEP,
       });
     } else {
       // Sin rival a la vista: al otro lado de la arena, pasando por el centro.
-      point = { x: 2 * ARENA.center.x - self.x, y: FLOOR_Y, z: 2 * ARENA.center.z - self.z };
+      point = { x: 2 * currentArena().center.x - self.x, y: floorY(), z: 2 * currentArena().center.z - self.z };
     }
-    return clampToArena(point, ARENA.center, SAFE_RADIUS);
+    return clampToArena(point, currentArena().center, safeRadius());
   }
 
   /**
@@ -2296,11 +2322,11 @@ class MineflayerFighter implements Fighter {
         const dz = opponent.position.z - self.z;
         const len = Math.hypot(dx, dz) || 1;
         column = { x: self.x + (dx / len) * WATER_BETWEEN_STEP, y: self.y, z: self.z + (dz / len) * WATER_BETWEEN_STEP };
-        fromY = FLOOR_Y - 1;
+        fromY = floorY() - 1;
       }
     }
     // Primer bloque sólido de la columna hacia abajo (nunca bajo el piso de la arena).
-    for (let y = fromY; y >= FLOOR_Y - 1; y -= 1) {
+    for (let y = fromY; y >= floorY() - 1; y -= 1) {
       const block = bot.blockAt(this.vec(bot, Math.floor(column.x), y, Math.floor(column.z)));
       if (!block || block.boundingBox !== "block") continue;
       const above = bot.blockAt(block.position.offset(0, 1, 0));
@@ -2522,7 +2548,7 @@ class MineflayerFighter implements Fighter {
 
   private goToCenter(bot: Bot): void {
     if (this.goalKind === "center") return;
-    bot.pathfinder.setGoal(new goals.GoalNear(ARENA.center.x, ARENA.center.y + 1, ARENA.center.z, 2));
+    bot.pathfinder.setGoal(new goals.GoalNear(currentArena().center.x, currentArena().center.y + 1, currentArena().center.z, 2));
     this.goalKind = "center";
     this.followTarget = null;
   }

@@ -18,18 +18,17 @@
  * ============================================================================
  */
 import {
-  ARENA,
+  arenaFor,
   MAX_AGENT_MESSAGE_LENGTH,
   MAX_HEALTH,
-  RULE_LABELS,
-  SCENARIOS,
   kitItemTitle,
   type CommsMode,
   type Horizon,
   type Kit,
   type KitItem,
-  type RuleId,
   type ScenarioId,
+  type ArenaScenario,
+  type ArenaScenarioId,
   type Side,
 } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
@@ -51,6 +50,8 @@ export type SystemPromptInput = {
   /** Instrucciones escritas por el usuario en la web: definen el objetivo del agente. */
   strategy: string;
   tickMs: number;
+  /** Escenario de la pelea. Si falta, el de ARENA_SCENARIO (o el por defecto). */
+  arena?: ArenaScenarioId;
   /** Duración de la pelea en segundos. */
   durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
@@ -244,6 +245,18 @@ function endingLines(input: SystemPromptInput): string[] {
   ];
 }
 
+/** Cómo es el recinto, según el escenario: solo lo físico (forma, tamaño, límites). */
+function arenaLine(arena: ArenaScenario): string {
+  if (arena.kind === "built") {
+    // El piso incluye la fila de los muros: lo caminable es un bloque menos por lado.
+    const width = arena.floor.halfX * 2 - 1;
+    const depth = arena.floor.halfZ * 2 - 1;
+    return `- Un recinto rectangular de unos ${width} x ${depth} bloques, de piso plano, rodeado por muros de vidrio de ${arena.wallHeight} bloques de alto y abierto arriba; fuera de los muros solo hay vacío.`;
+  }
+  const diameter = arena.radius * 2 + 1;
+  return `- Una plataforma circular de unos ${diameter} bloques de diámetro, sin muros, con obstáculos y telarañas sobre el piso; el borde da al vacío y caer ahí mata.`;
+}
+
 /**
  * Prompt de sistema: describe el mundo (arena, mecánicas, herramientas, kit y
  * comunicación) pero NO le fija un objetivo al agente. Qué quiere lograr lo dicen las
@@ -253,13 +266,13 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const strategy =
     input.strategy.trim().length > 0 ? input.strategy.trim() : "(sin instrucciones: decide tú qué quieres hacer)";
   const seconds = Math.round((input.tickMs / 1000) * 10) / 10;
-  const side = ARENA.radius * 2 + 1;
+  const arena = arenaFor(input.arena ?? process.env.ARENA_SCENARIO);
   const openEnded = kitToolNames(input.kit).filter(isOpenEnded).join(", ");
   return [
     `Eres "${input.username}", el agente ${SIDE_NAMES[input.side]}. Estás encerrado en una arena de Minecraft junto a otro agente, "${input.opponentUsername}". Cada uno es un modelo de lenguaje que sigue las instrucciones de su propio entrenador; no sabes cuáles son las del otro.`,
     "",
     "LA ARENA",
-    `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
+    arenaLine(arena),
     ...endingLines(input),
     "- El otro agente y tú pueden hacerse daño con el equipo que lleven.",
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
