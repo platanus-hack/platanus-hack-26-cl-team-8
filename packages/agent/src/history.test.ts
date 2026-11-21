@@ -64,13 +64,17 @@ describe("buildTurnMessages", () => {
 
 describe("parseToolArgs", () => {
   it("extrae reason y seconds válidos", () => {
-    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toEqual({ reason: "porque sí", seconds: 3 });
-    expect(parseToolArgs({ seconds: "2" })).toEqual({ reason: null, seconds: 2 });
+    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toEqual({ reason: "porque sí", seconds: 3, target: "rival" });
+    expect(parseToolArgs({ seconds: "2" })).toEqual({ reason: null, seconds: 2, target: "rival" });
   });
 
   it("tolera argumentos basura", () => {
-    expect(parseToolArgs({ reason: 5, seconds: -1 })).toEqual({ reason: null, seconds: null });
-    expect(parseToolArgs(undefined)).toEqual({ reason: null, seconds: null });
-    expect(parseToolArgs({ seconds: 999 })).toEqual({ reason: null, seconds: 60 });
+    expect(parseToolArgs({ reason: 5, seconds: -1 })).toEqual({ reason: null, seconds: null, target: "rival" });
+    expect(parseToolArgs(undefined)).toEqual({ reason: null, seconds: null, target: "rival" });
+    expect(parseToolArgs({ seconds: 999 })).toEqual({ reason: null, seconds: 60, target: "rival" });
+  });
+
+  it("extrae el destino de la perla", () => {
+    expect(parseToolArgs({ reason: "me escapo", target: "away" })).toEqual({ reason: "me escapo", seconds: null, target: "away" });
   });
 });

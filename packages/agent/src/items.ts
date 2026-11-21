@@ -1,0 +1,59 @@
+/**
+ * Clasificación de ítems por su nombre de Minecraft y recarga de ataque de cada arma.
+ * Puro (sin mineflayer): lo usan el cuerpo del agente, las herramientas y el prompt.
+ */
+
+export const isSword = (name: string): boolean => name.endsWith("_sword");
+export const isAxe = (name: string): boolean => name.endsWith("_axe");
+export const isBow = (name: string): boolean => name === "bow";
+export const isArrow = (name: string): boolean => name === "arrow" || name.endsWith("_arrow");
+export const isPearl = (name: string): boolean => name === "ender_pearl";
+/**
+ * Bloques con los que se levanta el muro. Son tablones y no piedra a propósito: el
+ * pathfinder usa tierra y piedra como andamio por defecto y se los gastaría caminando.
+ */
+export const isBuildBlock = (name: string): boolean => name.endsWith("_planks");
+
+/** Comidas conocidas, por si el registro de mineflayer no trae la tabla de comidas. */
+export const FOOD_NAMES: ReadonlySet<string> = new Set([
+  "bread",
+  "cooked_beef",
+  "cooked_porkchop",
+  "cooked_chicken",
+  "cooked_mutton",
+  "cooked_salmon",
+  "cooked_cod",
+  "baked_potato",
+  "golden_carrot",
+  "golden_apple",
+  "enchanted_golden_apple",
+  "apple",
+  "carrot",
+  "melon_slice",
+  "cookie",
+  "pumpkin_pie",
+]);
+/** Comidas que se pueden comer aunque la barra de hambre esté llena. */
+export const ALWAYS_EDIBLE: ReadonlySet<string> = new Set(["golden_apple", "enchanted_golden_apple", "chorus_fruit"]);
+
+export const isFoodName = (name: string): boolean => FOOD_NAMES.has(name);
+
+/** Recarga de las espadas (velocidad de ataque 1.6/s). */
+const SWORD_COOLDOWN_MS = 625;
+/** Recarga con la mano vacía o con un ítem que no es arma (velocidad de ataque 4/s). */
+const HAND_COOLDOWN_MS = 250;
+
+/**
+ * Milisegundos entre golpes a daño completo según el ítem en la mano (Minecraft 1.20.4).
+ * Golpear antes sale mucho más débil, así que el cuerpo espera esta recarga.
+ * Hachas: madera y piedra 0.8/s, hierro 0.9/s, oro, diamante y netherita 1/s.
+ */
+export function attackCooldownMs(heldItem: string): number {
+  if (isSword(heldItem)) return SWORD_COOLDOWN_MS;
+  if (isAxe(heldItem)) {
+    if (heldItem.startsWith("wooden_") || heldItem.startsWith("stone_")) return 1250;
+    if (heldItem.startsWith("iron_")) return 1111;
+    return 1000;
+  }
+  return HAND_COOLDOWN_MS;
+}

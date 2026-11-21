@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FighterEvents, FighterOptions } from "@phack/agent";
 import type { LlmClient, LlmRequest, LlmResponse } from "@phack/llm";
-import type { MatchRecord, Provider, Side } from "@phack/protocol";
+import type { AgentConfig, MatchRecord, Provider, Side } from "@phack/protocol";
 import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
 import { defaultPrompts } from "./store";
 
@@ -12,15 +12,22 @@ import { defaultPrompts } from "./store";
 
 type Complete = (req: LlmRequest) => Promise<LlmResponse>;
 
-function setup(opts: { provider?: Provider; complete?: Complete } = {}) {
+type SetupOptions = {
+  provider?: Provider;
+  /** LLM_MODEL del servidor. */
+  model?: string;
+  complete?: Complete;
+  /** Cambios sobre los prompts por defecto de cada lado. */
+  prompts?: Partial<Record<Side, Partial<AgentConfig>>>;
+  /** Modelos de la lista de permitidos; si falta, todos pasan. */
+  allowed?: string[];
+};
+
+function setup(opts: SetupOptions = {}) {
   const env: MatchEnv = {
-    LLM_PROVIDER: opts.provider ?? "openai",
-    LLM_MODEL: "",
-    VERCEL_API_KEY: "",
-    OPENAI_API_KEY: "sk-test",
-    ANTHROPIC_API_KEY: "",
-    OPENROUTER_API_KEY: "",
-    AI_GATEWAY_API_KEY: "",
+    LLM_PROVIDER: opts.provider ?? "vercel",
+    LLM_MODEL: opts.model ?? "",
+    VERCEL_API_KEY: "vck-test",
     MC_HOST: "localhost",
     MC_PORT: 25565,
     MC_VERSION: "1.20.4",
@@ -28,6 +35,9 @@ function setup(opts: { provider?: Provider; complete?: Complete } = {}) {
     AGENT_TICK_MS: 1500,
   };
   const events: Partial<Record<Side, FighterEvents>> = {};
+  const fighters: Partial<Record<Side, FighterOptions>> = {};
+  const rconCommands: string[] = [];
+  const logs: { level: string; text: string }[] = [];
   let stored: MatchRecord | null = null;
   const llmCalls: LlmRequest[] = [];
   const complete: Complete = opts.complete ?? (async () => ({ text: '  "Rojo ganó\n atacando sin parar."  ', toolCalls: [] }));
@@ -53,18 +63,35 @@ function setup(opts: { provider?: Provider; complete?: Complete } = {}) {
       },
     }),
   );
+  const prompts = () => {
+    const base = defaultPrompts();
+    return {
+      red: { ...base.red, ...opts.prompts?.red },
+      blue: { ...base.blue, ...opts.prompts?.blue },
+    };
+  };
+  const allowed = opts.allowed;
   const deps: MatchDeps = {
     env,
-    rcon: { send: async () => "" },
+    rcon: {
+      send: async (command) => {
+        rconCommands.push(command);
+        return "";
+      },
+    },
     hub,
-    prompts: { get: defaultPrompts },
+    prompts: { get: prompts },
     history,
     createFighter: (o: FighterOptions) => {
       events[o.side] = o.events;
+      fighters[o.side] = o;
       return { connect: async () => {}, start: () => {}, stop: async () => {} };
     },
     createLlmClient,
-    log: () => {},
+    models: { isAllowed: (id) => allowed === undefined || allowed.includes(id) },
+    log: (level, text) => {
+      logs.push({ level, text });
+    },
     sleep: async () => {},
   };
   const manager = new MatchManager(deps);
@@ -73,7 +100,18 @@ function setup(opts: { provider?: Provider; complete?: Complete } = {}) {
     if (!e) throw new Error(`sin eventos para ${side}`);
     return e;
   };
-  return { manager, ev, history, hub, createLlmClient, llmCalls, stored: () => stored };
+  return {
+    manager,
+    ev,
+    history,
+    hub,
+    createLlmClient,
+    llmCalls,
+    fighters,
+    rconCommands,
+    logs,
+    stored: () => stored,
+  };
 }
 
 let current: MatchManager | null = null;
@@ -125,7 +163,7 @@ describe("MatchManager: por qué ganó", () => {
 
     // Dos clientes para los agentes + uno para la explicación, sin tools.
     expect(t.createLlmClient).toHaveBeenCalledTimes(3);
-    expect(t.createLlmClient.mock.calls[2]?.[0]).toMatchObject({ provider: "openai", model: undefined });
+    expect(t.createLlmClient.mock.calls[2]?.[0]).toMatchObject({ provider: "vercel", model: undefined });
     expect(t.llmCalls).toHaveLength(1);
     expect(t.llmCalls[0]?.tools).toEqual([]);
   });
@@ -167,5 +205,88 @@ describe("MatchManager: por qué ganó", () => {
     expect(t.manager.getState().result).toEqual({ winner: null, reason: "stopped" });
     expect(t.history.update).not.toHaveBeenCalled();
     expect(t.llmCalls).toHaveLength(0);
+  });
+});
+
+describe("MatchManager: lista de modelos permitidos", () => {
+  it("un modelo guardado que no está permitido se cambia por el del servidor, con aviso", async () => {
+    const t = setup({
+      model: "deepseek/barato",
+      prompts: { red: { provider: "vercel", model: "openai/caro" }, blue: { model: "meta/permitido" } },
+      allowed: ["meta/permitido"],
+    });
+    await startRunning(t);
+
+    // Rojo pidió un modelo fuera de la lista: pelea con LLM_MODEL. Azul conserva el suyo.
+    expect(t.createLlmClient.mock.calls[0]?.[0]).toMatchObject({ provider: "vercel", model: "deepseek/barato" });
+    expect(t.createLlmClient.mock.calls[1]?.[0]).toMatchObject({ provider: "vercel", model: "meta/permitido" });
+    // El estado muestra el modelo que de verdad pelea.
+    const { configs } = t.manager.getState();
+    expect(configs.red.model).toBe("deepseek/barato");
+    expect(configs.blue.model).toBe("meta/permitido");
+
+    const warnings = t.logs.filter((l) => l.level === "warn");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.text).toContain("[Rojo]");
+    expect(warnings[0]?.text).toContain("openai/caro");
+    // El aviso también llega a la web.
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "log", level: "warn" }));
+  });
+
+  it("sin LLM_MODEL el modelo no permitido cae al modelo por defecto del proveedor", async () => {
+    const t = setup({ prompts: { red: { model: "openai/caro" } }, allowed: [] });
+    await startRunning(t);
+    expect(t.createLlmClient.mock.calls[0]?.[0]).toMatchObject({ provider: "vercel", model: undefined });
+  });
+
+  it("con el proveedor simulado el modelo guardado se descarta sin avisar", async () => {
+    const t = setup({ prompts: { red: { provider: "mock", model: "openai/caro" } }, allowed: [] });
+    await startRunning(t);
+    expect(t.createLlmClient.mock.calls[0]?.[0]).toMatchObject({ provider: "mock", model: undefined });
+    expect(t.logs.some((l) => l.level === "warn")).toBe(false);
+  });
+});
+
+describe("MatchManager: kits", () => {
+  it("cada lado pelea con su kit: llega al agente, a los comandos de RCON y al estado", async () => {
+    const t = setup({ prompts: { red: { kit: "archer" } } });
+    await startRunning(t);
+
+    expect(t.fighters.red?.kit).toBe("archer");
+    expect(t.fighters.blue?.kit).toBe("classic");
+    expect(t.manager.getState().configs).toMatchObject({ red: { kit: "archer" }, blue: { kit: "classic" } });
+
+    expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.8 with minecraft:arrow 32");
+    expect(t.rconCommands).toContain("item replace entity AgenteAzul hotbar.8 with minecraft:arrow 16");
+    // El efecto permanente del arquero va después de `effect clear`, y solo para él.
+    const speed = "effect give AgenteRojo minecraft:speed infinite 0 true";
+    expect(t.rconCommands.indexOf(speed)).toBeGreaterThan(t.rconCommands.indexOf("effect clear AgenteRojo"));
+    expect(t.rconCommands.indexOf("effect clear AgenteRojo")).toBeGreaterThanOrEqual(0);
+    expect(t.rconCommands.some((c) => c.startsWith("effect give AgenteAzul minecraft:speed"))).toBe(false);
+  });
+
+  it("el daño que un peleador se hace solo no se le acredita al rival, pero sí se informa", async () => {
+    const t = setup();
+    await startRunning(t);
+
+    t.ev("red").onDamageTaken(4, 16, false);
+    t.ev("red").onDamageTaken(2.5, 13.5, true);
+
+    const state = t.manager.getState();
+    expect(state.agents.red.health).toBe(13.5);
+    expect(state.agents.blue.damageDealt).toBe(4);
+    expect(t.hub.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "damage", side: "red", amount: 2.5, health: 13.5 }),
+    );
+  });
+
+  it("al terminar la pelea borra los bloques que colocaron los peleadores", async () => {
+    const t = setup();
+    await startRunning(t);
+    expect(t.rconCommands.some((c) => c.includes("replace minecraft:oak_planks"))).toBe(false);
+    await t.manager.stop();
+    await vi.waitFor(() =>
+      expect(t.rconCommands.some((c) => c.endsWith("minecraft:air replace minecraft:oak_planks"))).toBe(true),
+    );
   });
 });

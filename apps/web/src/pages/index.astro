@@ -2,6 +2,7 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
+import { DEFAULT_KIT, KITS, KIT_LIST } from "@phack/protocol";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
@@ -17,38 +18,15 @@ const sides = [
 // en global.css); `label` es el nombre para lectores de pantalla.
 const stats = [
   { id: "food", icon: "food", label: "Comida", tip: "Comida, de 0 a 20. Con la barra alta el agente recupera vida solo; comer la repone." },
-  { id: "damage", icon: "damage", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
+  { id: "damage", icon: "sword", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
   { id: "decisions", icon: "decisions", label: "Decisiones", tip: "Decisiones: cuántas veces el modelo eligió qué hacer." },
   { id: "speed", icon: "clock", label: "Tiempo por decisión", tip: "Lo que tarda el modelo en decidir, en promedio. Un modelo lento pierde turnos." },
   { id: "cost", icon: "emerald", label: "Costo del modelo", tip: "Lo que ha costado el modelo en esta pelea." },
 ] as const;
 
-// Lo que un agente puede tener en la mano (scoreboard.ts elige cuál se ve).
-const heldItems = [
-  { id: "sword", icon: "damage" },
-  { id: "bow", icon: "bow" },
-  { id: "food", icon: "steak" },
-] as const;
-
-// Ícono de cada herramienta del agente (ver scripts/actions.ts).
-const actionIcons = [
-  { tool: "approach", icon: "forward" },
-  { tool: "attack", icon: "damage" },
-  { tool: "retreat", icon: "back" },
-  { tool: "shoot", icon: "bow" },
-  { tool: "eat", icon: "steak" },
-  { tool: "wait", icon: "pause" },
-] as const;
-
-const providers = [
-  { value: "", label: "Por defecto del servidor" },
-  { value: "mock", label: "Simulado (mock)" },
-  { value: "vercel", label: "Vercel AI Gateway" },
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "gateway", label: "Vercel AI Gateway" },
-] as const;
+// El ítem en la mano y el ícono de la última acción cambian en vivo: sus casilleros van
+// vacíos aquí y los dibuja scripts/scoreboard.ts. Lo mismo el inventario del kit de cada
+// editor (scripts/inventory.ts), que cambia con el desplegable.
 ---
 
 <!doctype html>
@@ -125,10 +103,10 @@ const providers = [
                 <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
               </div>
               <dl class="stats">
-                <div class="slot" id={`held-${side.id}`} data-item="none" data-tip="En la mano: nada">
+                <div class="slot" id={`held-${side.id}`} data-tip="En la mano: nada.">
                   <dt class="sr-only">En la mano</dt>
                   <dd>
-                    {heldItems.map((item) => <span data-item={item.id}><PixelIcon name={item.icon} /></span>)}
+                    <span class="slot__icon" id={`held-icon-${side.id}`} />
                     <span class="sr-only" id={`held-name-${side.id}`}>nada</span>
                   </dd>
                 </div>
@@ -176,7 +154,7 @@ const providers = [
               <p class="mind__thought" id={`thought-${side.id}`}>—</p>
               <span class="sr-only">Última acción</span>
               <p class="mind__action" id={`action-${side.id}`} data-tool="">
-                {actionIcons.map((action) => <span data-tool={action.tool}><PixelIcon name={action.icon} /></span>)}
+                <span class="mind__icon" id={`action-icon-${side.id}`} />
                 <span id={`action-label-${side.id}`}>—</span>
                 <span class="mind__result" id={`action-result-${side.id}`}></span>
               </p>
@@ -196,7 +174,7 @@ const providers = [
         <header class="section__head">
           <h2 class="section__title" id="prompts-title">Prompts</h2>
           <p class="section__hint">
-            Escribe cómo debe pelear cada agente. Cualquiera puede editarlos; valen desde la próxima pelea.
+            Escribe cómo debe pelear cada agente y elige su kit. Cualquiera puede editarlos; valen desde la próxima pelea.
           </p>
         </header>
 
@@ -211,8 +189,20 @@ const providers = [
 
                 <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
 
+                <!-- Kit del lado: se guarda con el prompt. El inventario lo dibuja scripts/inventory.ts. -->
+                <div class="kit">
+                  <label class="field">
+                    <span class="field__label">Kit</span>
+                    <select id={`kit-${side.id}`} aria-describedby={`kit-description-${side.id}`}>
+                      {KIT_LIST.map((kit) => <option value={kit.id} selected={kit.id === DEFAULT_KIT}>{kit.name}</option>)}
+                    </select>
+                  </label>
+                  <p class="kit__description" id={`kit-description-${side.id}`}>{KITS[DEFAULT_KIT].description}</p>
+                  <div class="inv" id={`inv-${side.id}`} role="group" aria-label="Inventario del kit" />
+                </div>
+
                 <div class="editor__options">
-                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts sobre el catálogo. -->
+                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts con la lista de modelos permitidos. -->
                   <div class="picker" id={`picker-${side.id}`}>
                     <span class="field__label" id={`picker-label-${side.id}`}>Modelo</span>
                     <button
@@ -240,30 +230,6 @@ const providers = [
                   </div>
                   <button type="submit" class="btn btn--save" id={`save-${side.id}`}>Guardar</button>
                 </div>
-
-                <!-- Los dos campos reales del formulario: el selector de arriba escribe aquí. -->
-                <details class="advanced">
-                  <summary>Avanzado</summary>
-                  <div class="advanced__fields">
-                    <label class="field">
-                      <span class="field__label">Proveedor</span>
-                      <select id={`provider-${side.id}`}>
-                        {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span class="field__label">Id del modelo</span>
-                      <input
-                        id={`model-${side.id}`}
-                        type="text"
-                        maxlength="100"
-                        placeholder="Por defecto del servidor"
-                        autocomplete="off"
-                        spellcheck="false"
-                      />
-                    </label>
-                  </div>
-                </details>
 
                 <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
 

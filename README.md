@@ -6,7 +6,7 @@ Dos agentes LLM se enfrentan en un duelo PvP dentro de una arena de Minecraft. E
 
 > **¿Qué pasa si el prompt A pelea contra el prompt B?**
 
-Un sitio web transmite la pelea en vivo (video + telemetría en tiempo real), deja que cualquiera edite los dos prompts, inicie o detenga una pelea, y muestra el historial de resultados. Es experimental: no hay cuentas ni salas, **todos ven la misma pelea**.
+Un sitio web transmite la pelea en vivo (video + telemetría en tiempo real), deja que cualquiera edite los dos prompts, elija el kit y el modelo de cada lado, inicie o detenga una pelea, y muestra el historial de resultados. Es experimental: no hay cuentas ni salas, **todos ven la misma pelea**.
 
 Todo corre en un servidor casero con Docker Compose y se publica a internet con un Cloudflare Tunnel.
 
@@ -75,8 +75,8 @@ Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios
 │   ├── camera/              Bot espectador + render + ffmpeg -> RTMP
 │   └── web/                 Sitio Astro; su imagen final es Caddy
 ├── packages/
-│   ├── protocol/            Contrato compartido: arena, estado, eventos, rutas de la API
-│   ├── llm/                 Cliente LLM unificado (mock, vercel, openai, anthropic, openrouter, gateway)
+│   ├── protocol/            Contrato compartido: arena, kits, estado, eventos, rutas de la API
+│   ├── llm/                 Cliente LLM unificado (mock y vercel)
 │   └── agent/               El "peleador": percibir -> LLM -> actuar, sobre mineflayer
 ├── libs/
 │   ├── env/                 loadEnv(): todas las variables de entorno y sus valores por defecto
@@ -225,27 +225,52 @@ pnpm local --tunnel                 # + el túnel de Cloudflare (ver "Web en Clo
 - Las variables salen de `.env`, igual que en Docker. Los hosts internos (`MC_HOST`, `RCON_HOST`, `RTMP_URL`…) los fija `scripts/local/dev.mjs` apuntando a `127.0.0.1`.
 - Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero por Tailscale), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
 
+## Kits y herramientas
+
+Cada lado elige su **kit** en el editor de su prompt: un desplegable y, debajo, el inventario completo del kit elegido. El kit se guarda junto con el prompt (campo `kit` de `AgentConfig`) y, igual que el prompt, vale para la **próxima** pelea. Si no se elige ninguno, es el Clásico.
+
+| Kit | Armadura | Barra de objetos | Efecto | Además de las herramientas comunes |
+|---|---|---|---|---|
+| **Clásico** (`classic`, por defecto) | Hierro | Espada de hierro, arco, 4 filetes, 16 flechas | — | `shoot` |
+| **Arquero** (`archer`) | Malla | Espada de piedra, arco con Empuje I, 4 filetes, 32 flechas | Velocidad I | `shoot` |
+| **Tanque** (`tank`) | Peto y grebas de diamante, casco y botas de hierro | Espada de piedra, 4 filetes | — | — |
+| **Berserker** (`berserker`) | Peto y grebas de hierro, casco y botas de malla | Hacha de diamante, 4 filetes | Velocidad I | — |
+| **Enderman** (`ender`) | Malla; botas con Caída de pluma IV | Espada de diamante, 4 perlas de ender, 4 filetes | — | `pearl` |
+| **Constructor** (`builder`) | Hierro | Espada de hierro, arco, 3 manzanas doradas, 16 tablones de roble, 8 flechas | — | `shoot`, `build` |
+
+Las herramientas son lo único que el LLM puede hacer en cada decisión. Todos los kits tienen `approach` (acercarse), `attack` (cuerpo a cuerpo con la espada o el hacha), `retreat` (alejarse), `eat` (comer un filete o una manzana dorada) y `wait` (esperar). Las demás dependen de lo que trae el kit, y al LLM solo se le ofrecen las del suyo:
+
+| Herramienta | Qué hace | Necesita |
+|---|---|---|
+| `shoot` | Se detiene, apunta, carga el arco cerca de 1 segundo y dispara. | Arco y flechas. |
+| `pearl` | Lanza una perla de ender y se teletransporta donde cae. Con `target: "rival"` cae junto al rival y pasa a atacar; con `target: "away"` cae lejos, al otro lado de la arena, y queda en espera (buen momento para comer). Cada perla quita unos 2,5 de vida al caer y hay 5 segundos de recarga entre una y otra. | Perlas de ender. |
+| `build` | Levanta un muro de 3 de ancho y 2 de alto entre el agente y su rival: frena las flechas y obliga al rival a rodearlo. Gasta hasta 6 bloques, tarda 1 a 2 segundos y tiene 4 segundos de recarga. | Tablones. |
+
+- El prompt de sistema de cada agente describe su kit (objetos, efectos y cómo funciona cada herramienta), así que el prompt de la persona no tiene que explicarlo.
+- El daño que un agente se hace con su propia perla no se le suma al rival como daño causado.
+- La arena tiene una tapa invisible sobre los muros, para que nadie salga con una perla, y los tablones que queden puestos se borran al terminar la pelea.
+- Los kits están en `KITS` (`packages/protocol/src/index.ts`); las herramientas de cada uno se deducen de sus objetos (`kitToolNames`, en `packages/agent/src/tools.ts`).
+
 ## Configurar el proveedor de LLM
 
 En `.env`:
 
 ```bash
-LLM_PROVIDER=vercel           # mock | vercel | openai | anthropic | openrouter | gateway
+LLM_PROVIDER=vercel           # mock | vercel
 LLM_MODEL=                    # vacío = modelo por defecto del proveedor (ver packages/llm)
-VERCEL_API_KEY=vck_...        # solo la clave del proveedor que uses
-AI_GATEWAY_API_KEY=           # proveedor "gateway"
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
-OPENROUTER_API_KEY=
+VERCEL_API_KEY=vck_...
 ```
 
-`vercel` y `gateway` son los dos **Vercel AI Gateway**: una sola clave para modelos de cualquier laboratorio. `vercel` usa el SDK `ai` y `VERCEL_API_KEY` (por defecto `deepseek/deepseek-v4.1-flash-1017-fast`); `gateway` usa la API compatible con OpenAI y `AI_GATEWAY_API_KEY` (por defecto `anthropic/claude-haiku-5.5`). Los modelos se nombran `creador/modelo` (por ejemplo `openai/gpt-6-luna`), así que desde la web se puede enfrentar un modelo contra otro cambiando solo el campo "modelo" de cada agente.
+Hay una sola conexión a modelos reales: `vercel`, el **Vercel AI Gateway** a través del SDK `ai`. Una sola clave (`VERCEL_API_KEY`) sirve para modelos de cualquier laboratorio, que se nombran `creador/modelo` (por ejemplo `openai/gpt-6-luna`). El modelo por defecto es `deepseek/deepseek-v4.1-flash-1017-fast`. `mock` es el LLM simulado: no usa clave ni llama a ninguna API.
 
 Luego `docker compose up -d` (recrea los contenedores cuyo entorno cambió).
 
-- `LLM_PROVIDER` y `LLM_MODEL` son el valor por defecto de ambos agentes. Desde la web se puede elegir proveedor y modelo por agente; si se elige uno sin clave configurada, la pelea falla con un error claro.
+- `LLM_PROVIDER` y `LLM_MODEL` son el valor por defecto de ambos agentes. Desde la web cada lado elige "Por defecto del servidor", "Simulado" o un modelo de la lista de permitidos, así que se puede enfrentar un modelo contra otro. Si se elige un modelo real y falta `VERCEL_API_KEY`, la pelea falla con un error claro.
+- **Solo modelos baratos.** Un modelo está permitido si su precio de catálogo no pasa de **1 USD por millón de tokens de entrada y 5 USD por millón de tokens de salida** (`MODEL_PRICE_CAP`, en `packages/protocol`). El orquestador descarga el catálogo público de Vercel AI Gateway, lo filtra y sirve el resultado en `GET /api/models`; la web solo ofrece esa lista, con el precio de cada modelo, y ya no deja escribir un id a mano. Si no logra descargar el catálogo, responde una lista fija (`source: "fallback"`). El modelo por defecto del servidor siempre está permitido.
+- La lista se hace cumplir en el servidor: `PUT /api/prompts/:side` responde `400` si el modelo no está permitido, y al iniciar una pelea se revisa otra vez. Si el modelo guardado dejó de estar permitido, ese agente pelea con el modelo por defecto del servidor y queda un aviso en el registro de eventos.
 - Cada agente decide cada `AGENT_TICK_MS` milisegundos (1500 por defecto), y una pelea dura como máximo `MATCH_DURATION_SECONDS` (180). Una pelea completa son del orden de 2 × 180 / 1,5 = **240 llamadas al LLM**. El sitio no tiene autenticación: cualquiera con el link puede iniciar peleas, así que ponle un límite de gasto a la clave.
 - La lista completa de variables está en [.env.example](.env.example) y su fuente de verdad en `libs/env/src/index.ts`.
+- **Si vienes de una versión anterior:** los proveedores `openai`, `anthropic`, `openrouter` y `gateway` ya no existen. Con uno de ellos en `LLM_PROVIDER`, el orquestador y la cámara no arrancan: antes de desplegar, deja `LLM_PROVIDER=vercel` (o `mock`) y la clave en `VERCEL_API_KEY` en el `.env` del servidor. Los datos guardados se siguen leyendo: un prompt o una pelea del historial con `gateway` pasa a `vercel`, y con los otros tres conserva su texto y queda con el proveedor por defecto.
 
 ## Web en Cloudflare (Worker + túnel privado)
 
@@ -277,6 +302,8 @@ Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wran
 | VPC service | `phack2026-live` | `http://127.0.0.1:8888` |
 
 `127.0.0.1` se resuelve en la máquina que corre `cloudflared`, así que el túnel debe correr donde estén el orquestador y MediaMTX, con esos puertos alcanzables en loopback. Requiere `cloudflared` >= 2025.7.0 con transporte QUIC (UDP 7844 de salida).
+
+El Worker lleva dentro el contrato de `packages/protocol` y se despliega aparte del orquestador. Cuando el contrato cambia (proveedores, kits, rutas de la API), despliega primero el orquestador y la web justo después: mientras las dos versiones no coinciden, la web puede descartar el estado o los valores por defecto que no entiende.
 
 ## Cloudflare Tunnel (alternativa: hostname público hacia Caddy)
 
@@ -336,7 +363,7 @@ Para dejarlo corriendo solo desde Claude Code:
 
 La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarga de Paper y generación del mundo) el sitio muestra "sin señal" y el orquestador reintenta RCON hasta que el servidor responda. Iniciar una pelea antes de eso termina con error.
 
-`scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
+`scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, `/api/models` con al menos un modelo, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
 
 ## Transmisión con el cliente real de Minecraft
 
@@ -372,19 +399,22 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 | Qué | Resultado |
 |---|---|
 | `pnpm install --frozen-lockfile` + `pnpm typecheck` | Limpio en todos los paquetes (la cámara no se incluyó en el typecheck). |
-| `pnpm test` | 98 tests pasan (`libs/env`, `packages/llm`, `packages/agent`, `apps/orchestrator`). |
+| `pnpm test` | Pasan los tests de `libs/env`, `packages/llm`, `packages/agent` y `apps/orchestrator`. |
 | Imágenes Docker | Construyen las tres: `orchestrator`, `web` y `camera` (con `gl` y `canvas`). |
 | Minecraft | Paper 1.20.4 en modo offline, RCON, `bukkit.yml` sincronizado, chunks de la arena con `forceload`. |
 | Pelea en modo `mock` | Completa: los dos agentes entran, pelean, uno gana por KO y queda en el historial. |
 | Pelea con LLM real | Completa con `LLM_PROVIDER=vercel` y `deepseek/deepseek-v4.1-flash-1017-fast`: cada agente decide con tool calls y explica su razón. |
 | Web | Sitio, API y websocket a través de Caddy en el puerto 8080. |
 | Video | El cliente real de Minecraft corre en el servidor sin monitor (RTX 3080 vía VirtualGL), ffmpeg lo captura y codifica con la GPU a 30 fps, y MediaMTX entrega HLS: en la web se ven armaduras, armas, flechas, golpes y nombres. Se recupera solo si expulsan al cliente o se reinicia MediaMTX. |
-| Tests y typecheck de la cámara | 24 tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
+| Tests y typecheck de la cámara | Los tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
+
+Los kits, las herramientas `pearl` y `build` y la lista de modelos permitidos se agregaron después de esa verificación: la tabla describe el estado anterior, con el kit Clásico.
 
 ### Lo que no se ha probado
 
+- **Los kits nuevos en una pelea real.** Las peleas de prueba fueron todas con el kit Clásico. Falta ver en el servidor los otros cinco kits, la perla de ender y el muro, y el balance entre kits: sale de las fórmulas de daño de Minecraft 1.20.4, no de peleas medidas.
+- **La lista de modelos permitidos** contra el catálogo real, y cómo se comporta cada modelo barato en una pelea: solo se probó `deepseek/deepseek-v4.1-flash-1017-fast`.
 - **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel.
-- **Los otros proveedores** (`openai`, `anthropic`, `openrouter`) contra sus APIs reales. Solo tienen tests con `fetch` simulado.
 - **`scripts/deploy.sh` tal cual**: asume que el usuario SSH puede usar `docker` sin `sudo`.
 - **La cámara fuera de Docker**, y el modo `CAMERA_MODE=viewer` después de agregar el modo `client`.
 - **La transmisión tras un reinicio completo del servidor** (que `phack-stream` parta solo al encender) y en otra distribución que no sea Fedora.
@@ -395,6 +425,7 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 - **Cámara del cliente real.** Son dos y se alternan: la que sigue a los peleadores (parada en un punto, gira para mirarlos) y la general (estática, desde arriba). Sin pelea se muestra la general; con pelea, 20 s de una y 6 s de la otra (`CAMERA_FOLLOW_SECONDS`, `CAMERA_WIDE_SECONDS`). El campo de visión es fijo (`STREAM_FOV`): no hay zoom. El video no lleva audio.
 - **Render sin GPU (`CAMERA_MODE=viewer`).** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin. Es el respaldo para máquinas sin GPU y lo que se usa en desarrollo local.
 - **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
-- **Peleas cortas.** Con el kit actual (espada y armadura de hierro) un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar el kit en `apps/orchestrator/src/arena.ts`.
+- **Peleas cortas.** Con el kit Clásico un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar los kits en `KITS` (`packages/protocol/src/index.ts`).
+- **Efectos y absorción.** La Velocidad I del Arquero y del Berserker no muestra partículas en el video: se ve en el panel del kit de la web. La vida extra de la manzana dorada no cuenta como vida, ni en el marcador ni para decidir quién gana por tiempo.
 - **Sin autenticación.** Cualquiera con el link puede cambiar prompts e iniciar peleas, y cada pelea gasta llamadas al LLM. Ponle un límite de gasto a la clave.
 - **Suspensión y red del servidor.** Si el equipo se suspende o pierde la red, el stream se corta. Desactiva la suspensión automática.

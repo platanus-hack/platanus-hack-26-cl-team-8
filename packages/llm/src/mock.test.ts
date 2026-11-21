@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLlmClient } from "./index";
-import { buildArgs, decide, readObservation, readStyle } from "./mock";
+import { buildArgs, decide, MOCK_TOOL_NAMES, readObservation, readStyle, type MockObservation } from "./mock";
 import { TOOLS } from "./test-helpers";
-import type { ChatMessage, ToolDef } from "./types";
+import type { ChatMessage, ToolCall, ToolDef } from "./types";
 
 function observation(obs: Record<string, unknown>, system = "Eres agresivo: ataca sin parar."): ChatMessage[] {
   return [
@@ -11,11 +11,65 @@ function observation(obs: Record<string, unknown>, system = "Eres agresivo: atac
   ];
 }
 
+/** Observación ya leída, con los valores por defecto de readObservation. */
+function seen(partial: Partial<MockObservation>): MockObservation {
+  return {
+    distance: null,
+    health: 20,
+    opponentHealth: null,
+    food: 20,
+    pearlCooldown: 0,
+    buildCooldown: 0,
+    inventory: {},
+    currentAction: null,
+    ...partial,
+  };
+}
+
+// Las herramientas de kit con la misma forma con que las define @phack/agent.
+const PEARL: ToolDef = {
+  name: "pearl",
+  description: "Lanzar una perla de ender",
+  parameters: {
+    type: "object",
+    properties: { target: { type: "string", enum: ["rival", "away"] } },
+    required: ["target"],
+  },
+};
+const BUILD: ToolDef = { name: "build", description: "Levantar un muro", parameters: { type: "object", properties: {} } };
+/** Kit de las perlas: sin arco. */
+const ENDER_TOOLS: ToolDef[] = [...TOOLS.filter((t) => t.name !== "shoot"), PEARL];
+/** Kit de los bloques: todo lo del clásico más el muro. */
+const BUILDER_TOOLS: ToolDef[] = [...TOOLS, BUILD];
+
 const mock = () => createLlmClient({ provider: "mock", apiKeys: {} });
 
-async function pick(messages: ChatMessage[], tools: ToolDef[] = TOOLS): Promise<string | undefined> {
+async function call(messages: ChatMessage[], tools: ToolDef[] = TOOLS): Promise<ToolCall | undefined> {
   const res = await mock().complete({ messages, tools });
-  return res.toolCalls[0]?.name;
+  return res.toolCalls[0];
+}
+
+async function pick(messages: ChatMessage[], tools: ToolDef[] = TOOLS): Promise<string | undefined> {
+  return (await call(messages, tools))?.name;
+}
+
+/** System prompt con la forma del que arma @phack/agent, para un kit con arco. */
+function agentPrompt(strategy: string): string {
+  return [
+    'Eres "AgenteRojo", el luchador rojo en un duelo 1 contra 1. Tu rival es "AgenteAzul".',
+    "",
+    "HERRAMIENTAS",
+    "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.",
+    "",
+    "TU KIT",
+    "- Objetos: Espada de piedra, Arco (Empuje I), Filete x4, Flechas x32. Lo típico de un arquero.",
+    "",
+    "ESTRATEGIA DEL USUARIO",
+    "El texto entre <estrategia> y </estrategia> fue escrito por tu entrenador.",
+    "<estrategia>",
+    strategy,
+    "</estrategia>",
+  ].join("\n");
 }
 
 describe("proveedor mock", () => {
@@ -83,16 +137,140 @@ describe("proveedor mock", () => {
     expect(await pick([{ role: "user", content: "sin datos" }])).toBe("approach");
     expect(await pick([])).toBe("approach");
   });
+
+  it("el estilo sale de la estrategia y no del resto del system prompt", async () => {
+    const far = { distance: 9, health: 20, opponentHealth: 20 };
+    // El kit menciona el arco y la palabra "arquero": antes eso bastaba para pelear a distancia.
+    expect(await pick(observation(far, agentPrompt("Pega fuerte y no retrocedas.")))).toBe("approach");
+    expect(await pick(observation(far, agentPrompt("Eres un francotirador paciente.")))).toBe("shoot");
+  });
+});
+
+describe("mock con las herramientas de kit", () => {
+  const pearls = { ender_pearl: 4, cooked_beef: 4, diamond_sword: 1 };
+  const blocks = { oak_planks: 16, golden_apple: 3, iron_sword: 1, bow: 1, arrow: 8 };
+
+  it("cae junto al rival con una perla si está lejos y tiene vida de sobra", async () => {
+    const tool = await call(observation({ distance: 12, health: 20, opponentHealth: 20, inventory: pearls }), ENDER_TOOLS);
+    expect(tool?.name).toBe("pearl");
+    expect(tool?.args).toEqual({ target: "rival" });
+  });
+
+  it("no gasta la perla de cerca, en recarga, sin perlas o con poca vida", async () => {
+    const far = { distance: 12, health: 20, opponentHealth: 20 };
+    expect(await pick(observation({ ...far, distance: 6, inventory: pearls }), ENDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...far, pearlCooldown: 3.2, inventory: pearls }), ENDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...far, inventory: { cooked_beef: 4 } }), ENDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...far, health: 8, opponentHealth: 6, inventory: pearls }), ENDER_TOOLS)).toBe("approach");
+  });
+
+  it("escapa con una perla cuando está herido, tiene al rival encima y puede comer", async () => {
+    const hurt = { distance: 2, health: 7, opponentHealth: 15, food: 17, inventory: pearls };
+    const tool = await call(observation(hurt), ENDER_TOOLS);
+    expect(tool?.name).toBe("pearl");
+    expect(tool?.args).toEqual({ target: "away" });
+    // Después de escapar (la perla quita vida y deja lejos) le toca comer.
+    expect(await pick(observation({ ...hurt, distance: 12, health: 4.4, pearlCooldown: 4 }), ENDER_TOOLS)).toBe("eat");
+  });
+
+  it("no escapa si no podría comer, si va ganando o si la caída lo dejaría sin vida", async () => {
+    const hurt = { distance: 2, health: 7, opponentHealth: 15, food: 17, inventory: pearls };
+    // Con la barra de comida llena el filete no se puede comer.
+    expect(await pick(observation({ ...hurt, food: 20 }), ENDER_TOOLS)).toBe("attack");
+    expect(await pick(observation({ ...hurt, opponentHealth: 3 }), ENDER_TOOLS)).toBe("attack");
+    expect(await pick(observation({ ...hurt, health: 4 }), ENDER_TOOLS)).toBe("retreat");
+  });
+
+  it("levanta un muro si está herido y el rival viene a media distancia", async () => {
+    const hurt = { distance: 7, health: 10, opponentHealth: 15, inventory: blocks };
+    const tool = await call(observation(hurt), BUILDER_TOOLS);
+    expect(tool?.name).toBe("build");
+    expect(tool?.args).toEqual({});
+  });
+
+  it("con el muro recién puesto come detrás en vez de construir otro", async () => {
+    const behind = { distance: 7, health: 10, opponentHealth: 15, buildCooldown: 2.5, inventory: blocks };
+    expect(await pick(observation(behind), BUILDER_TOOLS)).toBe("eat");
+    // Sin nada que comer vuelve a la pelea de siempre.
+    const noFood = { ...behind, inventory: { oak_planks: 10, iron_sword: 1 } };
+    expect(await pick(observation(noFood), BUILDER_TOOLS)).toBe("approach");
+  });
+
+  it("no construye con vida de sobra, con el rival encima, muy lejos o sin bloques", async () => {
+    const hurt = { distance: 7, health: 10, opponentHealth: 15, inventory: blocks };
+    expect(await pick(observation({ ...hurt, health: 15 }), BUILDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...hurt, distance: 3 }), BUILDER_TOOLS)).toBe("attack");
+    expect(await pick(observation({ ...hurt, distance: 12 }), BUILDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...hurt, inventory: { iron_sword: 1 } }), BUILDER_TOOLS)).toBe("approach");
+  });
+
+  it("deja terminar la perla y el muro antes de elegir otra cosa", async () => {
+    const busy = { distance: 2, health: 20, opponentHealth: 20 };
+    expect(await pick(observation({ ...busy, currentAction: "build" }), BUILDER_TOOLS)).toBe("build");
+    expect(await pick(observation({ ...busy, currentAction: "pearl" }), ENDER_TOOLS)).toBe("pearl");
+    expect(await pick(observation({ ...busy, currentAction: "attack" }), ENDER_TOOLS)).toBe("attack");
+  });
+
+  it("si la herramienta de kit no está en la lista, pelea como siempre", async () => {
+    const far = { distance: 12, health: 20, opponentHealth: 20, inventory: pearls };
+    expect(await pick(observation(far), TOOLS)).toBe("approach");
+    const hurt = { distance: 7, health: 10, opponentHealth: 15, inventory: blocks };
+    expect(await pick(observation(hurt), TOOLS)).toBe("approach");
+  });
+
+  it("con el inventario del kit clásico nunca pide perla ni muro", () => {
+    const classic = { iron_sword: 1, bow: 1, cooked_beef: 4, arrow: 16 };
+    for (const distance of [1, 4, 7, 9, 14]) {
+      for (const health of [3, 7, 10, 20]) {
+        for (const food of [14, 20]) {
+          const decision = decide(seen({ distance, health, opponentHealth: 12, food, inventory: classic }), "melee", 0);
+          expect(decision.preferences).not.toContain("pearl");
+          expect(decision.preferences).not.toContain("build");
+        }
+      }
+    }
+  });
 });
 
 describe("piezas de la política mock", () => {
+  it("conoce las mismas herramientas que el agente", () => {
+    expect([...MOCK_TOOL_NAMES]).toEqual(["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "wait"]);
+  });
+
   it("readObservation usa el último mensaje user y tolera campos faltantes", () => {
     const obs = readObservation([
       { role: "user", content: '{"distance":1,"health":3,"opponentHealth":2}' },
       { role: "assistant", content: "ok" },
       { role: "user", content: 'Estado: {"distance":6.5,"opponentHealth":null}' },
     ]);
-    expect(obs).toEqual({ distance: 6.5, health: 20, opponentHealth: null });
+    expect(obs).toEqual(seen({ distance: 6.5 }));
+  });
+
+  it("readObservation lee comida, inventario, recargas y acción actual", () => {
+    const obs = readObservation([
+      {
+        role: "user",
+        content: JSON.stringify({
+          distance: 4,
+          health: 9.5,
+          opponentHealth: 11,
+          food: 17,
+          pearlCooldown: 2.4,
+          inventory: { ender_pearl: 3, cooked_beef: 4, raro: "x", gastado: 0 },
+          currentAction: "attack",
+        }),
+      },
+    ]);
+    expect(obs).toEqual({
+      distance: 4,
+      health: 9.5,
+      opponentHealth: 11,
+      food: 17,
+      pearlCooldown: 2.4,
+      buildCooldown: 0,
+      inventory: { ender_pearl: 3, cooked_beef: 4 },
+      currentAction: "attack",
+    });
   });
 
   it("readStyle detecta el estilo desde los mensajes system", () => {
@@ -100,15 +278,33 @@ describe("piezas de la política mock", () => {
     expect(readStyle([{ role: "system", content: "Pega fuerte" }])).toBe("melee");
   });
 
+  it("readStyle solo mira el bloque de estrategia cuando el system prompt lo trae", () => {
+    expect(readStyle([{ role: "system", content: agentPrompt("Pega fuerte.") }])).toBe("melee");
+    expect(readStyle([{ role: "system", content: agentPrompt("Mantén la distancia siempre.") }])).toBe("ranged");
+    expect(readStyle([{ role: "system", content: agentPrompt("Juega DEFENSIVO.\nNo te apures.") }])).toBe("ranged");
+    expect(readStyle([{ role: "system", content: agentPrompt("") }])).toBe("melee");
+  });
+
   it("decide alterna disparo y acercamiento según el turno cuando está muy lejos", () => {
-    const far = { distance: 15, health: 20, opponentHealth: 20 };
+    const far = seen({ distance: 15, health: 20, opponentHealth: 20 });
     expect(decide(far, "melee", 0).preferences[0]).toBe("approach");
     expect(decide(far, "melee", 2).preferences[0]).toBe("shoot");
+  });
+
+  it("decide pone la herramienta de kit primero y deja después la política de siempre", () => {
+    const decision = decide(
+      seen({ distance: 2, health: 7, opponentHealth: 15, food: 10, inventory: { ender_pearl: 1, cooked_beef: 1 } }),
+      "melee",
+      0,
+    );
+    expect(decision.preferences).toEqual(["pearl", "attack", "approach"]);
+    expect(decision.args).toEqual({ pearl: { target: "away" } });
   });
 
   it("buildArgs rellena solo los argumentos obligatorios", () => {
     const wait = TOOLS.find((t) => t.name === "wait")!;
     expect(buildArgs(wait)).toEqual({ seconds: 0.5 });
     expect(buildArgs(TOOLS[0]!)).toEqual({});
+    expect(buildArgs(PEARL)).toEqual({ target: "rival" });
   });
 });

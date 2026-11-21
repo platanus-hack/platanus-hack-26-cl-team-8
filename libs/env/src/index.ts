@@ -18,15 +18,11 @@ const EnvSchema = z.object({
   RCON_PASSWORD: z.string().default("phack-rcon"),
 
   // LLM
-  LLM_PROVIDER: z.enum(["mock", "vercel", "openai", "anthropic", "openrouter", "gateway"]).default("mock"),
+  /** "vercel" = Vercel AI Gateway; "mock" = LLM simulado, sin red ni costo. */
+  LLM_PROVIDER: z.enum(["mock", "vercel"]).default("mock"),
   LLM_MODEL: z.string().default(""),
   /** Vercel AI Gateway (proveedor "vercel"). */
   VERCEL_API_KEY: z.string().default(""),
-  OPENAI_API_KEY: z.string().default(""),
-  ANTHROPIC_API_KEY: z.string().default(""),
-  OPENROUTER_API_KEY: z.string().default(""),
-  /** Vercel AI Gateway (proveedor "gateway"). */
-  AI_GATEWAY_API_KEY: z.string().default(""),
 
   // Orquestador
   /** Interfaz donde escucha la API. En Docker debe ser 0.0.0.0; en local conviene 127.0.0.1. */

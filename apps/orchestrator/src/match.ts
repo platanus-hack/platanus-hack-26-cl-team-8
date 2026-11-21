@@ -5,6 +5,7 @@ import type { ApiKeys, LlmClient } from "@phack/llm";
 import {
   AGENT_USERNAMES,
   SIDES,
+  kitOf,
   type AgentStatus,
   type MatchRecord,
   type MatchResult,
@@ -13,7 +14,7 @@ import {
   type Provider,
   type Side,
 } from "@phack/protocol";
-import { buildArena, prepareFighter, runCountdown } from "./arena";
+import { buildArena, clearPlacedBlocks, prepareFighter, runCountdown } from "./arena";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
@@ -32,10 +33,6 @@ export type MatchEnv = Pick<
   | "LLM_PROVIDER"
   | "LLM_MODEL"
   | "VERCEL_API_KEY"
-  | "OPENAI_API_KEY"
-  | "ANTHROPIC_API_KEY"
-  | "OPENROUTER_API_KEY"
-  | "AI_GATEWAY_API_KEY"
   | "MC_HOST"
   | "MC_PORT"
   | "MC_VERSION"
@@ -55,6 +52,8 @@ export type MatchDeps = {
   };
   createFighter: (opts: FighterOptions) => Fighter;
   createLlmClient: (opts: { provider: Provider; model?: string; apiKeys: ApiKeys }) => LlmClient;
+  /** Lista de modelos permitidos (ver models.ts): segundo control, al iniciar la pelea. */
+  models: { isAllowed(id: string): boolean };
   /** Registro para humanos (consola del servidor). */
   log: (level: LogLevel, text: string) => void;
   sleep?: SleepFn;
@@ -215,18 +214,21 @@ export class MatchManager {
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm("red"), blue: this.makeLlm("blue") };
       for (const side of SIDES) {
-        // Se anota el proveedor y modelo que de verdad se usan (resueltos los valores por
-        // defecto): es lo que muestran la web y el historial.
+        // Se anota el proveedor, el modelo y el kit que de verdad se usan (resueltos los
+        // valores por defecto): es lo que muestran la web y el historial.
+        const kit = kitOf(this.state.configs[side]).id;
         this.state.configs[side] = {
           ...this.state.configs[side],
           provider: llms[side].provider,
           model: llms[side].model,
+          kit,
         };
         ctx.fighters[side] = this.deps.createFighter({
           side,
           username: AGENT_USERNAMES[side],
           opponentUsername: AGENT_USERNAMES[otherSide(side)],
           prompt: this.state.configs[side].prompt,
+          kit,
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,
@@ -255,7 +257,7 @@ export class MatchManager {
       this.assertNotEnded(ctx);
 
       for (const side of SIDES) {
-        await prepareFighter(rcon, side);
+        await prepareFighter(rcon, side, kitOf(this.state.configs[side]));
         this.assertNotEnded(ctx);
       }
 
@@ -293,23 +295,27 @@ export class MatchManager {
   }
 
   private makeLlm(side: Side): LlmClient {
-    const { env } = this.deps;
+    const { env, models } = this.deps;
     const config = this.state.configs[side];
     const provider: Provider = config.provider ?? env.LLM_PROVIDER;
     // LLM_MODEL solo aplica si el lado usa el mismo proveedor que el entorno.
-    const model = config.model || (provider === env.LLM_PROVIDER ? env.LLM_MODEL : "") || undefined;
+    const serverModel = (provider === env.LLM_PROVIDER ? env.LLM_MODEL : "") || undefined;
+    // El simulado no tiene modelos que elegir: un modelo guardado sería solo una etiqueta falsa.
+    let model = provider === "mock" ? serverModel : config.model || serverModel;
+    // Segundo control de la lista de permitidos (el primero está al guardar el prompt): cubre
+    // prompts guardados antes de que existiera y modelos que salieron de la lista después.
+    if (provider !== "mock" && config.model && !models.isAllowed(config.model)) {
+      this.log(
+        "warn",
+        `[${SIDE_LABEL[side]}] El modelo "${config.model}" no está en la lista de permitidos: se usa el modelo por defecto del servidor`,
+      );
+      model = serverModel;
+    }
     return this.deps.createLlmClient({ provider, model, apiKeys: this.apiKeys() });
   }
 
   private apiKeys(): ApiKeys {
-    const { env } = this.deps;
-    return {
-      vercel: env.VERCEL_API_KEY || undefined,
-      openai: env.OPENAI_API_KEY || undefined,
-      anthropic: env.ANTHROPIC_API_KEY || undefined,
-      openrouter: env.OPENROUTER_API_KEY || undefined,
-      gateway: env.AI_GATEWAY_API_KEY || undefined,
-    };
+    return { vercel: this.deps.env.VERCEL_API_KEY || undefined };
   }
 
   private makeEvents(ctx: MatchContext, side: Side): FighterEvents {
@@ -378,11 +384,14 @@ export class MatchManager {
         }
         hub.markStateDirty();
       },
-      onDamageTaken: (amount, health) => {
+      onDamageTaken: (amount, health, bySelf) => {
         if (!fighting()) return;
         agent().health = health;
-        const rival = this.state.agents[otherSide(side)];
-        rival.damageDealt = Math.round((rival.damageDealt + Math.max(0, amount)) * 100) / 100;
+        // El daño que un peleador se hace solo (al caer con su perla de ender) no es mérito del rival.
+        if (!bySelf) {
+          const rival = this.state.agents[otherSide(side)];
+          rival.damageDealt = Math.round((rival.damageDealt + Math.max(0, amount)) * 100) / 100;
+        }
         hub.broadcast({ type: "damage", at: Date.now(), side, amount, health });
         hub.markStateDirty();
       },
@@ -461,6 +470,11 @@ export class MatchManager {
         await this.deps.history.append(record);
         this.deps.hub.broadcast({ type: "match_end", at: Date.now(), record });
         if (explanation) void this.attachExplanation(record.id, explanation);
+        // Los bloques que colocaron los peleadores se borran sin esperar: un RCON lento no
+        // debe retrasar el cierre (y la próxima pelea igual reconstruye la arena).
+        void clearPlacedBlocks(this.deps.rcon).catch((err: unknown) => {
+          this.deps.log("warn", `No se pudieron borrar los bloques colocados en la arena: ${errorMessage(err)}`);
+        });
       }
       this.log(result.reason === "error" ? "error" : "info", describeResult(result));
     } catch (err) {

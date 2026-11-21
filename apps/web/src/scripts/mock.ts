@@ -22,11 +22,17 @@ import {
   API_ROUTES,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
+  kitOf,
+  type AgentConfig,
   type AgentStatus,
+  type AllowedModel,
   type ArenaEvent,
+  type KitItem,
+  type KitSlot,
   type MatchPhase,
   type MatchResult,
   type MatchState,
+  type ModelsResponse,
   type PromptsResponse,
   type ServerDefaults,
   type Side,
@@ -43,38 +49,93 @@ export const MOCK_VIDEO_DELAY_MS = Math.max(0, Number(params.get("delay")) || 0)
 
 // ---------- Prompts ----------
 
+// Cada lado con un kit distinto, y entre los dos usan las herramientas que no tiene el
+// kit clásico: la perla (Rojo) y el muro (Azul).
 const prompts: PromptsResponse = {
   red: {
     side: "red",
     prompt:
-      "Eres un berserker. Corre directo hacia el rival y no dejes de golpear con la espada. " +
+      "Eres un berserker. Cáele encima al rival con una perla y no dejes de golpear con la espada. " +
       "Nunca retrocedas. Come solo si tu vida baja de 6 y el rival está a más de 5 bloques.",
-    provider: "gateway",
+    provider: "vercel",
     model: "anthropic/claude-haiku-5.5",
+    kit: "ender",
   },
   blue: {
     side: "blue",
     prompt:
       "Eres un francotirador paciente. Mantén al menos 8 bloques de distancia y dispara con el arco. " +
-      "Si el rival se acerca a menos de 4 bloques, aléjate en círculos. Remata cuerpo a cuerpo solo " +
+      "Si el rival se acerca a menos de 4 bloques, levanta un muro y aléjate. Remata cuerpo a cuerpo solo " +
       "si le queda menos de 5 de vida.",
-    provider: "gateway",
+    provider: "vercel",
     model: "openai/gpt-6-luna",
+    kit: "builder",
   },
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
 const defaults: ServerDefaults = {
-  provider: "gateway",
+  provider: "vercel",
   models: {
     mock: "mock-scripted",
     vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
-    openai: "gpt-6-luna",
-    anthropic: "claude-haiku-5-5",
-    openrouter: "openai/gpt-6-luna",
-    gateway: "anthropic/claude-haiku-5.5",
   },
 };
+
+/** El precio viaja en dólares por token; aquí se escribe por millón, que es como se lee. */
+function priced(id: string, name: string, inputPerMillion: number, outputPerMillion: number): AllowedModel {
+  return { id, name, inputPrice: inputPerMillion / 1_000_000, outputPrice: outputPerMillion / 1_000_000 };
+}
+
+/** Lo que respondería /api/models: una lista corta y fija de modelos permitidos, con su precio. */
+const models: ModelsResponse = {
+  models: [
+    priced("deepseek/deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast", 0.6, 2.4),
+    priced("anthropic/claude-haiku-5.5", "Claude Haiku 5.5", 0.1, 0.5),
+    priced("openai/gpt-6-luna", "GPT-6 Luna", 0.1, 0.5),
+    priced("google/gemini-3.8-flash", "Gemini 3.8 Flash", 0.75, 3.75),
+    priced("meta/muse-ember", "Muse Ember", 0.1, 0.5),
+    priced("mistral/mistral-large-4", "Mistral Large 4", 0.7, 2.1),
+    priced("zai/glm-5.3-flash", "GLM 5.3 Flash", 0.15, 0.5),
+    priced("minimax/minimax-m3.1-flash", "MiniMax-M3.1-Flash", 0.15, 0.6),
+    priced("moonshotai/kimi-k2.6", "Kimi K2.6", 0.95, 4),
+    priced("amazon/nova-2-lite", "Nova 2 Lite", 0.33, 2.75),
+  ],
+  source: "fallback",
+  updatedAt: null,
+};
+
+// ---------- Kits ----------
+//
+// Lo que cada agente lleva en la mano sale del kit de su lado, así el marcador muestra
+// los mismos ítems que el inventario del editor. Convención de todos los kits: arma en
+// el casillero 0 de la barra rápida y comida en el 2.
+
+function kitItemAt(side: Side, slot: KitSlot): KitItem | undefined {
+  return kitOf(prompts[side]).items.find((item) => item.slot === slot);
+}
+
+function hasItem(side: Side, id: string): boolean {
+  return kitOf(prompts[side]).items.some((item) => item.item === id);
+}
+
+/** Qué queda en la mano después de cada herramienta; con las demás no cambia. */
+function heldAfter(side: Side, tool: string, current = ""): string {
+  switch (tool) {
+    case "attack":
+      return kitItemAt(side, "hotbar.0")?.item ?? current;
+    case "shoot":
+      return hasItem(side, "bow") ? "bow" : current;
+    case "eat":
+      return kitItemAt(side, "hotbar.2")?.item ?? current;
+    case "pearl":
+      return "ender_pearl";
+    case "build":
+      return "oak_planks";
+    default:
+      return current;
+  }
+}
 
 // ---------- Estado de la pelea ----------
 
@@ -106,7 +167,6 @@ const RUNNING_START = {
     decisions: 41,
     lastThought: "Está a 6 bloques y retrocede. Si acorto la distancia no puede usar el arco: cargo de frente.",
     lastAction: 'approach({"reason":"acortar distancia"}) → avanzando hacia AgenteAzul (6.2 bloques)',
-    heldItem: "iron_sword",
     tokensIn: 48_200,
     tokensOut: 3_900,
     avgDecisionMs: 1180,
@@ -118,15 +178,22 @@ const RUNNING_START = {
     decisions: 39,
     lastThought: "Se acerca rápido. Un disparo más y me muevo en círculo hacia la izquierda para mantener distancia.",
     lastAction: 'shoot({"reason":"aún tengo distancia"}) → flecha disparada (falló por 0.8 bloques)',
-    heldItem: "bow",
     tokensIn: 45_100,
     tokensOut: 5_200,
     avgDecisionMs: 2140,
   }),
 };
 
+/** Los agentes al abrir la pelea en curso, cada uno con el arma de su kit en la mano. */
+function freshRunning(): typeof RUNNING_START {
+  const fresh = structuredClone(RUNNING_START);
+  fresh.red.heldItem = heldAfter("red", "attack");
+  fresh.blue.heldItem = heldAfter("blue", "shoot", heldAfter("blue", "attack"));
+  return fresh;
+}
+
 /** Agentes de la pelea en curso: el bucle de la maqueta los va modificando. */
-let running = structuredClone(RUNNING_START);
+let running = freshRunning();
 /** Cuándo "empezó" la pelea en curso; se reinicia cuando el reloj está por llegar a cero. */
 let runningSince = Date.now() - ELAPSED_MS;
 
@@ -192,7 +259,7 @@ function buildState(phase: MatchPhase): MatchState {
         decisions: 74,
         lastThought: "Le queda 1 de vida y está contra el muro. Último golpe.",
         lastAction: 'attack({"reason":"rematar"}) → golpe conectado (7 de daño)',
-        heldItem: "iron_sword",
+        heldItem: heldAfter("red", "attack"),
         tokensIn: 87_400,
         tokensOut: 7_100,
         avgDecisionMs: 1210,
@@ -205,7 +272,7 @@ function buildState(phase: MatchPhase): MatchState {
         decisions: 71,
         lastThought: "Estoy acorralado contra el muro. Intento salir por la derecha y disparar.",
         lastAction: 'retreat({"reason":"salir del rincón"}) → bloqueado por el muro',
-        heldItem: "bow",
+        heldItem: heldAfter("blue", "shoot", heldAfter("blue", "attack")),
         tokensIn: 82_900,
         tokensOut: 9_800,
         avgDecisionMs: 2260,
@@ -223,16 +290,16 @@ type FeedSeed = { ago: number; event: Record<string, unknown> & { type: ArenaEve
 
 const RUNNING_FEED: FeedSeed[] = [
   { ago: 70_000, event: { type: "log", level: "info", text: "AgenteRojo y AgenteAzul entraron a la arena." } },
-  { ago: 66_000, event: { type: "thought", side: "red", text: "El rival está a 16 bloques. Mi prompt dice atacar sin parar: corro hacia él." } },
-  { ago: 65_500, event: { type: "action", side: "red", tool: "approach", args: { reason: "acortar distancia" }, result: "avanzando hacia AgenteAzul (16.0 bloques)" } },
-  { ago: 64_000, event: { type: "thought", side: "blue", text: "Tengo arco y distancia. Cargo un disparo antes de que se acerque." } },
+  { ago: 66_000, event: { type: "thought", side: "red", text: "El rival está a 16 bloques. Mi prompt dice atacar sin parar: le caigo encima con una perla." } },
+  { ago: 65_500, event: { type: "action", side: "red", tool: "pearl", args: { target: "rival", reason: "acortar distancia" }, result: "perla lanzada: aterrizó a 2.6 bloques de AgenteAzul" } },
+  { ago: 64_000, event: { type: "thought", side: "blue", text: "Cayó a mi lado con una perla. Le disparo antes de que alcance a golpear." } },
   { ago: 63_200, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 63_000, event: { type: "damage", side: "red", amount: 4, health: 16 } },
   { ago: 52_000, event: { type: "thought", side: "red", text: "Me dio una flecha, pero ya estoy a 3 bloques. Golpeo." } },
   { ago: 51_400, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (6 de daño)" } },
   { ago: 51_200, event: { type: "damage", side: "blue", amount: 6, health: 14 } },
-  { ago: 44_000, event: { type: "thought", side: "blue", text: "Demasiado cerca. Me alejo en círculo hacia la izquierda y vuelvo a disparar." } },
-  { ago: 43_300, event: { type: "action", side: "blue", tool: "retreat", args: { reason: "abrir distancia" }, result: "alejándose (ahora a 7.5 bloques)" } },
+  { ago: 44_000, event: { type: "thought", side: "blue", text: "Demasiado cerca. Levanto un muro entre los dos y vuelvo a disparar." } },
+  { ago: 43_300, event: { type: "action", side: "blue", tool: "build", args: { reason: "frenar su carga" }, result: "muro levantado entre los dos (6 bloques)" } },
   { ago: 31_000, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 30_800, event: { type: "damage", side: "red", amount: 2.5, health: 13.5 } },
   { ago: 22_000, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (3 de daño)" } },
@@ -278,7 +345,7 @@ function setPhase(next: MatchPhase): MatchState {
   // Como el servidor real: tras preparar, la pelea empieza sola.
   if (next === "preparing") phaseTimer = window.setTimeout(() => setPhase("running"), 2500);
   if (next === "running") {
-    running = structuredClone(RUNNING_START);
+    running = freshRunning();
     runningSince = Date.now() - ELAPSED_MS;
   }
   syncLoop();
@@ -332,13 +399,10 @@ function think(side: Side): void {
   send({ type: "thought", side, text });
 }
 
-/** Qué queda en la mano después de cada herramienta. */
-const HELD_AFTER: Record<string, string> = { attack: "iron_sword", shoot: "bow", eat: "cooked_beef" };
-
 function act(side: Side, tool: string, args: Record<string, unknown>, result: string): void {
   const agentNow = running[side];
   agentNow.lastAction = `${tool}(${JSON.stringify(args)}) → ${result}`;
-  agentNow.heldItem = HELD_AFTER[tool] ?? agentNow.heldItem;
+  agentNow.heldItem = heldAfter(side, tool, agentNow.heldItem);
   // Cada decisión gasta tokens; el modelo de Azul es más lento que el de Rojo.
   agentNow.tokensIn += 1150 + Math.round(Math.random() * 200);
   agentNow.tokensOut += 70 + Math.round(Math.random() * 60);
@@ -365,10 +429,16 @@ function loopTick(): void {
   // Antes de que el reloj llegue a cero, la pelea "empieza" de nuevo.
   if (runningSince + MATCH_DURATION_MS - Date.now() < 6000) runningSince = Date.now();
 
+  // Cada paso usa lo que el kit de ese lado permite: la perla y el muro solo salen si
+  // el kit los trae, y quien no tiene arco pelea cuerpo a cuerpo.
   switch (loopStep % 6) {
     case 0:
       think("red");
-      act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
+      if (hasItem("red", "ender_pearl")) {
+        act("red", "pearl", { target: "rival", reason: "caerle encima" }, "perla lanzada: aterrizó a 2.4 bloques de AgenteAzul");
+      } else {
+        act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
+      }
       break;
     case 1:
       act("red", "attack", { reason: "está a mi alcance", seconds: 2 }, "golpe conectado (3 de daño)");
@@ -376,18 +446,32 @@ function loopTick(): void {
       break;
     case 2:
       think("blue");
-      act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
+      if (hasItem("blue", "oak_planks")) {
+        act("blue", "build", { reason: "frenar su carga" }, "muro levantado entre los dos (6 bloques)");
+      } else {
+        act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
+      }
       break;
     case 3:
-      act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
+      if (hasItem("blue", "bow")) act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
+      else act("blue", "attack", { reason: "está a mi alcance" }, "golpe conectado (2.5 de daño)");
       hit("blue", 2.5);
       break;
     case 4:
       think("red");
-      act("red", "eat", { reason: "recupero vida antes de volver" }, "comiendo carne");
+      act(
+        "red",
+        "eat",
+        { reason: "recupero vida antes de volver" },
+        `comiendo ${kitItemAt("red", "hotbar.2")?.label.toLowerCase() ?? "algo"}`,
+      );
       break;
     default:
-      act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
+      if (hasItem("blue", "bow")) {
+        act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
+      } else {
+        act("blue", "approach", { reason: "sigo presionando" }, "avanzando hacia AgenteRojo (4.0 bloques)");
+      }
       break;
   }
   loopStep += 1;
@@ -417,6 +501,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.state) return buildState(phase);
   if (method === "GET" && path === API_ROUTES.prompts) return prompts;
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
+  if (method === "GET" && path === API_ROUTES.models) return models;
   // La maqueta no guarda peleas.
   if (method === "GET" && path === API_ROUTES.matches) return [];
 
@@ -431,8 +516,19 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   for (const side of ["red", "blue"] as const) {
     if (method === "PUT" && path === API_ROUTES.prompt(side)) {
       const body = UpdatePromptBodySchema.safeParse(init?.body);
-      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model? }");
-      prompts[side] = { side, ...body.data };
+      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }");
+      // Igual que el servidor: sin kit vale el kit por defecto, el simulado no lleva
+      // modelo y un modelo que no está en la lista de permitidos se rechaza.
+      const { prompt, provider, model } = body.data;
+      const config: AgentConfig = { side, prompt, kit: kitOf(body.data).id };
+      if (provider) config.provider = provider;
+      if (model && provider !== "mock") {
+        if (!models.models.some((allowed) => allowed.id === model)) {
+          fail(400, "Modelo no permitido: elige uno de la lista");
+        }
+        config.model = model;
+      }
+      prompts[side] = config;
       emit?.({ type: "prompts", at: Date.now(), prompts });
       return prompts[side];
     }

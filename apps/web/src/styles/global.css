@@ -25,6 +25,8 @@
   --blue: #6a8dff;
   --amber: #e8b84a;
   --ok: #6fcf8e;
+  /* Violeta del brillo de encantamiento del juego: marca los ítems encantados de un kit. */
+  --glint: #b892ff;
 
   --sans: "Instrument Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   /* Silkscreen es un bitmap de 8 px: se usa solo en múltiplos de 8 (16, 24, 32, 48). */
@@ -665,17 +667,13 @@ textarea {
   justify-content: flex-end;
 }
 
-.mind__action > [data-tool] {
-  display: none;
+/* Ícono de la herramienta: lo dibuja scoreboard.ts. Sin herramienta reconocida no ocupa lugar. */
+.mind__icon {
+  display: flex;
 }
 
-.mind__action[data-tool="approach"] > [data-tool="approach"],
-.mind__action[data-tool="attack"] > [data-tool="attack"],
-.mind__action[data-tool="retreat"] > [data-tool="retreat"],
-.mind__action[data-tool="shoot"] > [data-tool="shoot"],
-.mind__action[data-tool="eat"] > [data-tool="eat"],
-.mind__action[data-tool="wait"] > [data-tool="wait"] {
-  display: flex;
+.mind__icon:empty {
+  display: none;
 }
 
 .mind__result {
@@ -698,7 +696,10 @@ textarea {
   flex-direction: row-reverse;
 }
 
-/* Ítem en la mano: un casillero como los del inventario del juego. */
+/*
+ * Ítem en la mano: un casillero como los del inventario del juego. El ícono lo dibuja
+ * scoreboard.ts; si el ítem no tiene ícono, el casillero queda vacío.
+ */
 .slot dd {
   display: grid;
   place-items: center;
@@ -708,13 +709,7 @@ textarea {
   box-shadow: inset 0 0 0 2px rgba(237, 236, 232, 0.3);
 }
 
-.slot dd > [data-item] {
-  display: none;
-}
-
-.slot[data-item="sword"] dd > [data-item="sword"],
-.slot[data-item="bow"] dd > [data-item="bow"],
-.slot[data-item="food"] dd > [data-item="food"] {
+.slot__icon {
   display: flex;
 }
 
@@ -983,11 +978,10 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 .editor__text,
-.field select,
-.field input {
+.field select {
   width: 100%;
   border: 1px solid transparent;
-  background: var(--surface);
+  background-color: var(--surface);
 }
 
 .editor__text {
@@ -998,22 +992,119 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   line-height: 1.5;
 }
 
-.field select,
-.field input {
+/* Desplegable con la misma flecha que el selector de modelo, en vez de la del navegador. */
+.field select {
   height: 38px;
-  padding: 0 10px;
+  padding: 0 34px 0 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238d9098' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
   font-size: 14px;
+  appearance: none;
+  cursor: pointer;
 }
 
 .editor__text:focus,
-.field select:focus,
-.field input:focus {
+.field select:focus {
   outline: none;
   border-color: var(--side);
 }
 
-.field input::placeholder {
-  color: var(--faint);
+.field select:hover {
+  border-color: var(--side);
+}
+
+/* ---------- Kit ---------- */
+
+/* Kit de cada lado: un desplegable, una línea que lo describe y su inventario dibujado. */
+.kit {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kit__description {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/*
+ * Inventario del kit, como el del juego: arriba los cuatro casilleros de armadura (con
+ * los efectos permanentes a su lado) y abajo los nueve de la barra rápida. Las columnas
+ * se achican junto con el editor, así el bloque nunca ensancha la página.
+ */
+.inv {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 36px));
+  gap: 8px 2px;
+}
+
+.inv__slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Cantidad en la esquina, como en el juego, a la misma escala de píxel que el ícono. */
+.inv__count {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font: 400 16px/1 var(--pixel);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+/* Ítem encantado: borde violeta y un destello en la esquina. Cuál encantamiento, en el tooltip. */
+.inv__slot.is-enchanted {
+  box-shadow: inset 0 0 0 1px var(--glint);
+}
+
+.inv__slot.is-enchanted::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  background:
+    linear-gradient(var(--glint), var(--glint)) center / 2px 6px no-repeat,
+    linear-gradient(var(--glint), var(--glint)) center / 6px 2px no-repeat;
+}
+
+/* Efectos permanentes del kit ("Velocidad I"): ocupan el resto de la fila de la armadura. */
+.inv__effects {
+  grid-column: 5 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 10px;
+}
+
+.inv__effect {
+  padding: 3px 8px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* En la mitad derecha del inventario la ayuda se alinea a la derecha, para no salirse del editor. */
+.inv__slot:nth-child(n + 11)[data-tip]::after,
+.inv__effect[data-tip]::after {
+  left: auto;
+  right: 0;
 }
 
 .editor__options {
@@ -1138,21 +1229,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   padding: 12px;
   font-size: 14px;
   color: var(--muted);
-}
-
-/* Proveedor e id del modelo a mano: plegado, para quien lo necesite. */
-.advanced summary {
-  width: fit-content;
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.advanced__fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  gap: 10px;
-  margin-top: 10px;
 }
 
 .field {

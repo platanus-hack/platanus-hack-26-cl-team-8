@@ -54,6 +54,43 @@ describe("buildObservation", () => {
     expect(typeof parsed["distance"]).toBe("number");
     expect(typeof parsed["health"]).toBe("number");
     expect(typeof parsed["opponentHealth"]).toBe("number");
+    // Y las que lee para decidir con los kits: comida, inventario y acción actual.
+    expect(typeof parsed["food"]).toBe("number");
+    expect(parsed["inventory"]).toEqual({ iron_sword: 1, arrow: 16 });
+    expect(parsed["currentAction"]).toBe("attack");
+  });
+
+  it("no manda recargas si no hay ninguna corriendo", () => {
+    const obs = buildObservation(base);
+    expect("pearlCooldown" in obs).toBe(false);
+    expect("buildCooldown" in obs).toBe(false);
+    const past = buildObservation({ ...base, pearlReadyAt: base.now - 1, buildReadyAt: 0 });
+    expect("pearlCooldown" in past).toBe(false);
+    expect("buildCooldown" in past).toBe(false);
+  });
+
+  it("informa en segundos lo que falta de cada recarga", () => {
+    const obs = buildObservation({ ...base, pearlReadyAt: base.now + 3_240, buildReadyAt: base.now + 500 });
+    expect(obs.pearlCooldown).toBe(3.2);
+    expect(obs.buildCooldown).toBe(0.5);
+    const onlyPearl = buildObservation({ ...base, pearlReadyAt: base.now + 1_000 });
+    expect(onlyPearl.pearlCooldown).toBe(1);
+    expect("buildCooldown" in onlyPearl).toBe(false);
+  });
+
+  it("cuenta las perlas y los bloques en el inventario", () => {
+    const obs = buildObservation({
+      ...base,
+      self: {
+        ...base.self,
+        inventory: [
+          { name: "ender_pearl", count: 3 },
+          { name: "oak_planks", count: 10 },
+          { name: "golden_apple", count: 2 },
+        ],
+      },
+    });
+    expect(obs.inventory).toEqual({ ender_pearl: 3, oak_planks: 10, golden_apple: 2 });
   });
 });
 

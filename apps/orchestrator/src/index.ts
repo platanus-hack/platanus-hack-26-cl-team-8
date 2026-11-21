@@ -7,6 +7,7 @@ import type { ServerDefaults } from "@phack/protocol";
 import { applyWorldRules, buildArena } from "./arena";
 import { Hub } from "./hub";
 import { MatchManager } from "./match";
+import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
 import { MatchStore, PromptStore } from "./store";
@@ -41,6 +42,16 @@ async function main(): Promise<void> {
     log,
   });
 
+  // LLM_MODEL solo reemplaza el modelo por defecto del proveedor elegido en LLM_PROVIDER.
+  const defaults: ServerDefaults = {
+    provider: env.LLM_PROVIDER,
+    models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
+  };
+
+  // Modelos permitidos: el catálogo se baja en segundo plano; mientras tanto vale la lista fija.
+  const models = new ModelCatalog({ defaultModel: defaults.models.vercel, log });
+  models.start();
+
   const hub = new Hub();
   const match = new MatchManager({
     env,
@@ -50,18 +61,13 @@ async function main(): Promise<void> {
     history,
     createFighter,
     createLlmClient,
+    models,
     log,
   });
   hub.setProviders({ getState: () => match.getState(), getPrompts: () => prompts.get() });
   hub.start();
 
-  // LLM_MODEL solo reemplaza el modelo por defecto del proveedor elegido en LLM_PROVIDER.
-  const defaults: ServerDefaults = {
-    provider: env.LLM_PROVIDER,
-    models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
-  };
-
-  const app = await buildServer({ hub, match, prompts, history, defaults });
+  const app = await buildServer({ hub, match, prompts, history, defaults, models });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 
@@ -77,6 +83,7 @@ async function main(): Promise<void> {
     void (async () => {
       try {
         await match.shutdown();
+        models.stop();
         hub.close();
         await app.close();
         await rcon.close();

@@ -2,9 +2,12 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import {
   AgentConfigSchema,
+  DEFAULT_KIT,
   DEFAULT_PROMPTS,
   MatchRecordSchema,
+  ProviderSchema,
   SIDES,
+  kitOf,
   type AgentConfig,
   type MatchRecord,
   type PromptsResponse,
@@ -19,18 +22,46 @@ export const MAX_HISTORY = 50;
 
 export function defaultPrompts(): PromptsResponse {
   return {
-    red: { side: "red", prompt: DEFAULT_PROMPTS.red },
-    blue: { side: "blue", prompt: DEFAULT_PROMPTS.blue },
+    red: { side: "red", prompt: DEFAULT_PROMPTS.red, kit: DEFAULT_KIT },
+    blue: { side: "blue", prompt: DEFAULT_PROMPTS.blue, kit: DEFAULT_KIT },
   };
 }
 
-/** Normaliza lo que llega del cliente: modelo vacío = sin modelo. */
+/** Normaliza lo que llega del cliente: modelo vacío = sin modelo; kit ausente o desconocido = kit por defecto. */
 export function normalizeConfig(side: Side, body: UpdatePromptBody): AgentConfig {
-  const config: AgentConfig = { side, prompt: body.prompt };
+  const config: AgentConfig = { side, prompt: body.prompt, kit: kitOf(body).id };
   if (body.provider) config.provider = body.provider;
   const model = body.model?.trim();
   if (model) config.model = model;
   return config;
+}
+
+/**
+ * Adapta una configuración guardada antes de que quedaran solo los proveedores "mock" y
+ * "vercel": "gateway" era el mismo servicio que "vercel"; cualquier otro proveedor que ya
+ * no existe se borra (ese lado pasa a usar el proveedor por defecto). El prompt y el modelo
+ * se conservan. Se aplica al leer, no reescribe archivos y repetirla no cambia nada.
+ */
+export function migrateStoredConfig(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const config = { ...(raw as Record<string, unknown>) };
+  if (config.provider === undefined || ProviderSchema.safeParse(config.provider).success) return config;
+  if (config.provider === "gateway") config.provider = "vercel";
+  else delete config.provider;
+  return config;
+}
+
+/** Aplica migrateStoredConfig a los dos lados de una pelea guardada. */
+function migrateStoredRecord(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const record = raw as Record<string, unknown>;
+  const configs = record.configs;
+  if (typeof configs !== "object" || configs === null) return raw;
+  const bySide = configs as Record<string, unknown>;
+  return {
+    ...record,
+    configs: { ...bySide, red: migrateStoredConfig(bySide.red), blue: migrateStoredConfig(bySide.blue) },
+  };
 }
 
 /** Interpreta prompts.json; cualquier lado faltante o corrupto vuelve al valor por defecto. */
@@ -44,7 +75,7 @@ export function parsePrompts(raw: string): PromptsResponse {
   }
   if (typeof data !== "object" || data === null) return prompts;
   for (const side of SIDES) {
-    const parsed = AgentConfigSchema.safeParse((data as Record<string, unknown>)[side]);
+    const parsed = AgentConfigSchema.safeParse(migrateStoredConfig((data as Record<string, unknown>)[side]));
     if (parsed.success) prompts[side] = normalizeConfig(side, parsed.data);
   }
   return prompts;
@@ -62,7 +93,7 @@ export function parseMatchLines(raw: string, limit: number = MAX_HISTORY): Match
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const parsed = MatchRecordSchema.safeParse(JSON.parse(trimmed));
+      const parsed = MatchRecordSchema.safeParse(migrateStoredRecord(JSON.parse(trimmed)));
       // Map.set sobre una clave existente no cambia su orden de inserción.
       if (parsed.success) byId.set(parsed.data.id, parsed.data);
     } catch {

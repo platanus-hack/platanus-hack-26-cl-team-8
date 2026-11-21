@@ -3,11 +3,14 @@
  * `attack({"reason":"..."})`; en pantalla se muestra un ícono y una frase corta, y la
  * llamada tal cual queda en el tooltip.
  */
+import type { IconRef } from "./pixelicons";
 
 export type ActionView = {
-  /** Nombre de la herramienta ("attack"), para elegir el ícono; "" si no se reconoce. */
+  /** Nombre de la herramienta ("attack"); "" si no se reconoce. */
   tool: string;
-  /** Frase para mostrar: "Ataca con la espada". */
+  /** Ícono de la herramienta; null si no se reconoce. */
+  icon: IconRef | null;
+  /** Frase para mostrar: "Ataca cuerpo a cuerpo". */
   label: string;
   /** Qué pasó al ejecutarla, según el agente ("golpe conectado"); puede venir vacío. */
   result: string;
@@ -15,14 +18,20 @@ export type ActionView = {
   raw: string;
 };
 
-/** Las herramientas de packages/agent/src/tools.ts. */
-const LABELS: Record<string, string> = {
-  approach: "Se acerca al rival",
-  attack: "Ataca con la espada",
-  retreat: "Se aleja del rival",
-  shoot: "Dispara con el arco",
-  eat: "Come para recuperarse",
-  wait: "Espera quieto",
+/**
+ * Las herramientas de packages/agent/src/tools.ts: frase e ícono de cada una. Una
+ * herramienta nueva solo necesita su fila aquí. Las frases no nombran el arma, porque
+ * depende del kit (espada o hacha).
+ */
+const TOOLS: Record<string, { label: string; icon: IconRef }> = {
+  approach: { label: "Se acerca al rival", icon: { name: "forward" } },
+  attack: { label: "Ataca cuerpo a cuerpo", icon: { name: "sword" } },
+  retreat: { label: "Se aleja del rival", icon: { name: "back" } },
+  shoot: { label: "Dispara con el arco", icon: { name: "bow" } },
+  eat: { label: "Come para recuperarse", icon: { name: "steak" } },
+  pearl: { label: "Lanza una perla", icon: { name: "pearl" } },
+  build: { label: "Construye un muro", icon: { name: "tile", material: "wood" } },
+  wait: { label: "Espera quieto", icon: { name: "pause" } },
 };
 
 const MAX_ARGS_LENGTH = 160;
@@ -42,11 +51,19 @@ function rawCall(tool: string, args: Record<string, unknown>, result: string): s
 }
 
 export function describeAction(tool: string, args: Record<string, unknown>, result: string): ActionView {
-  const known = LABELS[tool];
-  let label = known ?? tool;
+  const known = TOOLS[tool];
+  let label = known?.label ?? tool;
   const seconds = Number(args.seconds);
   if (tool === "attack" && Number.isFinite(seconds) && seconds > 0) label += ` durante ${seconds} s`;
-  return { tool: known ? tool : "", label, result: result.trim(), raw: rawCall(tool, args, result) };
+  // La perla sirve para caerle encima al rival (por defecto) o para escapar de él.
+  if (tool === "pearl" && args.target === "away") label += " para escapar";
+  return {
+    tool: known ? tool : "",
+    icon: known?.icon ?? null,
+    label,
+    result: result.trim(),
+    raw: rawCall(tool, args, result),
+  };
 }
 
 /**
@@ -56,7 +73,7 @@ export function describeAction(tool: string, args: Record<string, unknown>, resu
 export function parseAction(raw: string): ActionView {
   const text = raw.trim();
   const match = /^([a-z_]+)\((.*?)\)(?:\s*→\s*(.*))?$/s.exec(text);
-  if (!match) return { tool: "", label: text, result: "", raw: text };
+  if (!match) return { tool: "", icon: null, label: text, result: "", raw: text };
   let args: Record<string, unknown> = {};
   try {
     const parsed: unknown = match[2] ? JSON.parse(match[2]) : {};

@@ -1,4 +1,4 @@
-import type { Side } from "@phack/protocol";
+import type { KitId, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 
 /** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
@@ -15,7 +15,11 @@ export type FighterEvents = {
   onDecision(d: DecisionReport): void;
   onThought(text: string): void;
   onAction(tool: string, args: Record<string, unknown>, result: string): void;
-  onDamageTaken(amount: number, health: number): void;
+  /**
+   * `bySelf`: el daño se lo hizo el propio agente al caer de su perla de ender; no es
+   * mérito del rival.
+   */
+  onDamageTaken(amount: number, health: number, bySelf: boolean): void;
   onDeath(): void;
   onLog(level: "info" | "warn" | "error", text: string): void;
 };
@@ -25,6 +29,8 @@ export type FighterOptions = {
   username: string;
   opponentUsername: string;
   prompt: string;
+  /** Kit con el que pelea: define las herramientas que se le ofrecen al LLM. */
+  kit: KitId;
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;

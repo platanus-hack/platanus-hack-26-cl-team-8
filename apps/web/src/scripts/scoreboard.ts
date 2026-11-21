@@ -3,7 +3,10 @@ import { parseAction, type ActionView } from "./actions";
 import { costOf, onCatalogReady } from "./catalog";
 import { byId, el, setText } from "./dom";
 import { PHASE_LABEL, formatClock, formatNumber, resultDetail, resultTitle } from "./format";
+import { setPixelIcon } from "./icons";
+import { itemIcon, itemLabel } from "./items";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
+import type { IconRef } from "./pixelicons";
 
 const MAX_HEALTH = 20;
 const URGENT_MS = 10_000;
@@ -23,9 +26,11 @@ type SideElements = {
   mind: HTMLElement;
   thought: HTMLElement;
   action: HTMLElement;
+  actionIcon: HTMLElement;
   actionLabel: HTMLElement;
   actionResult: HTMLElement;
   held: HTMLElement;
+  heldIcon: HTMLElement;
   heldName: HTMLElement;
   speed: HTMLElement;
   cost: HTMLElement;
@@ -66,9 +71,11 @@ function sideElements(side: Side): SideElements {
     mind: byId(`mind-${side}`),
     thought: byId(`thought-${side}`),
     action: byId(`action-${side}`),
+    actionIcon: byId(`action-icon-${side}`),
     actionLabel: byId(`action-label-${side}`),
     actionResult: byId(`action-result-${side}`),
     held: byId(`held-${side}`),
+    heldIcon: byId(`held-icon-${side}`),
     heldName: byId(`held-name-${side}`),
     speed: byId(`speed-${side}`),
     cost: byId(`cost-${side}`),
@@ -138,16 +145,15 @@ function showMind(side: SideElements): void {
   );
 }
 
-/** Qué ícono y nombre mostrar para el ítem que el agente tiene en la mano. */
-function heldItemView(name: string): { kind: string; label: string } {
-  if (name === "") return { kind: "none", label: "nada" };
-  if (name.includes("sword")) return { kind: "sword", label: "espada" };
-  if (name.includes("bow")) return { kind: "bow", label: "arco" };
-  if (/beef|pork|chicken|mutton|bread|apple|carrot|potato|stew|cod|salmon/.test(name)) {
-    return { kind: "food", label: "comida" };
-  }
-  // Algo que no tiene ícono: el casillero queda vacío y el nombre va en el tooltip.
-  return { kind: "none", label: name.replaceAll("_", " ") };
+/**
+ * Qué ícono y nombre mostrar para el ítem que el agente tiene en la mano. Si el ítem no
+ * tiene ícono, el casillero queda vacío y el nombre va en el tooltip.
+ */
+function heldItemView(name: string): { icon: IconRef | null; label: string } {
+  if (name === "") return { icon: null, label: "nada" };
+  const label = itemLabel(name);
+  // En minúscula, porque va a mitad de frase: "En la mano: espada de hierro."
+  return { icon: itemIcon(name), label: label.charAt(0).toLowerCase() + label.slice(1) };
 }
 
 function tokenCount(tokens: number): string {
@@ -180,6 +186,7 @@ function setAction(side: SideElements, view: ActionView): void {
   if (side.action.dataset.raw === view.raw) return;
   side.action.dataset.raw = view.raw;
   side.action.dataset.tool = view.tool;
+  setPixelIcon(side.actionIcon, view.icon);
   // Ayuda al pasar el mouse: la llamada a la herramienta tal cual la hizo el modelo.
   if (view.raw !== "") side.action.dataset.tip = `Lo que pidió el modelo: ${view.raw}`;
   else delete side.action.dataset.tip;
@@ -200,7 +207,7 @@ function renderAgent(side: SideElements, agent: AgentStatus, model: string | und
   setAction(side, parseAction(agent.lastAction));
 
   const held = heldItemView(agent.heldItem);
-  side.held.dataset.item = held.kind;
+  setPixelIcon(side.heldIcon, held.icon);
   side.held.dataset.tip = `En la mano: ${held.label}.`;
   setText(side.heldName, held.label);
 

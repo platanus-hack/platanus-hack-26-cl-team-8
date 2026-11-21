@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampToArena, distanceToWall, distanceXZ, retreatTarget, round1 } from "./geometry";
+import { clampToArena, distanceToWall, distanceXZ, retreatTarget, round1, wallCells } from "./geometry";
 
 const center = { x: 0, y: 64, z: 0 };
 const radius = 12;
@@ -76,5 +76,58 @@ describe("geometry", () => {
     expect(Number.isFinite(target.x)).toBe(true);
     expect(Number.isFinite(target.z)).toBe(true);
     expect(distanceXZ(target, center)).toBeLessThanOrEqual(radius);
+  });
+
+  it("con un paso largo cruza la arena sin salirse (escape con perla)", () => {
+    const target = retreatTarget({
+      self: { x: 6, y: 65, z: 0 },
+      opponent: { x: 8, y: 65, z: 0 },
+      center,
+      radius,
+      step: 12,
+    });
+    expect(target.x).toBeCloseTo(-6);
+    expect(target.z).toBeCloseTo(0);
+    expect(distanceXZ(target, center)).toBeLessThanOrEqual(radius - 1.5 + 1e-9);
+  });
+});
+
+describe("wallCells", () => {
+  it("pone el muro 2 bloques por delante, perpendicular al eje hacia el rival", () => {
+    const cells = wallCells({ x: -7.5, y: 65, z: 0.5 }, { x: 7.5, y: 65, z: 0.5 });
+    expect(cells).toEqual([
+      { x: -6, y: 65, z: 0 },
+      { x: -6, y: 65, z: -1 },
+      { x: -6, y: 65, z: 1 },
+      { x: -6, y: 66, z: 0 },
+      { x: -6, y: 66, z: -1 },
+      { x: -6, y: 66, z: 1 },
+    ]);
+  });
+
+  it("mira hacia el lado negativo si el rival está ahí", () => {
+    const cells = wallCells({ x: 7.5, y: 65, z: 0.5 }, { x: -7.5, y: 65, z: 0.5 });
+    expect(cells[0]).toEqual({ x: 5, y: 65, z: 0 });
+    expect(cells.every((cell) => cell.x === 5)).toBe(true);
+  });
+
+  it("usa el eje Z cuando el rival está más lejos en Z que en X", () => {
+    const cells = wallCells({ x: 2.3, y: 65, z: -4.7 }, { x: 4, y: 65, z: 6 });
+    expect(cells.slice(0, 3)).toEqual([
+      { x: 2, y: 65, z: -3 },
+      { x: 1, y: 65, z: -3 },
+      { x: 3, y: 65, z: -3 },
+    ]);
+    expect(cells.slice(3).every((cell) => cell.y === 66 && cell.z === -3)).toBe(true);
+  });
+
+  it("son 6 celdas distintas, abajo primero, y ninguna es la celda propia", () => {
+    const self = { x: 0.5, y: 65.4, z: 0.5 };
+    const cells = wallCells(self, { x: 3, y: 65, z: -5 });
+    expect(cells).toHaveLength(6);
+    expect(new Set(cells.map((cell) => `${cell.x},${cell.y},${cell.z}`)).size).toBe(6);
+    expect(cells.slice(0, 3).every((cell) => cell.y === 65)).toBe(true);
+    expect(cells.slice(3).every((cell) => cell.y === 66)).toBe(true);
+    expect(cells.some((cell) => cell.x === 0 && cell.z === 0)).toBe(false);
   });
 });

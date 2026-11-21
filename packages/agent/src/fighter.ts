@@ -1,13 +1,35 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA } from "@phack/protocol";
-import type { ChatMessage, LlmResponse, TokenUsage } from "@phack/llm";
-import { computeAim, estimateVelocity, type VelocitySample } from "./aim";
-import { distance3, retreatTarget, round1, type Vec3Like } from "./geometry";
+import { ARENA, DEFAULT_KIT, KITS, type Kit } from "@phack/protocol";
+import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
+import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
+import { clampToArena, distance3, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
+import {
+  ALWAYS_EDIBLE,
+  attackCooldownMs,
+  FOOD_NAMES,
+  isArrow,
+  isAxe,
+  isBow,
+  isBuildBlock,
+  isPearl,
+  isSword,
+} from "./items";
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
-import { isToolName, parseToolArgs, TOOL_DEFS, type ParsedToolArgs, type ToolName } from "./tools";
+import {
+  BUILD_COOLDOWN_MS,
+  isToolName,
+  kitToolDefs,
+  kitToolNames,
+  parseToolArgs,
+  PEARL_COOLDOWN_MS,
+  PEARL_MIN_HEALTH,
+  type ParsedToolArgs,
+  type PearlTarget,
+  type ToolName,
+} from "./tools";
 import type { DecisionReport, Fighter, FighterOptions } from "./types";
 
 // mineflayer y mineflayer-pathfinder son CommonJS puro. Se cargan con createRequire
@@ -27,8 +49,6 @@ type HeldState = "held" | "pending" | "missing";
 const CONNECT_TIMEOUT_MS = 30_000;
 const LLM_TIMEOUT_MS = 20_000;
 const BODY_TICK_MS = 100;
-/** Recarga de la espada (velocidad de ataque 1.6/s = 625 ms). */
-const ATTACK_COOLDOWN_MS = 625;
 const MELEE_REACH = 3.2;
 const FOLLOW_RANGE = 2;
 const BOW_CHARGE_MS = 1100;
@@ -37,31 +57,51 @@ const EAT_MS = 1800;
 const RETREAT_REPLAN_MS = 400;
 const EYE_HEIGHT = 1.62;
 
-const FALLBACK_FOODS = new Set([
-  "bread",
-  "cooked_beef",
-  "cooked_porkchop",
-  "cooked_chicken",
-  "cooked_mutton",
-  "cooked_salmon",
-  "cooked_cod",
-  "baked_potato",
-  "golden_carrot",
-  "golden_apple",
-  "enchanted_golden_apple",
-  "apple",
-  "carrot",
-  "melon_slice",
-  "cookie",
-  "pumpkin_pie",
-]);
-/** Comidas que se pueden comer aunque la barra de hambre esté llena. */
-const ALWAYS_EDIBLE = new Set(["golden_apple", "enchanted_golden_apple", "chorus_fruit"]);
+/** Altura de los pies de un luchador parado en el piso de la arena. */
+const FLOOR_Y = ARENA.center.y + 1;
+/** Radio dentro del que caen las perlas: deja margen con el muro de la arena. */
+const SAFE_RADIUS = ARENA.radius - 1.5;
+/** Plazo para que un ítem de un solo uso (perla, bloques) llegue a la mano. */
+const EQUIP_TIMEOUT_MS = 1000;
 
-const isSword = (name: string): boolean => name.endsWith("_sword");
-const isAxe = (name: string): boolean => name.endsWith("_axe");
-const isBow = (name: string): boolean => name === "bow";
-const isArrow = (name: string): boolean => name === "arrow" || name.endsWith("_arrow");
+/**
+ * El servidor lanza la perla hacia donde miraba el bot en el ÚLTIMO paquete de mirada que
+ * recibió, y ese paquete sale recién en el siguiente tick de física (50 ms). Por eso se
+ * espera este tiempo entre apuntar y lanzar.
+ */
+const PEARL_AIM_DELAY_MS = 150;
+/** Una perla vuela menos de 1 segundo; pasado este plazo se da por perdida. */
+const PEARL_FLIGHT_TIMEOUT_MS = 1500;
+/** Con el rival más cerca que esto la perla no sirve: se llega antes caminando. */
+const PEARL_MIN_DISTANCE = 4;
+/** Sobre esta altura respecto del piso no se lanza: la perla podría pasar el muro. */
+const PEARL_MAX_HEIGHT = 1.5;
+/** Cuánto se adelanta el movimiento del rival al apuntar la perla (segundos). */
+const PEARL_LEAD_S = 0.35;
+/** Tope de la velocidad del rival que se usa para adelantar la perla (bloques/s). */
+const PEARL_MAX_LEAD_SPEED = 8;
+/** Cuántos bloques se intenta alejar del rival con una perla de escape. */
+const PEARL_AWAY_STEP = 12;
+/** Tras aterrizar, la primera baja de vida dentro de este plazo es el golpe de la caída. */
+const SELF_DAMAGE_WINDOW_MS = 600;
+
+/** Tiempo máximo colocando bloques de un muro. */
+const BUILD_TIMEOUT_MS = 2500;
+/** Espera máxima por cada bloque (mineflayer espera hasta 5 s si el servidor no responde). */
+const BUILD_PLACE_TIMEOUT_MS = 700;
+/** Con el centro de una celda a menos de esto de un luchador (en X y en Z), el bloque no cabe. */
+const BUILD_CLEARANCE = 0.8;
+
+const AIR_BLOCKS = new Set(["air", "cave_air", "void_air"]);
+
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Segundos que faltan para `readyAt`, con un decimal y nunca 0 (para los textos de recarga). */
+function secondsLeft(readyAt: number, now: number): number {
+  return Math.max(0.1, round1((readyAt - now) / 1000));
+}
 
 function errorText(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -109,6 +149,9 @@ function readEntityHealth(entity: Entity): number | null {
 class MineflayerFighter implements Fighter {
   private bot: Bot | null = null;
   private readonly systemPrompt: string;
+  /** Herramientas del kit: lo único que se le ofrece al LLM y lo único que se ejecuta. */
+  private readonly toolNames: ToolName[];
+  private readonly toolDefs: ToolDef[];
 
   // Ciclo de vida
   private stopped = false;
@@ -148,12 +191,43 @@ class MineflayerFighter implements Fighter {
   private lastRetreatPlanAt = 0;
   private opponentSample: VelocitySample | null = null;
   private opponentVelocity: Vec3Like = { x: 0, y: 0, z: 0 };
+  /** Nombre del ítem en la mano la última vez que cambió (para reiniciar la recarga del arma). */
+  private weaponInHand = "";
+  /** Aviso que antecede al resultado de "attack" (cómo se llegó a atacar); se borra al cambiar de acción. */
+  private attackNote = "";
+  /** Momento en que partió la acción de un solo uso en curso (perla o muro). */
+  private oneShotStartedAt = 0;
+
+  // Perla de ender: equipar -> apuntar -> esperar la mirada -> lanzar -> esperar el aterrizaje.
+  private pearlTarget: PearlTarget = "rival";
+  /** 0 = todavía no se apunta. */
+  private pearlAimedAt = 0;
+  /** 0 = todavía no se lanza. */
+  private pearlThrownAt = 0;
+  /** Momento del último aterrizaje de una perla propia. */
+  private pearlLandedAt = 0;
+  /** Hasta cuándo un teletransporte forzado se atribuye a una perla propia en vuelo. */
+  private pearlFlightUntil = 0;
+  private pearlReadyAt = 0;
+  /** Hasta cuándo una baja de vida se atribuye a la caída de la perla y no al rival. */
+  private selfDamageUntil = 0;
+
+  // Muro: la colocación corre en una cadena asíncrona aparte del tick del cuerpo.
+  private buildBusy = false;
+  /** Sube cada vez que se sale de un modo; una cadena de otra generación se detiene sola. */
+  private buildGeneration = 0;
+  private buildReadyAt = 0;
 
   constructor(private readonly opts: FighterOptions) {
+    // Tolerante a un id que no exista (no debería llegar: el orquestador lo normaliza).
+    const kit: Kit = KITS[opts.kit] ?? KITS[DEFAULT_KIT];
+    this.toolNames = kitToolNames(kit);
+    this.toolDefs = kitToolDefs(kit);
     this.systemPrompt = buildSystemPrompt({
       side: opts.side,
       username: opts.username,
       opponentUsername: opts.opponentUsername,
+      kit,
       strategy: opts.prompt,
       tickMs: opts.tickMs,
     });
@@ -344,7 +418,11 @@ class MineflayerFighter implements Fighter {
         if (this.alive && health < this.lastHealth && !this.stopped) {
           const amount = round1(this.lastHealth - health);
           const rounded = round1(health);
-          this.safe(() => this.opts.events.onDamageTaken(amount, rounded));
+          // La caída de la perla propia es una sola baja de vida, justo después de
+          // aterrizar: la ventana se consume con ella para no quitarle golpes al rival.
+          const bySelf = Date.now() < this.selfDamageUntil;
+          this.selfDamageUntil = 0;
+          this.safe(() => this.opts.events.onDamageTaken(amount, rounded, bySelf));
         }
         this.lastHealth = health;
         this.emitStatus();
@@ -357,7 +435,33 @@ class MineflayerFighter implements Fighter {
     // "spawn" no se informa: el inventario llega antes y el estado diría "desconectado".
     bot.on("heldItemChanged", () => {
       this.guard("heldItemChanged", () => {
-        if (this.connected && heldItemName(bot) !== this.lastHeldItem) this.emitStatus();
+        const name = heldItemName(bot);
+        if (name !== this.weaponInHand) {
+          // El servidor reinicia la fuerza del golpe al cambiar de ítem: si se pega de
+          // inmediato el golpe sale débil, así que la recarga parte de nuevo.
+          this.weaponInHand = name;
+          this.lastAttackAt = Date.now();
+        }
+        if (this.connected && name !== this.lastHeldItem) this.emitStatus();
+      });
+    });
+
+    // El servidor movió al bot a la fuerza. Si hay una perla propia en vuelo, es su
+    // aterrizaje. El listener es global (no del modo "pearl") porque el teletransporte
+    // ocurre igual aunque el LLM ya haya elegido otra acción.
+    bot.on("forcedMove", () => {
+      this.guard("forcedMove", () => {
+        const now = Date.now();
+        if (now >= this.pearlFlightUntil) return;
+        this.pearlFlightUntil = 0;
+        this.pearlLandedAt = now;
+        this.selfDamageUntil = now + SELF_DAMAGE_WINDOW_MS;
+        // La ruta del pathfinder y la velocidad estimada del rival quedaron viejas.
+        this.goalKind = "none";
+        this.followTarget = null;
+        this.opponentSample = null;
+        this.opponentVelocity = { x: 0, y: 0, z: 0 };
+        bot.pathfinder.setGoal(null);
       });
     });
 
@@ -378,6 +482,9 @@ class MineflayerFighter implements Fighter {
       movements.canDig = false;
       movements.allow1by1towers = false;
       movements.allowParkour = false;
+      // Sin andamios: por defecto el pathfinder pone tierra o piedra para abrirse camino, y
+      // los bloques del kit son solo para la herramienta "build".
+      movements.scafoldingBlocks = [];
       bot.pathfinder.setMovements(movements);
     } catch (err) {
       this.log("warn", `No se pudo configurar el pathfinder: ${errorText(err)}`);
@@ -475,7 +582,7 @@ class MineflayerFighter implements Fighter {
     const llmStartedAt = Date.now();
     let response: LlmResponse;
     try {
-      response = await this.opts.llm.complete({ messages, tools: TOOL_DEFS, signal: abort.signal });
+      response = await this.opts.llm.complete({ messages, tools: this.toolDefs, signal: abort.signal });
     } catch (err) {
       if (!this.stopped) this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
       return;
@@ -540,6 +647,8 @@ class MineflayerFighter implements Fighter {
       arena: { center: ARENA.center, radius: ARENA.radius },
       currentAction: this.mode,
       lastActionResult: this.lastResult,
+      pearlReadyAt: this.pearlReadyAt,
+      buildReadyAt: this.buildReadyAt,
     });
   }
 
@@ -551,15 +660,19 @@ class MineflayerFighter implements Fighter {
     const bot = this.bot;
     if (!bot || !this.connected) return "no estás conectado al servidor";
     if (!this.alive) return "estás muerto";
-    if (!isToolName(name)) {
-      return `herramienta desconocida "${name}"; usa approach, attack, retreat, shoot, eat o wait`;
-    }
+    const available = this.toolNames.join(", ");
+    if (!isToolName(name)) return `herramienta desconocida "${name}"; usa: ${available}`;
+    // El LLM solo recibe las herramientas de su kit, pero puede inventar una de otro.
+    if (!this.toolNames.includes(name)) return `tu kit no tiene esa herramienta; usa: ${available}`;
 
     const now = Date.now();
     if (name === this.mode) {
       // Repetir la herramienta continúa la acción en curso (no reinicia cargas ni comidas).
       if (name === "attack") this.modeUntil = args.seconds !== null ? now + args.seconds * 1000 : null;
-      return `continúas con "${name}": ${this.lastResult}`;
+      const text = `continúas con "${name}": ${this.lastResult}`;
+      // El aviso de cómo empezó el ataque ya llegó al LLM en este texto: no se repite.
+      this.attackNote = "";
+      return text;
     }
 
     const opponent = this.opponent(bot);
@@ -574,7 +687,11 @@ class MineflayerFighter implements Fighter {
           : "rival no visible; avanzando al centro de la arena";
         break;
       case "attack":
-        result = has(isSword) ? "atacando cuerpo a cuerpo con la espada" : "atacando cuerpo a cuerpo sin espada";
+        result = has(isSword)
+          ? "atacando cuerpo a cuerpo con la espada"
+          : has(isAxe)
+            ? "atacando cuerpo a cuerpo con el hacha"
+            : "atacando cuerpo a cuerpo sin arma";
         break;
       case "retreat":
         result = opponent ? "alejándote del rival" : "rival no visible; te quedas donde estás";
@@ -593,6 +710,20 @@ class MineflayerFighter implements Fighter {
         result = "empezando a comer";
         break;
       }
+      case "pearl": {
+        // Si la perla no se puede usar, no se gasta nada y la acción en curso sigue.
+        const refusal = this.pearlRefusal(bot, opponent, args.target, now);
+        if (refusal) return `${refusal}; sigues con "${this.mode}"`;
+        result =
+          args.target === "away" ? "preparando la perla para alejarte del rival" : "preparando la perla para caer junto al rival";
+        break;
+      }
+      case "build": {
+        const refusal = this.buildRefusal(bot, opponent, now);
+        if (refusal) return `${refusal}; sigues con "${this.mode}"`;
+        result = "preparando los bloques para el muro";
+        break;
+      }
       case "wait":
         result = "esperando quieto";
         break;
@@ -605,8 +736,34 @@ class MineflayerFighter implements Fighter {
     this.shots = 0;
     this.nextShotAt = 0;
     this.lastRetreatPlanAt = 0;
+    this.oneShotStartedAt = now;
+    this.pearlTarget = args.target;
+    this.pearlAimedAt = 0;
+    this.pearlThrownAt = 0;
     this.lastResult = result;
     return result;
+  }
+
+  /** Por qué no se puede lanzar la perla ahora, o null si se puede. */
+  private pearlRefusal(bot: Bot, opponent: Entity | null, target: PearlTarget, now: number): string | null {
+    if (this.countItems(bot, isPearl) === 0) return "no puedes usar la perla: no te quedan perlas";
+    if (now < this.pearlReadyAt) return `la perla está en recarga: faltan ${secondsLeft(this.pearlReadyAt, now)} s`;
+    if (bot.health <= PEARL_MIN_HEALTH) return "no puedes usar la perla: te queda muy poca vida (caer quita ~2.5)";
+    if (bot.entity.position.y - FLOOR_Y > PEARL_MAX_HEIGHT) return "no puedes usar la perla desde altura";
+    if (target === "rival") {
+      if (!opponent) return "no ves al rival: no hay hacia dónde lanzar la perla";
+      const dist = round1(distance3(bot.entity.position, opponent.position));
+      if (dist < PEARL_MIN_DISTANCE) return `el rival ya está a ${dist} bloques: usa attack`;
+    }
+    return null;
+  }
+
+  /** Por qué no se puede construir ahora, o null si se puede. */
+  private buildRefusal(bot: Bot, opponent: Entity | null, now: number): string | null {
+    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
+    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
+    if (!opponent) return "no ves al rival: no hay dónde poner el muro";
+    return null;
   }
 
   private enterWait(bot: Bot, result: string): string {
@@ -617,7 +774,7 @@ class MineflayerFighter implements Fighter {
     return result;
   }
 
-  /** Limpia lo que el modo actual dejó a medias (uso de ítem, ruta del pathfinder). */
+  /** Limpia lo que el modo actual dejó a medias (uso de ítem, ruta del pathfinder, muro a medio poner). */
   private leaveMode(bot: Bot): void {
     if (this.using) {
       this.using = false;
@@ -627,6 +784,8 @@ class MineflayerFighter implements Fighter {
         // nada
       }
     }
+    this.buildGeneration++;
+    this.attackNote = "";
     this.clearGoal(bot);
   }
 
@@ -635,6 +794,11 @@ class MineflayerFighter implements Fighter {
     this.mode = "wait";
     this.modeUntil = null;
     this.using = false;
+    this.buildGeneration++;
+    this.attackNote = "";
+    // Un teletransporte después de morir es la reaparición, no una perla.
+    this.pearlFlightUntil = 0;
+    this.selfDamageUntil = 0;
     this.lastResult = result;
     const bot = this.bot;
     if (bot && !this.ended) {
@@ -679,6 +843,12 @@ class MineflayerFighter implements Fighter {
       case "eat":
         this.tickEat(bot, now);
         break;
+      case "pearl":
+        this.tickPearl(bot, opponent, now);
+        break;
+      case "build":
+        this.tickBuild(bot, opponent, now);
+        break;
       case "wait":
         this.clearGoal(bot);
         if (opponent) this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
@@ -712,16 +882,18 @@ class MineflayerFighter implements Fighter {
     const dist = distance3(bot.entity.position, opponent.position);
     if (dist <= MELEE_REACH) {
       this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
-      if (now - this.lastAttackAt >= ATTACK_COOLDOWN_MS) {
+      // La recarga depende del arma que está en la mano (un hacha es más lenta que una espada).
+      if (now - this.lastAttackAt >= attackCooldownMs(heldItemName(bot))) {
         this.lastAttackAt = now;
         bot.attack(opponent);
         this.hits++;
       }
     }
-    this.lastResult =
+    const progress =
       this.hits > 0
         ? `atacando: ${this.hits} golpes lanzados (distancia ${round1(dist)})`
         : `persiguiendo al rival para golpear (distancia ${round1(dist)})`;
+    this.lastResult = this.attackNote + progress;
   }
 
   private tickRetreat(bot: Bot, opponent: Entity | null, now: number): void {
@@ -815,6 +987,198 @@ class MineflayerFighter implements Fighter {
     this.lastResult = "comiendo (tarda unos 2 segundos)";
   }
 
+  /**
+   * Perla de ender, de un solo uso: equipar, apuntar, esperar a que la mirada llegue al
+   * servidor, lanzar y esperar el aterrizaje (que avisa el listener de "forcedMove").
+   * Si otra herramienta la interrumpe antes de lanzar, no se gasta nada.
+   */
+  private tickPearl(bot: Bot, opponent: Entity | null, now: number): void {
+    if (this.pearlThrownAt > 0) {
+      if (this.pearlLandedAt >= this.pearlThrownAt) this.finishPearl(bot, opponent);
+      else if (now - this.pearlThrownAt >= PEARL_FLIGHT_TIMEOUT_MS) {
+        this.enterWait(bot, "lanzaste la perla pero no te teletransportaste");
+      }
+      return;
+    }
+
+    const held = this.ensureHeld(bot, isPearl);
+    if (held === "missing") {
+      this.enterWait(bot, "no puedes usar la perla: no te quedan perlas");
+      return;
+    }
+    // Quieto y sin ruta: el pathfinder gira la cabeza mientras camina y arruinaría la puntería.
+    this.clearGoal(bot);
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste equipar la perla");
+      return;
+    }
+
+    if (this.pearlAimedAt === 0) {
+      const landing = this.pearlLanding(bot, opponent);
+      if (!landing) {
+        this.enterWait(bot, "no ves al rival: no lanzaste la perla");
+        return;
+      }
+      const self = bot.entity.position;
+      const dx = landing.x - self.x;
+      const dz = landing.z - self.z;
+      const pitch = pearlPitch(Math.hypot(dx, dz), self.y + PEARL_LAUNCH_HEIGHT - FLOOR_Y);
+      bot.look(Math.atan2(-dx, -dz), pitch, true).catch(() => undefined);
+      this.pearlAimedAt = now;
+      this.lastResult = "apuntando la perla";
+      return;
+    }
+    if (now - this.pearlAimedAt < PEARL_AIM_DELAY_MS) return;
+
+    // No se marca `using`: la perla sale al instante y no hay nada que soltar después.
+    bot.activateItem();
+    this.pearlThrownAt = now;
+    this.pearlReadyAt = now + PEARL_COOLDOWN_MS;
+    this.pearlFlightUntil = now + 2 * PEARL_FLIGHT_TIMEOUT_MS;
+    this.lastResult = "perla lanzada; esperando a que caiga";
+  }
+
+  /** Punto del piso donde debe caer la perla, siempre dentro de la arena. null = rival no visible. */
+  private pearlLanding(bot: Bot, opponent: Entity | null): Vec3Like | null {
+    const self = bot.entity.position;
+    let point: Vec3Like;
+    if (this.pearlTarget === "rival") {
+      if (!opponent) return null;
+      // Se adelanta un poco el movimiento del rival: la perla tarda en llegar.
+      const speed = Math.hypot(this.opponentVelocity.x, this.opponentVelocity.z);
+      const scale = speed > PEARL_MAX_LEAD_SPEED ? PEARL_MAX_LEAD_SPEED / speed : 1;
+      point = {
+        x: opponent.position.x + this.opponentVelocity.x * scale * PEARL_LEAD_S,
+        y: FLOOR_Y,
+        z: opponent.position.z + this.opponentVelocity.z * scale * PEARL_LEAD_S,
+      };
+    } else if (opponent) {
+      point = retreatTarget({
+        self,
+        opponent: opponent.position,
+        center: ARENA.center,
+        radius: ARENA.radius,
+        step: PEARL_AWAY_STEP,
+      });
+    } else {
+      // Sin rival a la vista: al otro lado de la arena, pasando por el centro.
+      point = { x: 2 * ARENA.center.x - self.x, y: FLOOR_Y, z: 2 * ARENA.center.z - self.z };
+    }
+    return clampToArena(point, ARENA.center, SAFE_RADIUS);
+  }
+
+  private finishPearl(bot: Bot, opponent: Entity | null): void {
+    const where = opponent ? `distancia ${round1(distance3(bot.entity.position, opponent.position))}` : "no ves al rival";
+    if (this.pearlTarget === "away") {
+      const left = this.countItems(bot, isPearl);
+      this.enterWait(bot, `te teletransportaste lejos del rival (${where}); te quedan ${left} perlas`);
+      return;
+    }
+    // Cayó junto al rival: pasa directo a atacar, sin esperar la próxima decisión.
+    this.mode = "attack";
+    this.modeUntil = null;
+    this.hits = 0;
+    this.attackNote = `te teletransportaste junto al rival (${where}); `;
+    this.lastResult = `${this.attackNote}atacando`;
+  }
+
+  /**
+   * Muro, de un solo uso: equipa los bloques, se queda quieto y lanza la cadena que los
+   * coloca. La cadena es asíncrona (cada bloque espera la respuesta del servidor), así
+   * que corre aparte y este tick solo la prepara.
+   */
+  private tickBuild(bot: Bot, opponent: Entity | null, now: number): void {
+    if (this.buildBusy) return;
+    const held = this.ensureHeld(bot, isBuildBlock);
+    if (held === "missing") {
+      this.enterWait(bot, "no te quedan bloques");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste equipar los bloques");
+      return;
+    }
+    if (!opponent) {
+      this.enterWait(bot, "no ves al rival: no hay dónde poner el muro");
+      return;
+    }
+
+    const generation = ++this.buildGeneration;
+    const before = this.countItems(bot, isBuildBlock);
+    this.buildBusy = true;
+    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
+    this.lastResult = "colocando los bloques del muro";
+    this.placeWall(bot, wallCells(bot.entity.position, opponent.position), generation, now + BUILD_TIMEOUT_MS)
+      .then((confirmed) => {
+        // Si otra acción (o la muerte) cortó la construcción, no hay nada que informar.
+        if (generation !== this.buildGeneration) return;
+        const left = this.countItems(bot, isBuildBlock);
+        // Un bloque puede quedar puesto aunque su confirmación llegue tarde: manda el inventario.
+        const placed = Math.max(confirmed, before - left);
+        this.enterWait(
+          bot,
+          placed > 0
+            ? `muro de ${placed} bloques entre tú y el rival; te quedan ${left} bloques`
+            : "no pudiste colocar ningún bloque (no hay espacio o el rival está encima)",
+        );
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al construir el muro: ${errorText(err)}`);
+        if (generation === this.buildGeneration) this.enterWait(bot, "no pudiste terminar el muro");
+      })
+      .finally(() => {
+        this.buildBusy = false;
+      });
+  }
+
+  /** Coloca las celdas en orden y devuelve cuántas confirmó el servidor. */
+  private async placeWall(bot: Bot, cells: Vec3Like[], generation: number, deadline: number): Promise<number> {
+    const up = this.vec(bot, 0, 1, 0);
+    let confirmed = 0;
+    for (const cell of cells) {
+      if (!this.buildActive(generation) || Date.now() >= deadline) break;
+      const held = bot.heldItem;
+      if (!held || !isBuildBlock(held.name)) break;
+
+      const position = this.vec(bot, cell.x, cell.y, cell.z);
+      const current = bot.blockAt(position);
+      if (!current || !AIR_BLOCKS.has(current.name)) continue;
+      if (this.cellOccupied(bot, cell)) continue;
+      // El bloque se apoya en el de abajo: el piso para la fila baja, el muro para la alta.
+      const below = bot.blockAt(position.offset(0, -1, 0));
+      if (!below || below.boundingBox !== "block") continue;
+
+      try {
+        // Mirada forzada: placeBlock gira la cabeza de a poco si no está ya apuntando.
+        await bot.lookAt(below.position.offset(0.5, 1, 0.5), true);
+      } catch {
+        continue;
+      }
+      if (!this.buildActive(generation)) break;
+      // Un rechazo del servidor (celda ocupada) no corta el muro: se sigue con la siguiente.
+      const placing = bot.placeBlock(below, up).then(
+        () => true,
+        () => false,
+      );
+      if (await Promise.race([placing, delay(BUILD_PLACE_TIMEOUT_MS).then(() => false)])) confirmed++;
+    }
+    return confirmed;
+  }
+
+  private buildActive(generation: number): boolean {
+    return generation === this.buildGeneration && this.alive && !this.stopped && !this.ended;
+  }
+
+  /** Un bloque no se puede poner donde hay un luchador parado (ni el rival ni uno mismo). */
+  private cellOccupied(bot: Bot, cell: Vec3Like): boolean {
+    const near = (position: Vec3Like): boolean =>
+      Math.abs(cell.x + 0.5 - position.x) < BUILD_CLEARANCE && Math.abs(cell.z + 0.5 - position.z) < BUILD_CLEARANCE;
+    const opponent = this.opponent(bot);
+    return near(bot.entity.position) || (opponent !== null && near(opponent.position));
+  }
+
   // ------------------------------------------------------------------
   // Ayudas del cuerpo
   // ------------------------------------------------------------------
@@ -839,7 +1203,25 @@ class MineflayerFighter implements Fighter {
   private isFood(bot: Bot, name: string): boolean {
     const foods = (bot.registry as unknown as { foodsByName?: Record<string, unknown> }).foodsByName;
     if (foods && Object.prototype.hasOwnProperty.call(foods, name)) return true;
-    return FALLBACK_FOODS.has(name);
+    return FOOD_NAMES.has(name);
+  }
+
+  /** Cuántas unidades hay en el inventario de los ítems que calzan con `match`. */
+  private countItems(bot: Bot, match: (name: string) => boolean): number {
+    let total = 0;
+    for (const item of bot.inventory.items()) {
+      if (match(item.name)) total += item.count;
+    }
+    return total;
+  }
+
+  /** Un Vec3 nuevo. "vec3" no es dependencia directa del paquete, así que se clona uno del bot. */
+  private vec(bot: Bot, x: number, y: number, z: number): Vec3 {
+    const point = bot.entity.position.clone();
+    point.x = x;
+    point.y = y;
+    point.z = z;
+    return point;
   }
 
   /** Asegura (de forma asíncrona, sin bloquear el tick) que el ítem buscado esté en la mano. */

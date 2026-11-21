@@ -17,6 +17,10 @@ export type ObservationInput = {
   arena: { center: Vec3Like; radius: number };
   currentAction: string;
   lastActionResult: string;
+  /** Epoch ms desde el que se puede lanzar otra perla (ausente o pasado = ya se puede). */
+  pearlReadyAt?: number;
+  /** Epoch ms desde el que se puede construir otro muro (ausente o pasado = ya se puede). */
+  buildReadyAt?: number;
 };
 
 /**
@@ -39,10 +43,20 @@ export type Observation = {
   inventory: Record<string, number>;
   currentAction: string;
   lastActionResult: string;
+  /** Segundos que faltan para poder lanzar otra perla. Solo aparece mientras hay recarga. */
+  pearlCooldown?: number;
+  /** Segundos que faltan para poder construir otro muro. Solo aparece mientras hay recarga. */
+  buildCooldown?: number;
 };
 
 function roundVec(v: Vec3Like): Vec3Like {
   return { x: round1(v.x), y: round1(v.y), z: round1(v.z) };
+}
+
+/** Segundos (un decimal) que faltan para `readyAt`; 0 si ya pasó o no hay recarga. */
+function cooldownSeconds(readyAt: number | undefined, now: number): number {
+  if (readyAt === undefined || !Number.isFinite(readyAt)) return 0;
+  return Math.max(0, round1((readyAt - now) / 1000));
 }
 
 export function summarizeInventory(items: { name: string; count: number }[]): Record<string, number> {
@@ -55,7 +69,9 @@ export function summarizeInventory(items: { name: string; count: number }[]): Re
 
 export function buildObservation(input: ObservationInput): Observation {
   const { self, opponent, arena } = input;
-  return {
+  const pearlCooldown = cooldownSeconds(input.pearlReadyAt, input.now);
+  const buildCooldown = cooldownSeconds(input.buildReadyAt, input.now);
+  const observation: Observation = {
     secondsElapsed: Math.max(0, Math.round((input.now - input.startedAt) / 1000)),
     health: round1(self.health),
     food: round1(self.food),
@@ -76,4 +92,9 @@ export function buildObservation(input: ObservationInput): Observation {
     currentAction: input.currentAction,
     lastActionResult: input.lastActionResult,
   };
+  // Las recargas solo se mandan mientras corren: la observación se repite varias veces en
+  // el historial y conviene que sea corta.
+  if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
+  if (buildCooldown > 0) observation.buildCooldown = buildCooldown;
+  return observation;
 }

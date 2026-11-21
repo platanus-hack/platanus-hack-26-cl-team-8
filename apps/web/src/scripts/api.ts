@@ -3,10 +3,12 @@ import {
   AgentConfigSchema,
   MatchRecordSchema,
   MatchStateSchema,
+  ModelsResponseSchema,
   ServerDefaultsSchema,
   type AgentConfig,
   type MatchRecord,
   type MatchState,
+  type ModelsResponse,
   type PromptsResponse,
   type ServerDefaults,
   type Side,
@@ -127,6 +129,11 @@ export function fetchMatches(): Promise<MatchRecord[]> {
 
 export function fetchDefaults(): Promise<ServerDefaults> {
   return request(API_ROUTES.defaults, ServerDefaultsSchema);
+}
+
+/** Modelos que se pueden elegir: el servidor ya dejó fuera los que pasan del tope de precio. */
+export function fetchModels(): Promise<ModelsResponse> {
+  return request(API_ROUTES.models, ModelsResponseSchema);
 }
 
 export function describeError(err: unknown): string {

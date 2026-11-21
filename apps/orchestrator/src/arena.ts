@@ -1,6 +1,7 @@
 import { AGENT_USERNAMES, ARENA, type Side } from "@phack/protocol";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
+import type { Kit, KitItem } from "@phack/protocol";
 
 /**
  * Construcción de la arena y preparación de los peleadores por RCON.
@@ -78,21 +79,36 @@ export function arenaBuildCommands(): string[] {
     `setblock ${c.x} ${FLOOR_Y} ${c.z} minecraft:sea_lantern`,
     `setblock ${red.x} ${FLOOR_Y} ${red.z} minecraft:red_concrete`,
     `setblock ${blue.x} ${FLOOR_Y} ${blue.z} minecraft:blue_concrete`,
+    // Tapa invisible justo sobre los muros: nadie sale de la arena con una perla o apilando bloques.
+    `fill ${MIN_X} ${WALL_TOP_Y + 1} ${MIN_Z} ${MAX_X} ${WALL_TOP_Y + 1} ${MAX_Z} minecraft:barrier`,
   ];
 }
 
-/** Kit idéntico para ambos lados. */
-export function fighterKitCommands(username: string): string[] {
+/** Encantamientos en el formato NBT de 1.20.4: `{Enchantments:[{id:"minecraft:punch",lvl:1s}]}`. */
+function itemNbt(item: KitItem): string {
+  if (!item.enchantments?.length) return "";
+  const list = item.enchantments.map((e) => `{id:"minecraft:${e.id}",lvl:${e.level}s}`).join(",");
+  return `{Enchantments:[${list}]}`;
+}
+
+/**
+ * Comandos que entregan un kit: cada ítem va a su slot exacto con `item replace` (así la
+ * hotbar del juego coincide con la que dibuja la web) y los efectos son permanentes.
+ * Los efectos deben enviarse después de `effect clear`.
+ */
+export function fighterKitCommands(username: string, kit: Kit): string[] {
   return [
-    `give ${username} minecraft:iron_sword 1`,
-    `give ${username} minecraft:bow 1`,
-    `give ${username} minecraft:arrow 16`,
-    `give ${username} minecraft:cooked_beef 4`,
-    `item replace entity ${username} armor.head with minecraft:iron_helmet`,
-    `item replace entity ${username} armor.chest with minecraft:iron_chestplate`,
-    `item replace entity ${username} armor.legs with minecraft:iron_leggings`,
-    `item replace entity ${username} armor.feet with minecraft:iron_boots`,
+    ...kit.items.map(
+      (i) =>
+        `item replace entity ${username} ${i.slot} with minecraft:${i.item}${itemNbt(i)}${i.count > 1 ? ` ${i.count}` : ""}`,
+    ),
+    ...kit.effects.map((e) => `effect give ${username} minecraft:${e.id} infinite ${e.amplifier} true`),
   ];
+}
+
+/** Borra los bloques que los peleadores colocaron dentro de la arena (el kit constructor usa tablones). */
+export function clearPlacedBlocksCommand(): string {
+  return `fill ${MIN_X + 1} ${FLOOR_Y + 1} ${MIN_Z + 1} ${MAX_X - 1} ${WALL_TOP_Y} ${MAX_Z - 1} minecraft:air replace minecraft:oak_planks`;
 }
 
 export function teleportCommand(side: Side): string {
@@ -130,8 +146,13 @@ export async function buildArena(rcon: RconLike, sleep: SleepFn): Promise<void> 
   }
 }
 
-/** Deja a un peleador listo: supervivencia, limpio, curado, en su spawn y con el kit. */
-export async function prepareFighter(rcon: RconLike, side: Side): Promise<void> {
+/** Al terminar una pelea: que los muros de tablones no sigan en la transmisión hasta la próxima. */
+export async function clearPlacedBlocks(rcon: RconLike): Promise<void> {
+  await rcon.send(clearPlacedBlocksCommand());
+}
+
+/** Deja a un peleador listo: supervivencia, limpio, curado, en su spawn y con su kit. */
+export async function prepareFighter(rcon: RconLike, side: Side, kit: Kit): Promise<void> {
   const username = AGENT_USERNAMES[side];
   await sendAll(rcon, [`gamemode survival ${username}`, `clear ${username}`, `effect clear ${username}`]);
 
@@ -143,7 +164,7 @@ export async function prepareFighter(rcon: RconLike, side: Side): Promise<void> 
   await sendAll(rcon, [
     `effect give ${username} minecraft:instant_health 1 10 true`,
     `effect give ${username} minecraft:saturation 1 10 true`,
-    ...fighterKitCommands(username),
+    ...fighterKitCommands(username, kit),
   ]);
 }
 

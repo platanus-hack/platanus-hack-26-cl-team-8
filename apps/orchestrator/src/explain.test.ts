@@ -36,7 +36,13 @@ function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Parti
     endedAt: 42_400,
     durationMs: 42_400,
     configs: {
-      red: { side: "red", prompt: "Eres agresivo: acércate y ataca sin parar.", provider: "openai", model: "gpt-x" },
+      red: {
+        side: "red",
+        prompt: "Eres agresivo: acércate y ataca sin parar.",
+        provider: "vercel",
+        model: "deepseek/x",
+        kit: "berserker",
+      },
       blue: { side: "blue", prompt: "Eres defensivo:\n\nmantén distancia y usa el arco." },
     },
     final: { red: status("red", red), blue: status("blue", blue) },
@@ -70,12 +76,30 @@ describe("buildExplanationMessages", () => {
     const user = messages[1]?.content ?? "";
     expect(user).toContain("ganó Rojo por KO");
     expect(user).toContain("Duración: 42 s.");
-    expect(user).toContain('Rojo (openai/gpt-x): prompt "Eres agresivo: acércate y ataca sin parar."');
-    // Los saltos de línea del prompt se juntan para que el resumen quede compacto.
-    expect(user).toContain('Azul (modelo por defecto): prompt "Eres defensivo: mantén distancia y usa el arco."');
+    // Solo el modelo (sin el proveedor delante) y el nombre del kit de cada lado.
+    expect(user).toContain('Rojo (deepseek/x, kit Berserker): prompt "Eres agresivo: acércate y ataca sin parar."');
+    expect(user).not.toContain("vercel");
+    // Los saltos de línea del prompt se juntan para que el resumen quede compacto; sin kit
+    // guardado (registros viejos) vale el kit por defecto.
+    expect(user).toContain(
+      'Azul (modelo por defecto, kit Clásico): prompt "Eres defensivo: mantén distancia y usa el arco."',
+    );
     expect(user).toContain("Vida final 13,5/20, daño hecho 20, 30 decisiones, 812 ms promedio");
     expect(user).toContain("Vida final 0/20, daño hecho 6,5, 22 decisiones, 1400 ms promedio");
     expect(user.endsWith("Explica por qué ganó Rojo.")).toBe(true);
+  });
+
+  it("el proveedor simulado se nombra como tal, sin su modelo de mentira", () => {
+    const rec = record({ winner: "red", reason: "kill" });
+    rec.configs.blue = { side: "blue", prompt: "defiende", provider: "mock", model: "mock-scripted", kit: "tank" };
+    const summary = summarizeMatch(rec);
+    expect(summary).toContain('Azul (simulado, kit Tanque): prompt "defiende"');
+    expect(summary).not.toContain("mock-scripted");
+  });
+
+  it("el system le explica al comentarista qué es un kit", () => {
+    const [system] = buildExplanationMessages(record({ winner: "red", reason: "kill" }));
+    expect(system?.content).toContain("kit");
   });
 
   it("pregunta por el empate cuando no hay ganador", () => {

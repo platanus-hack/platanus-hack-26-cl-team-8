@@ -9,7 +9,9 @@ import {
   type AgentConfig,
   type MatchRecord,
   type MatchState,
+  type ModelsResponse,
   type PromptsResponse,
+  type Provider,
   type ServerDefaults,
   type Side,
   type UpdatePromptBody,
@@ -32,9 +34,34 @@ export type ServerDeps = {
   history: { latest(): MatchRecord[] };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
   defaults: ServerDefaults;
+  /** Lista de modelos permitidos (ver models.ts). */
+  models: ModelPolicy & { snapshot(): ModelsResponse };
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
 };
+
+export type ModelPolicy = { isAllowed(id: string): boolean };
+
+/**
+ * Aplica la lista de modelos permitidos a lo que se quiere guardar. Devuelve el cuerpo
+ * listo para guardar, o null si pide un modelo que no está permitido (HTTP 400).
+ * Con el proveedor simulado no hay modelo que elegir: el que venga se descarta.
+ * `defaultProvider` es el proveedor del servidor, que vale cuando el cuerpo no trae uno.
+ */
+export function applyModelPolicy(
+  body: UpdatePromptBody,
+  defaultProvider: Provider,
+  models: ModelPolicy,
+): UpdatePromptBody | null {
+  const model = body.model?.trim();
+  if (!model) return body;
+  if ((body.provider ?? defaultProvider) === "mock") {
+    const withoutModel = { ...body };
+    delete withoutModel.model;
+    return withoutModel;
+  }
+  return models.isAllowed(model) ? body : null;
+}
 
 /** Cuerpo de error uniforme: { error, message } con el mismo texto en español. */
 function errorBody(text: string): { error: string; message: string } {
@@ -54,11 +81,9 @@ function describeBodyError(issues: { path: (string | number)[]; code: string }[]
     return `El prompt supera el máximo de ${MAX_PROMPT_LENGTH} caracteres`;
   }
   if (first?.path[0] === "prompt") return "Falta el campo 'prompt' o no es texto";
-  if (first?.path[0] === "provider") {
-    return "Proveedor inválido: usa mock, vercel, openai, anthropic, openrouter o gateway";
-  }
+  if (first?.path[0] === "provider") return "Proveedor inválido: usa mock o vercel";
   if (first?.path[0] === "model") return "Modelo inválido: debe ser texto de hasta 100 caracteres";
-  return "Cuerpo inválido: se espera un JSON { prompt, provider?, model? }";
+  return "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }";
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -137,7 +162,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (!body.success) {
       return reply.code(400).send(errorBody(describeBodyError(body.error.issues)));
     }
-    const config = await deps.prompts.update(side.data, body.data);
+    const update = applyModelPolicy(body.data, deps.defaults.provider, deps.models);
+    if (!update) {
+      return reply.code(400).send(errorBody("Modelo no permitido: elige uno de la lista"));
+    }
+    const config = await deps.prompts.update(side.data, update);
     deps.hub.broadcast({ type: "prompts", at: Date.now(), prompts: deps.prompts.get() });
     return config;
   });
@@ -158,6 +187,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get(API_ROUTES.matches, async () => deps.history.latest());
 
   app.get(API_ROUTES.defaults, async () => deps.defaults);
+
+  app.get(API_ROUTES.models, async () => deps.models.snapshot());
 
   // ---------- WebSocket (solo servidor -> cliente) ----------
 

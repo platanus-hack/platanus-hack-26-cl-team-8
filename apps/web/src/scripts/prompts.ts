@@ -1,10 +1,15 @@
 import {
+  DEFAULT_KIT,
   DEFAULT_PROMPTS,
+  KITS,
+  KitIdSchema,
   MAX_PROMPT_LENGTH,
   ProviderSchema,
   SIDES,
   UpdatePromptBodySchema,
+  kitOf,
   type AgentConfig,
+  type KitId,
   type PromptsResponse,
   type Side,
   type UpdatePromptBody,
@@ -12,33 +17,47 @@ import {
 import { describeError, fetchPrompts, savePrompt } from "./api";
 import { byId, setText } from "./dom";
 import { SIDE_LABEL } from "./format";
+import { renderInventory } from "./inventory";
 import { createModelPicker } from "./modelpicker";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import { showToast } from "./toast";
 
-/** Contenido de un editor tal como está en los campos del formulario. */
-type Draft = { prompt: string; provider: string; model: string };
+/** Contenido de un editor: lo que hay en sus campos y lo elegido en el selector de modelo. */
+type Draft = { prompt: string; provider: string; model: string; kit: KitId };
 
 type Editor = {
   form: HTMLFormElement;
   textarea: HTMLTextAreaElement;
-  provider: HTMLSelectElement;
-  model: HTMLInputElement;
-  /** Logo + nombre del modelo que usará este prompt, según lo elegido en el formulario. */
+  /**
+   * Proveedor y modelo elegidos. No tienen campo en el formulario: los escribe el
+   * selector de modelo (modelpicker.ts) y se guardan aquí.
+   */
+  provider: string;
+  model: string;
+  kit: HTMLSelectElement;
+  kitDescription: HTMLElement;
+  /** Inventario dibujado del kit elegido en el desplegable. */
+  inventory: HTMLElement;
+  /** Logo + nombre del modelo que usará este prompt, según lo elegido en el selector. */
   modelTag: HTMLElement;
   count: HTMLElement;
   status: HTMLElement;
   save: HTMLButtonElement;
   conflict: HTMLElement;
   reload: HTMLButtonElement;
-  /** Último valor que ESTA página escribió en los campos (base para detectar ediciones locales). */
+  /** Último valor que ESTA página escribió en el editor (base para detectar ediciones locales). */
   base: Draft;
   /** Último valor conocido del servidor. */
   remote: Draft | null;
   saving: boolean;
 };
 
-const EMPTY: Draft = { prompt: "", provider: "", model: "" };
+/**
+ * Un editor recién cargado, antes de que llegue nada del servidor. El kit es el que el
+ * desplegable trae marcado en index.astro: si fueran distintos, la primera carga del
+ * servidor parecería una edición local y saldría el aviso de conflicto.
+ */
+const EMPTY: Draft = { prompt: "", provider: "", model: "", kit: DEFAULT_KIT };
 
 let editors: Record<Side, Editor> | null = null;
 
@@ -48,21 +67,31 @@ function toDraft(config: AgentConfig): Draft {
     prompt: config.prompt.replace(/\r\n?/g, "\n"),
     provider: config.provider ?? "",
     model: config.model ?? "",
+    // Sin kit (o con uno que esta página no conoce) vale el kit por defecto, igual que en el
+    // servidor. El desplegable no puede mostrar un valor sin opción: quedaría "sin guardar" para siempre.
+    kit: kitOf(config).id,
   };
 }
 
 function sameDraft(a: Draft, b: Draft): boolean {
-  return a.prompt === b.prompt && a.provider === b.provider && a.model.trim() === b.model.trim();
+  return a.prompt === b.prompt && a.provider === b.provider && a.model.trim() === b.model.trim() && a.kit === b.kit;
 }
 
 function readDraft(editor: Editor): Draft {
-  return { prompt: editor.textarea.value, provider: editor.provider.value, model: editor.model.value };
+  const kit = KitIdSchema.safeParse(editor.kit.value);
+  return {
+    prompt: editor.textarea.value,
+    provider: editor.provider,
+    model: editor.model,
+    kit: kit.success ? kit.data : DEFAULT_KIT,
+  };
 }
 
 function writeDraft(editor: Editor, draft: Draft): void {
   if (editor.textarea.value !== draft.prompt) editor.textarea.value = draft.prompt;
-  if (editor.provider.value !== draft.provider) editor.provider.value = draft.provider;
-  if (editor.model.value !== draft.model) editor.model.value = draft.model;
+  editor.provider = draft.provider;
+  editor.model = draft.model;
+  if (editor.kit.value !== draft.kit) editor.kit.value = draft.kit;
   editor.base = draft;
 }
 
@@ -79,6 +108,10 @@ function refresh(editor: Editor): void {
       brand: null,
     },
   );
+  // El kit del desplegable se dibuja al elegirlo, antes de guardar.
+  const kit = KITS[draft.kit];
+  setText(editor.kitDescription, kit.description);
+  renderInventory(editor.inventory, kit);
   editor.count.classList.toggle("is-over", length > MAX_PROMPT_LENGTH);
   editor.save.disabled = editor.saving || length > MAX_PROMPT_LENGTH;
   setText(editor.save, editor.saving ? "Guardando…" : "Guardar");
@@ -99,7 +132,8 @@ function refresh(editor: Editor): void {
 /**
  * Llega una versión del servidor (carga inicial, evento "prompts" o respuesta
  * de un guardado). Regla: si el usuario no ha tocado el editor se reemplaza;
- * si está escribiendo, NO se le pisa el texto y se ofrece cargarla a mano.
+ * si está escribiendo, NO se le pisa lo que lleva (texto, kit o modelo) y se
+ * ofrece cargarla a mano.
  */
 function applyRemote(editor: Editor, config: AgentConfig): void {
   const incoming = toDraft(config);
@@ -132,7 +166,8 @@ async function save(side: Side, editor: Editor): Promise<void> {
   if (editor.saving) return;
   const sent = readDraft(editor);
 
-  const candidate: UpdatePromptBody = { prompt: sent.prompt };
+  // El kit va siempre; proveedor y modelo solo si se eligió algo distinto de "por defecto".
+  const candidate: UpdatePromptBody = { prompt: sent.prompt, kit: sent.kit };
   const provider = ProviderSchema.safeParse(sent.provider);
   if (provider.success) candidate.provider = provider.data;
   if (sent.model.trim() !== "") candidate.model = sent.model.trim();
@@ -149,7 +184,7 @@ async function save(side: Side, editor: Editor): Promise<void> {
     const saved = await savePrompt(side, body.data);
     const savedDraft = toDraft(saved);
     editor.remote = savedDraft;
-    // Solo se reescriben los campos si el usuario no siguió escribiendo mientras se guardaba.
+    // Solo se reescribe el editor si el usuario no siguió cambiándolo mientras se guardaba.
     if (sameDraft(readDraft(editor), sent)) writeDraft(editor, savedDraft);
     editor.conflict.hidden = true;
     editor.status.dataset.kind = "ok";
@@ -168,8 +203,11 @@ function createEditor(side: Side): Editor {
   const editor: Editor = {
     form: byId<HTMLFormElement>(`editor-${side}`),
     textarea: byId<HTMLTextAreaElement>(`prompt-${side}`),
-    provider: byId<HTMLSelectElement>(`provider-${side}`),
-    model: byId<HTMLInputElement>(`model-${side}`),
+    provider: "",
+    model: "",
+    kit: byId<HTMLSelectElement>(`kit-${side}`),
+    kitDescription: byId(`kit-description-${side}`),
+    inventory: byId(`inv-${side}`),
     modelTag: byId(`picker-current-${side}`),
     count: byId(`count-${side}`),
     status: byId(`save-status-${side}`),
@@ -186,14 +224,15 @@ function createEditor(side: Side): Editor {
 
   const onInput = (): void => refresh(editor);
   editor.textarea.addEventListener("input", onInput);
-  editor.model.addEventListener("input", onInput);
-  editor.provider.addEventListener("change", onInput);
+  // "input" además de "change": con el teclado algunos navegadores avisan solo con uno de los dos.
+  editor.kit.addEventListener("input", onInput);
+  editor.kit.addEventListener("change", onInput);
   createModelPicker({
     side,
-    getChoice: () => ({ provider: editor.provider.value, model: editor.model.value }),
+    getChoice: () => ({ provider: editor.provider, model: editor.model }),
     onPick: (choice) => {
-      editor.provider.value = choice.provider;
-      editor.model.value = choice.model;
+      editor.provider = choice.provider;
+      editor.model = choice.model;
       refresh(editor);
     },
   });

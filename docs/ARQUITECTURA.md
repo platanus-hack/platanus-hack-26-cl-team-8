@@ -6,12 +6,12 @@ Este documento describe el diseño según los contratos del repo: `packages/prot
 
 | Pieza | Responsabilidad | No hace |
 |---|---|---|
-| `packages/protocol` | Tipos y esquemas zod compartidos: `ARENA`, `Side`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
-| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `mock`, `vercel` (Vercel AI Gateway, vía el SDK `ai`), `openai`, `anthropic`, `openrouter`, `gateway` (Vercel AI Gateway, vía su API compatible con OpenAI). | Saber de Minecraft. |
-| `packages/agent` | `createFighter(opts)` devuelve un `Fighter` (`connect`, `start`, `stop`): un bot de mineflayer con el ciclo percibir → LLM → actuar. Informa lo que pasa a través de `FighterEvents`. | Teletransportarse, darse el kit o cambiar su modo de juego: eso lo hace el orquestador por RCON. |
-| `apps/orchestrator` | Único dueño del estado. API HTTP + websocket, ciclo de vida de la pelea, RCON, decisión del ganador, historial en `DATA_DIR`. | Renderizar video. |
+| `packages/protocol` | Tipos y esquemas zod compartidos: `ARENA`, `Side`, `KITS`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`, `MODEL_PRICE_CAP`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
+| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `vercel` (Vercel AI Gateway, vía el SDK `ai`) y `mock` (guion fijo, sin red, para pruebas). | Saber de Minecraft. |
+| `packages/agent` | `createFighter(opts)` devuelve un `Fighter` (`connect`, `start`, `stop`): un bot de mineflayer con el ciclo percibir → LLM → actuar. Recibe su kit en `opts.kit` y ofrece al LLM solo las herramientas de ese kit. Informa lo que pasa a través de `FighterEvents`. | Teletransportarse, darse el kit o cambiar su modo de juego: eso lo hace el orquestador por RCON. |
+| `apps/orchestrator` | Único dueño del estado. API HTTP + websocket, ciclo de vida de la pelea, RCON, decisión del ganador, historial en `DATA_DIR`, lista de modelos permitidos. | Renderizar video. |
 | `apps/camera` | Bot espectador (`CAMERA_USERNAME`) ubicado en `ARENA.camera`; renderiza y publica RTMP en `RTMP_URL`. | Conocer el estado de la pelea. |
-| `apps/web` | Sitio Astro: reproductor HLS, telemetría en vivo por websocket, editor de prompts, botones de iniciar/detener, historial. | Guardar estado propio. |
+| `apps/web` | Sitio Astro: reproductor HLS, telemetría en vivo por websocket, editor de prompts (con el kit y el modelo de cada lado), botones de iniciar/detener, historial. | Guardar estado propio. |
 | `infra/*` | Caddy (un solo origen), MediaMTX (RTMP → HLS), configuración de Minecraft. | |
 
 Hay **una sola sala**: una pelea a la vez, los mismos prompts y el mismo video para todos los visitantes. No hay autenticación.
@@ -61,10 +61,10 @@ La cámara no depende del orquestador ni del estado de la pelea: transmite la ar
 
 ### Paso a paso
 
-1. **Editar prompts.** `PUT /api/prompts/:side` con `{ prompt, provider?, model? }` (máx. `MAX_PROMPT_LENGTH` caracteres). Los prompts editados son los de la **próxima** pelea; el orquestador avisa a todos con un evento `prompts`. Editar durante una pelea no cambia la pelea en curso.
+1. **Editar prompts.** `PUT /api/prompts/:side` con `{ prompt, provider?, model?, kit? }` (máx. `MAX_PROMPT_LENGTH` caracteres). El kit va junto con el prompt; sin `kit`, o con un id desconocido, vale `DEFAULT_KIT`. Un modelo que no está en la lista de permitidos se rechaza con `400` (ver [Modelos permitidos](#modelos-permitidos)). Los prompts editados son los de la **próxima** pelea; el orquestador avisa a todos con un evento `prompts`. Editar durante una pelea no cambia la pelea en curso.
 2. **Iniciar.** `POST /api/match/start`. Si ya hay una pelea en `preparing` o `running`, responde `409`. Si no, crea un `MatchState` nuevo en fase `preparing` y **congela** los prompts pendientes en `state.configs`.
-3. **Preparar.** Por RCON el orquestador deja la arena lista (centro `ARENA.center`, radio `ARENA.radius`, muros de `ARENA.wallHeight`). Crea un `LlmClient` por agente (el `provider`/`model` del `AgentConfig`, o `LLM_PROVIDER`/`LLM_MODEL` si vienen vacíos) y un `Fighter` por lado con los nombres de `AGENT_USERNAMES`. Tras `connect()`, teletransporta a cada uno a `ARENA.spawns[side]`, le da el kit y fija el modo de juego.
-4. **Pelear.** Fase `running`, con `startedAt` y `endsAt = startedAt + MATCH_DURATION_SECONDS`. Cada `Fighter` corre su ciclo cada `AGENT_TICK_MS`: arma una observación, llama al LLM con el prompt del usuario y las herramientas disponibles, y ejecuta lo que el LLM pide. Todo lo que ocurre vuelve al orquestador por `FighterEvents`, que actualiza `AgentStatus` (vida, comida, `damageDealt`, `decisions`, `lastThought`, `lastAction`) y lo retransmite por websocket.
+3. **Preparar.** Por RCON el orquestador deja la arena lista (centro `ARENA.center`, radio `ARENA.radius`, muros de `ARENA.wallHeight`). Crea un `LlmClient` por agente (el `provider`/`model` del `AgentConfig`, o `LLM_PROVIDER`/`LLM_MODEL` si vienen vacíos; si el modelo ya no está permitido, el modelo por defecto del servidor) y un `Fighter` por lado con los nombres de `AGENT_USERNAMES` y el kit de su `AgentConfig`. Tras `connect()`, teletransporta a cada uno a `ARENA.spawns[side]`, le da su kit y fija el modo de juego.
+4. **Pelear.** Fase `running`, con `startedAt` y `endsAt = startedAt + MATCH_DURATION_SECONDS`. Cada `Fighter` corre su ciclo cada `AGENT_TICK_MS`: arma una observación, llama al LLM con el prompt del usuario y las herramientas de su kit, y ejecuta lo que el LLM pide. Todo lo que ocurre vuelve al orquestador por `FighterEvents`, que actualiza `AgentStatus` (vida, comida, `damageDealt`, `decisions`, `lastThought`, `lastAction`) y lo retransmite por websocket.
 5. **Terminar.** La pelea termina por una de estas razones (`WinReason`):
 
    | `reason` | Cuándo | `winner` |
@@ -75,7 +75,7 @@ La cámara no depende del orquestador ni del estado de la pelea: transmite la ar
    | `stopped` | Alguien llamó a `POST /api/match/stop`. | `null` |
    | `error` | Falló algo (conexión, LLM sin clave, RCON). | `null` |
 
-6. **Registrar.** El orquestador detiene a ambos `Fighter`, pasa a `finished`, guarda un `MatchRecord` en `DATA_DIR` (volumen `orchestrator-data`) y emite `match_end`. `GET /api/matches` devuelve los últimos 50, más recientes primero. Ese registro (prompts + estado final + resultado) es la **respuesta** de la simulación a "¿qué pasa si A pelea contra B?".
+6. **Registrar.** El orquestador detiene a ambos `Fighter`, pasa a `finished`, guarda un `MatchRecord` en `DATA_DIR` (volumen `orchestrator-data`) y emite `match_end`. También borra de la arena los tablones que hayan quedado puestos. `GET /api/matches` devuelve los últimos 50, más recientes primero. Ese registro (prompts + estado final + resultado) es la **respuesta** de la simulación a "¿qué pasa si A pelea contra B?".
 
 ### Fases
 
@@ -84,6 +84,44 @@ idle --start--> preparing --> running --> finished --start--> preparing ...
                     |             |
                     +--- error ---+--> finished (reason = error | stopped)
 ```
+
+## Kits y herramientas
+
+Un kit es un dato puro de `packages/protocol`: `KITS[id]` trae nombre, descripción, objetos (`slot`, `item`, `count`, `label`, encantamientos) y efectos permanentes. De ese mismo dato salen las tres cosas que tienen que coincidir: lo que la web dibuja, lo que el orquestador entrega por RCON y las herramientas que el agente ofrece al LLM.
+
+| Kit (`KitId`) | Armadura | Barra de objetos | Efecto |
+|---|---|---|---|
+| `classic` "Clásico" (por defecto) | Hierro | Espada de hierro, arco, 4 filetes, 16 flechas | — |
+| `archer` "Arquero" | Malla | Espada de piedra, arco con Empuje I, 4 filetes, 32 flechas | Velocidad I |
+| `tank` "Tanque" | Peto y grebas de diamante, casco y botas de hierro | Espada de piedra, 4 filetes | — |
+| `berserker` "Berserker" | Peto y grebas de hierro, casco y botas de malla | Hacha de diamante, 4 filetes | Velocidad I |
+| `ender` "Enderman" | Malla; botas con Caída de pluma IV | Espada de diamante, 4 perlas de ender, 4 filetes | — |
+| `builder` "Constructor" | Hierro | Espada de hierro, arco, 3 manzanas doradas, 16 tablones de roble, 8 flechas | — |
+
+Todos usan la misma convención de barra: `hotbar.0` el arma cuerpo a cuerpo, `hotbar.1` el arco o las perlas, `hotbar.2` la comida, `hotbar.3` los bloques y `hotbar.8` las flechas.
+
+- **Contrato.** `AgentConfig.kit` es opcional y tolerante: si falta (registros viejos) o trae un id desconocido, `kitOf(config)` devuelve `DEFAULT_KIT`. Así el historial ya guardado sigue validando.
+- **Entrega (`apps/orchestrator`).** Al preparar a cada peleador, después de limpiar su inventario y sus efectos, el orquestador manda un `item replace entity <bot> <slot> with minecraft:<item>` por objeto y un `effect give <bot> minecraft:<efecto> infinite` por efecto. Como cada objeto va a un slot fijo, la barra del juego es la misma que muestra la web.
+- **Herramientas (`packages/agent`).** `kitToolNames(kit)` deduce las herramientas de los objetos del kit, y solo esas se le ofrecen al LLM. Si el LLM llama a una que su kit no tiene, recibe un resultado que le dice cuáles puede usar y sigue con lo que estaba haciendo. El prompt de sistema lleva una sección con el contenido del kit y cómo funciona cada herramienta.
+
+| Herramienta | Kits | Qué hace |
+|---|---|---|
+| `approach` | Todos | Camina hacia el rival hasta quedar a unos 2 bloques, sin atacar. |
+| `attack` | Todos | Cuerpo a cuerpo con la espada o el hacha, respetando la recarga del arma que tiene en la mano (el hacha pega más fuerte y más lento). Argumento opcional `seconds`. |
+| `retreat` | Todos | Se aleja del rival sin salir de la arena. |
+| `shoot` | Los que traen arco y flechas: `classic`, `archer`, `builder` | Se detiene, apunta, carga cerca de 1 segundo y dispara. |
+| `eat` | Todos | Come un filete (solo si la barra de comida no está llena) o una manzana dorada (siempre). Tarda cerca de 2 segundos. |
+| `pearl` | `ender` | Lanza una perla de ender y se teletransporta donde cae. `target: "rival"` (por defecto) cae junto al rival y pasa a atacar; `target: "away"` cae lejos, al otro lado de la arena, y queda en espera. Recarga de 5 segundos. |
+| `build` | `builder` | Levanta un muro de 3 de ancho y 2 de alto entre el agente y el rival, con hasta 6 bloques. Tarda 1 a 2 segundos, deja al agente en espera y tiene una recarga de 4 segundos. |
+| `wait` | Todos | Se queda quieto mirando al rival. |
+
+Lo que estas dos herramientas nuevas cambian fuera del agente:
+
+- **Daño propio.** Caer con una perla quita vida. `FighterEvents.onDamageTaken(amount, health, bySelf)` avisa con `bySelf = true` cuando el daño viene de la perla del propio agente; el orquestador emite igual el evento `damage`, pero no lo suma al `damageDealt` del rival.
+- **Observación.** Mientras dura la recarga, la observación del agente incluye `pearlCooldown` o `buildCooldown` (segundos que faltan).
+- **Arena.** Al construir la arena se pone una tapa de bloques `barrier` (invisibles) justo sobre el borde de los muros, para que una perla no saque a nadie. Al terminar la pelea se borran los tablones que hayan quedado dentro.
+
+Para agregar un kit: sumar su id a `KIT_IDS` y su entrada a `KITS`. Los comandos RCON, la lista de herramientas y el panel de la web salen de ahí. Solo hay que tocar más código si trae un objeto sin ícono en la web o una mecánica que ninguna herramienta cubre.
 
 ## Protocolo de eventos
 
@@ -95,7 +133,7 @@ Websocket `GET /api/ws`, solo servidor → cliente. Cada mensaje es un JSON con 
 | `prompts` | `prompts: { red, blue }` (`AgentConfig`) | Cuando alguien edita los prompts de la próxima pelea. |
 | `thought` | `side`, `text` | Texto que produjo el LLM de ese agente en una decisión. |
 | `action` | `side`, `tool`, `args`, `result` | El agente ejecutó una herramienta; `result` es el resultado en texto. |
-| `damage` | `side` (quien **recibió** el daño), `amount`, `health` | Un agente perdió vida. |
+| `damage` | `side` (quien **recibió** el daño), `amount`, `health` | Un agente perdió vida, también cuando se la quitó su propia perla de ender. |
 | `death` | `side` | Un agente murió. |
 | `match_end` | `record: MatchRecord` | La pelea terminó y quedó guardada. |
 | `log` | `level` (`info`/`warn`/`error`), `text` | Mensajes para humanos (en español). |
@@ -113,12 +151,26 @@ Criterios de diseño:
 | `GET /api/health` | `{ ok: true }` |
 | `GET /api/state` | `MatchState` |
 | `GET /api/prompts` | `{ red: AgentConfig, blue: AgentConfig }` |
-| `PUT /api/prompts/:side` | Cuerpo `UpdatePromptBody` → `AgentConfig` |
+| `PUT /api/prompts/:side` | Cuerpo `UpdatePromptBody` (`{ prompt, provider?, model?, kit? }`) → `AgentConfig` (`400` si el modelo no está permitido) |
 | `POST /api/match/start` | `MatchState` (`409` si ya hay una pelea en curso) |
 | `POST /api/match/stop` | `MatchState` |
 | `GET /api/matches` | `MatchRecord[]` (más recientes primero, máx. 50) |
+| `GET /api/defaults` | `ServerDefaults`: proveedor del servidor y modelo por defecto de cada proveedor |
+| `GET /api/models` | `ModelsResponse`: los modelos que se pueden elegir |
 
 Las rutas están en `API_ROUTES` para que la web y el orquestador no las escriban a mano.
+
+### Modelos permitidos
+
+Solo se puede pelear con modelos baratos. El tope es `MODEL_PRICE_CAP`: **1 USD por millón de tokens de entrada y 5 USD por millón de tokens de salida**, según el precio del catálogo público de Vercel AI Gateway. Un modelo justo en el tope está permitido.
+
+- **De dónde sale la lista.** El orquestador descarga el catálogo al arrancar, sin esperar la descarga para empezar a atender, y lo vuelve a descargar cada cierto tiempo. Se queda con los modelos de lenguaje que aceptan herramientas y no pasan del tope. Si la descarga falla, conserva la última lista buena; si nunca hubo una, usa una lista fija.
+- **`GET /api/models`** responde `{ models, source, updatedAt }`. Cada modelo trae `id` (`creador/modelo`), `name`, `inputPrice` y `outputPrice`, estos dos en dólares **por token**. `source` es `"catalog"` (lista viva) o `"fallback"` (lista fija); `updatedAt` es el momento de la última descarga buena, o `null`.
+- **Dónde se hace cumplir.** En `PUT /api/prompts/:side`: si viene un modelo, el proveedor que va a usar ese lado no es `mock` y el modelo no está en la lista, responde `400`. Con proveedor `mock` el modelo se descarta. Y otra vez al iniciar la pelea: si el modelo guardado dejó de estar permitido, ese agente usa el modelo por defecto del servidor y se emite un `log` de nivel `warn`.
+- **El modelo por defecto del servidor** siempre está permitido, para que "Por defecto del servidor" nunca quede bloqueado.
+- **La web** arma su selector con esta ruta ("Por defecto del servidor", "Simulado" y la lista, con el precio de cada modelo). No consulta el catálogo de Vercel por su cuenta ni deja escribir un id a mano.
+
+Los datos guardados con los proveedores que ya no existen se convierten al leerlos (`migrateStoredConfig`): `gateway` pasa a `vercel`, y `openai`, `anthropic` y `openrouter` quedan sin proveedor, es decir, con el del servidor. El texto del prompt y el historial se conservan.
 
 ## Red y despliegue
 
@@ -146,7 +198,7 @@ Hoy existe un solo escenario: duelo 1 contra 1 en una arena circular cerrada. Un
    - Aislar la decisión del ganador en una función pura `(estado, evento) -> MatchResult | null` por escenario. Es el mejor candidato a tests con vitest: no necesita Minecraft.
 
 4. **Ajustar lo que el agente puede hacer (`packages/agent`).**
-   - Las herramientas que ve el LLM son `ToolDef[]`. Un escenario puede quitar o agregar herramientas (por ejemplo, sin arco) y agregar contexto a la observación (por ejemplo, "hay lava a 3 bloques").
+   - Las herramientas que ve el LLM son `ToolDef[]` y hoy dependen del kit (`kitToolNames`). Un escenario puede limitar los kits que se pueden elegir, quitar o agregar herramientas (por ejemplo, sin arco) y agregar contexto a la observación (por ejemplo, "hay lava a 3 bloques").
    - Mantener la interfaz `Fighter` (`connect`/`start`/`stop`) y `FighterEvents` sin cambios: así el orquestador no necesita saber qué escenario corre cada agente. Lo propio del escenario entra como un campo opcional nuevo en `FighterOptions`.
 
 5. **Elegirlo desde la API y la web.**

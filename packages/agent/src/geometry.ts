@@ -93,3 +93,36 @@ export function retreatTarget(input: RetreatInput): Vec3Like {
   };
   return distanceXZ(left, opponent) >= distanceXZ(right, opponent) ? left : right;
 }
+
+/** Cuántos bloques por delante de la celda propia va el centro del muro. */
+const WALL_GAP = 2;
+
+/**
+ * Celdas (coordenadas enteras de bloque) de un muro de 3 de ancho y 2 de alto entre
+ * `self` y `opponent`. La dirección hacia el rival se ajusta a su eje dominante (X o Z),
+ * el centro del muro queda WALL_GAP bloques por delante de la celda propia y el muro es
+ * perpendicular a ese eje, a la altura de los pies y un bloque más arriba.
+ * Orden: fila de abajo (centro primero) y después la de arriba, porque cada bloque de
+ * arriba se apoya en el de abajo.
+ */
+export function wallCells(self: Vec3Like, opponent: Vec3Like): Vec3Like[] {
+  const dx = opponent.x - self.x;
+  const dz = opponent.z - self.z;
+  const alongX = Math.abs(dx) >= Math.abs(dz);
+  const forwardX = alongX ? (dx >= 0 ? 1 : -1) : 0;
+  const forwardZ = alongX ? 0 : dz >= 0 ? 1 : -1;
+  const sideX = alongX ? 0 : 1;
+  const sideZ = alongX ? 1 : 0;
+
+  const centerX = Math.floor(self.x) + forwardX * WALL_GAP;
+  const centerZ = Math.floor(self.z) + forwardZ * WALL_GAP;
+  const baseY = Math.floor(self.y);
+
+  const cells: Vec3Like[] = [];
+  for (const dy of [0, 1]) {
+    for (const side of [0, -1, 1]) {
+      cells.push({ x: centerX + sideX * side, y: baseY + dy, z: centerZ + sideZ * side });
+    }
+  }
+  return cells;
+}
