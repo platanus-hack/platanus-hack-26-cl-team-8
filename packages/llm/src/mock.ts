@@ -45,7 +45,19 @@ import { extractJsonObject, isRecord } from "./util";
  *   existe porque el agente recorta el historial y la cuenta de mensajes se estanca.
  */
 
-export const MOCK_TOOL_NAMES = ["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "wait"] as const;
+export const MOCK_TOOL_NAMES = [
+  "approach",
+  "attack",
+  "retreat",
+  "shoot",
+  "eat",
+  "pearl",
+  "build",
+  "shield",
+  "water",
+  "lava",
+  "wait",
+] as const;
 export type MockToolName = (typeof MOCK_TOOL_NAMES)[number];
 
 /** Distancia (bloques) a la que un golpe cuerpo a cuerpo alcanza. */

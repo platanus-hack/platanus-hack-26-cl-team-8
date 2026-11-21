@@ -34,6 +34,8 @@ export function worldRuleCommands(): string[] {
     "gamerule keepInventory true",
     // Con regeneración natural, comer sirve de algo (los prompts pueden decidir cuándo comer).
     "gamerule naturalRegeneration true",
+    // La lava de los cubos no debe incendiar la lana ni los tablones: el fuego no se propaga.
+    "gamerule doFireTick false",
     "gamerule doImmediateRespawn true",
     "gamerule announceAdvancements false",
     // Nada de avisos dentro del juego (muertes, logros): eso lo muestra el sitio web.
@@ -108,9 +110,16 @@ export function fighterKitCommands(username: string, kit: Kit): string[] {
   ];
 }
 
-/** Borra los bloques que los peleadores colocaron dentro de la arena (el kit constructor usa tablones). */
-export function clearPlacedBlocksCommand(): string {
-  return `fill ${MIN_X + 1} ${FLOOR_Y + 1} ${MIN_Z + 1} ${MAX_X - 1} ${WALL_TOP_Y} ${MAX_Z - 1} minecraft:air replace minecraft:oak_planks`;
+/**
+ * Borra lo que los peleadores dejaron dentro de la arena: bloques (tablones y lana), el
+ * agua y la lava de los cubos y el fuego. Un comando por cosa: `fill ... replace` acepta
+ * un solo filtro (que puede ser un tag de bloques).
+ */
+export function clearPlacedBlocksCommands(): string[] {
+  const box = `fill ${MIN_X + 1} ${FLOOR_Y + 1} ${MIN_Z + 1} ${MAX_X - 1} ${WALL_TOP_Y} ${MAX_Z - 1} minecraft:air replace`;
+  return ["#minecraft:planks", "#minecraft:wool", "minecraft:water", "minecraft:lava", "minecraft:fire"].map(
+    (filter) => `${box} ${filter}`,
+  );
 }
 
 export function teleportCommand(side: Side): string {
@@ -150,7 +159,7 @@ export async function buildArena(rcon: RconLike, sleep: SleepFn): Promise<void> 
 
 /** Al terminar una pelea: que los muros de tablones no sigan en la transmisión hasta la próxima. */
 export async function clearPlacedBlocks(rcon: RconLike): Promise<void> {
-  await rcon.send(clearPlacedBlocksCommand());
+  await sendAll(rcon, clearPlacedBlocksCommands());
 }
 
 /**

@@ -3,7 +3,7 @@
  * ("iron_sword", "ender_pearl"...). Lo comparten el inventario del kit de cada editor
  * y el casillero "en la mano" del marcador.
  */
-import { KIT_LIST } from "@phack/protocol";
+import { CUSTOM_KIT_ITEMS, KIT_LIST } from "@phack/protocol";
 import type { IconName, IconRef, Material } from "./pixelicons";
 
 /** Prefijo del id ("iron_sword", "wooden_axe") -> material con el que se tiñe el ícono. */
@@ -25,6 +25,9 @@ const FIXED: Record<string, IconRef> = {
   golden_apple: { name: "gapple" },
   enchanted_golden_apple: { name: "gapple" },
   cobblestone: { name: "tile", material: "stone" },
+  shield: { name: "shield" },
+  water_bucket: { name: "water_bucket" },
+  lava_bucket: { name: "lava_bucket" },
 };
 
 /** Ícono de un ítem del juego, o null si no hay uno dibujado para él. */
@@ -41,6 +44,7 @@ export function itemIcon(minecraftId: string): IconRef | null {
     if (shape) return material ? { name: shape, material } : null;
   }
   if (id.endsWith("_planks")) return { name: "tile", material: "wood" };
+  if (id.endsWith("_wool")) return { name: "tile", material: "wool" };
   // Cualquier otra comida se muestra con el filete.
   if (/beef|pork|chicken|mutton|bread|apple|carrot|potato|stew|cod|salmon/.test(id)) return { name: "steak" };
   return null;
@@ -48,6 +52,8 @@ export function itemIcon(minecraftId: string): IconRef | null {
 
 /** Nombres en español: los que ya traen los kits ("Espada de hierro"). */
 const LABELS = new Map<string, string>();
+// Primero los del kit personalizado; los de los kits fijos pisan (son los mismos textos).
+for (const [id, entry] of Object.entries(CUSTOM_KIT_ITEMS)) LABELS.set(id, entry.label);
 for (const kit of KIT_LIST) {
   for (const item of kit.items) LABELS.set(item.item, item.label);
 }

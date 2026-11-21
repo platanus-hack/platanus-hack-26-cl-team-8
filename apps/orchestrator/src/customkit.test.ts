@@ -52,6 +52,34 @@ describe("buildCustomKit", () => {
     expect(new Set(kit.items.map((i) => i.slot)).size).toBe(kit.items.length);
   });
 
+  it("kit de supervivencia: escudo en la mano secundaria, lana en dos stacks y los dos cubos", () => {
+    // El inventario del prompt "Intenta aguantar la mayor cantidad de tiempo".
+    const { kit, ignored } = buildCustomKit({
+      items: [
+        { item: "diamond_helmet" },
+        { item: "diamond_chestplate" },
+        { item: "diamond_leggings" },
+        { item: "diamond_boots" },
+        { item: "red_wool", count: 128 },
+        { item: "water_bucket" },
+        { item: "lava_bucket" },
+        { item: "shield" },
+      ],
+    });
+    expect(ignored).toEqual([]);
+    const bySlot = Object.fromEntries(kit.items.map((i) => [i.slot, `${i.item}x${i.count}`]));
+    expect(bySlot).toMatchObject({
+      "armor.head": "diamond_helmetx1",
+      "hotbar.3": "red_woolx64",
+      "hotbar.4": "red_woolx64",
+      "hotbar.5": "water_bucketx1",
+      "hotbar.6": "lava_bucketx1",
+      "weapon.offhand": "shieldx1",
+    });
+    expect(fighterKitCommands("AgenteAzul", kit)).toContain("item replace entity AgenteAzul weapon.offhand with minecraft:shield");
+    expect(KitSchema.safeParse(kit).success).toBe(true);
+  });
+
   it("los comandos de RCON salen bien formados", () => {
     const { kit } = buildCustomKit({
       items: [{ item: "netherite_sword", enchantments: [{ id: "sharpness", level: 5 }] }, { item: "cooked_beef", count: 8 }],

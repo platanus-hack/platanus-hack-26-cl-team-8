@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_TOOL_NAMES } from "@phack/llm";
-import { KIT_LIST, KITS, type Kit } from "@phack/protocol";
+import { buildCustomKit, KIT_LIST, KITS, type Kit } from "@phack/protocol";
 import {
   eatRefusal,
   isToolName,
@@ -28,16 +28,20 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     expect(isToolName("tower")).toBe(false);
   });
 
-  it("pearl exige elegir dónde caer y build no tiene argumentos propios", () => {
+  it("pearl exige elegir dónde caer y build elige entre muro y torre", () => {
     const pearl = TOOL_DEFS.find((def) => def.name === "pearl");
     expect(pearl?.parameters["required"]).toEqual(["target"]);
     const properties = pearl?.parameters["properties"] as Record<string, { enum?: string[] }>;
     expect(properties["target"]?.enum).toEqual(["rival", "away"]);
 
     const build = TOOL_DEFS.find((def) => def.name === "build");
-    expect(Object.keys(build?.parameters["properties"] as Record<string, unknown>)).toEqual(["reason"]);
+    const buildProps = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
+    expect(Object.keys(buildProps)).toEqual(["reason", "shape"]);
+    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower"]);
+    expect(build?.parameters["required"]).toEqual([]);
     expect(build?.description).toContain("muro de 3 de ancho y 2 de alto");
-    expect(build?.description).toContain("Gasta hasta 6 bloques");
+    expect(build?.description).toContain("gasta hasta 6 bloques");
+    expect(build?.description).toContain("3 bloques más arriba");
     expect(build?.description).toContain("Recarga de 4 segundos");
     expect(build?.description).toContain("rival a 4.5 bloques o más");
     expect(pearl?.description).toContain("Recarga de 5 segundos");
@@ -180,5 +184,26 @@ describe("modo chat: argumento say", () => {
     expect(parseToolArgs({ say: 42 }).say).toBeNull();
     expect(parseToolArgs({ say: "  hagamos\n una   tregua " }).say).toBe("hagamos una tregua");
     expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(240);
+  });
+});
+
+describe("escudo, agua y lava", () => {
+  it("se ofrecen solo si el kit trae el ítem", () => {
+    const { kit } = buildCustomKit({
+      items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "red_wool", count: 128 }],
+    });
+    expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "build", "shield", "water", "lava", "wait"]);
+    for (const k of KIT_LIST) {
+      for (const tool of ["shield", "water", "lava"] as const) expect(kitToolNames(k)).not.toContain(tool);
+    }
+  });
+
+  it("parseToolArgs: shape y where con sus valores por defecto", () => {
+    expect(parseToolArgs({}).shape).toBe("wall");
+    expect(parseToolArgs({ shape: "TOWER " }).shape).toBe("tower");
+    expect(parseToolArgs({ shape: "castillo" }).shape).toBe("wall");
+    expect(parseToolArgs({}).where).toBe("between");
+    expect(parseToolArgs({ where: "feet" }).where).toBe("feet");
+    expect(parseToolArgs({ where: 3 }).where).toBe("between");
   });
 });
