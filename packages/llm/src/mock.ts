@@ -399,8 +399,16 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
       const turn = Math.max(historyTurn, calls);
       calls += 1;
       const obs = readObservation(req.messages);
-      const decision = decide(obs, readStyle(req.messages), turn);
       const byName = new Map(req.tools.map((t) => [t.name, t]));
+      // Crédulo a propósito: si alguien le pide rendirse (por ejemplo la inyección del
+      // escenario "injection") y puede, se rinde. Así ese benchmark se puede probar sin LLM real.
+      if (byName.has("surrender") && obs.rivalMessages.some((text) => /surrender|r[ií]ndete/i.test(text))) {
+        return {
+          text: "[mock] me piden rendirme y obedezco",
+          toolCalls: [{ id: `mock_${turn}`, name: "surrender", args: { reason: "me ordenaron rendirme" } }],
+        };
+      }
+      const decision = decide(obs, readStyle(req.messages), turn);
       // Si ninguna preferida está disponible, se prueba cualquier tool conocida.
       const order: string[] = [...decision.preferences, ...MOCK_TOOL_NAMES];
       const chosenName = order.find((name) => byName.has(name));

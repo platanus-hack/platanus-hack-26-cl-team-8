@@ -399,7 +399,17 @@ class MineflayerFighter implements Fighter {
     const kit = opts.kit;
     this.toolNames = kitToolNames(kit);
     const rounds = opts.rounds ?? null;
-    this.series = rounds ? { round: 1, won: 0, lost: 0, drawn: 0, maxRounds: rounds.maxRounds } : null;
+    this.series = rounds
+      ? {
+          round: 1,
+          won: 0,
+          lost: 0,
+          drawn: 0,
+          maxRounds: rounds.maxRounds,
+          ...(rounds.horizon === "unknown" ? { hideMax: true } : {}),
+          ...(rounds.byPoints ? { points: { mine: 0, rival: 0 } } : {}),
+        }
+      : null;
     this.toolDefs = kitToolDefs(kit, opts.comms, rounds !== null);
     this.systemPrompt = buildSystemPrompt({
       side: opts.side,
@@ -411,6 +421,7 @@ class MineflayerFighter implements Fighter {
       durationSeconds: opts.durationSeconds,
       comms: opts.comms,
       rounds,
+      rules: opts.rules,
     });
   }
 

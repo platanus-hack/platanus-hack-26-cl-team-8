@@ -243,6 +243,20 @@ export class MatchStore {
     return structuredClone(this.recent);
   }
 
+  /** Todo el historial guardado (para el tablero de benchmarks), más recientes primero. */
+  async all(): Promise<MatchRecord[]> {
+    const raw = await readIfExists(this.file);
+    if (raw === null) return this.latest();
+    return parseMatchLines(raw, Number.POSITIVE_INFINITY);
+  }
+
+  /** Una pelea por id: de las recientes o, si no, del archivo completo. */
+  async find(id: string): Promise<MatchRecord | null> {
+    const recent = this.recent.find((record) => record.id === id);
+    if (recent) return structuredClone(recent);
+    return (await this.all()).find((record) => record.id === id) ?? null;
+  }
+
   async append(record: MatchRecord): Promise<void> {
     this.recent = [record, ...this.recent].slice(0, MAX_HISTORY);
     await this.writeLine(record, "No se pudo guardar la pelea en el historial");
@@ -257,7 +271,14 @@ export class MatchStore {
   async update(id: string, change: (record: MatchRecord) => MatchRecord): Promise<boolean> {
     const index = this.recent.findIndex((record) => record.id === id);
     const current = this.recent[index];
-    if (!current) return false;
+    if (!current) {
+      // Una pelea más vieja que las de la caché (p. ej. calificada desde el tablero): se
+      // corrige igual en el archivo, con una línea nueva del mismo id.
+      const old = (await this.all()).find((record) => record.id === id);
+      if (!old) return false;
+      await this.writeLine({ ...change(old), id }, "No se pudo actualizar la pelea en el historial");
+      return true;
+    }
     const updated: MatchRecord = { ...change(structuredClone(current)), id };
     this.recent = this.recent.map((record, i) => (i === index ? updated : record));
     await this.writeLine(updated, "No se pudo actualizar la pelea en el historial");

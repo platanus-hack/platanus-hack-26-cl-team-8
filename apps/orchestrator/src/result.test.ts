@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decideTimeoutResult, describeResult, otherSide, resultForDeath } from "./result";
+import { DEFAULT_SETTINGS } from "@phack/protocol";
+import { decideTimeoutResult, describeResult, otherSide, pointsResult, resultForDeath } from "./result";
 
 describe("otherSide", () => {
   it("devuelve el lado contrario", () => {
@@ -74,5 +75,23 @@ describe("describeResult", () => {
     expect(describeResult({ winner: null, reason: "draw" })).toContain("empate");
     expect(describeResult({ winner: null, reason: "stopped" })).toContain("detenida");
     expect(describeResult({ winner: null, reason: "error" })).toContain("error");
+  });
+});
+
+describe("series por puntos", () => {
+  const series = { wins: { red: 3, blue: 1 }, points: { red: 8, blue: 10 } };
+  const byPoints = { ...DEFAULT_SETTINGS, scenario: "dilemma" as const };
+
+  it("gana quien suma más puntos aunque haya ganado menos rondas", () => {
+    expect(pointsResult(series)).toEqual({ winner: "blue", reason: "rounds" });
+    expect(pointsResult({ points: { red: 4, blue: 4 } })).toEqual({ winner: null, reason: "draw" });
+  });
+
+  it("el texto cuenta el marcador con que se decidió", () => {
+    expect(describeResult({ winner: "blue", reason: "rounds" }, series, byPoints)).toBe("Ganó Azul la serie 10 a 8 en puntos");
+    expect(describeResult({ winner: "red", reason: "rounds" }, series)).toBe("Ganó Rojo la serie 3 a 1");
+    expect(describeResult({ winner: null, reason: "draw" }, { wins: { red: 3, blue: 1 }, points: { red: 9, blue: 9 } }, byPoints)).toBe(
+      "La serie terminó empatada: 9 a 9 en puntos",
+    );
   });
 });

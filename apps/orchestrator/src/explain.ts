@@ -1,6 +1,8 @@
 import type { ChatMessage } from "@phack/llm";
 import {
   MAX_HEALTH,
+  seriesByPoints,
+  seriesTally,
   SIDES,
   kitOf,
   type MatchRecord,
@@ -51,9 +53,13 @@ function finalHealth(record: MatchRecord, side: Side): number {
   return agent.alive ? Math.max(0, agent.health) : 0;
 }
 
-/** Marcador de la serie: "3 a 1" desde el lado de `side`. */
-function score(series: Series, side: Side): string {
-  return `${series.wins[side]} a ${series.wins[otherSide(side)]}`;
+/** Lo que hace falta de los ajustes para saber si la serie se decidió por puntos. */
+type TallySettings = Pick<MatchRecord["settings"], "seriesWin" | "scenario">;
+
+/** Marcador de la serie: "3 a 1" (o "10 a 8 en puntos") desde el lado de `side`. */
+function score(series: Series, side: Side, settings: TallySettings): string {
+  const t = seriesTally(series, settings);
+  return `${t[side]} a ${t[otherSide(side)]}${t.unit === "puntos" ? " en puntos" : ""}`;
 }
 
 /** Cómo terminó una ronda, para el resumen. */
@@ -70,10 +76,13 @@ function roundLine(round: RoundResult): string {
   return `- Ronda ${round.round}: ganó ${W} ${how} (${length}).`;
 }
 
-function resultLine(result: MatchResult, series: Series | null): string {
+function resultLine(result: MatchResult, series: Series | null, settings: TallySettings): string {
   const winner = result.winner ? SIDE_LABEL[result.winner] : null;
-  if (series && result.reason === "rounds" && result.winner) return `${winner} ganó la serie ${score(series, result.winner)}`;
-  if (series && result.reason === "draw") return `la serie terminó empatada ${score(series, "red")} en rondas ganadas`;
+  if (series && result.reason === "rounds" && result.winner) return `${winner} ganó la serie ${score(series, result.winner, settings)}`;
+  if (series && result.reason === "draw") {
+    const t = seriesTally(series, settings);
+    return `la serie terminó empatada ${t.red} a ${t.blue} en ${t.unit === "puntos" ? "puntos" : "rondas ganadas"}`;
+  }
   switch (result.reason) {
     case "kill":
       return winner ? `ganó ${winner} por KO (el rival murió)` : "terminó por KO";
@@ -93,10 +102,13 @@ function resultLine(result: MatchResult, series: Series | null): string {
 /** Resumen compacto (en español) con lo que el LLM necesita para explicar el resultado. */
 export function summarizeMatch(record: MatchRecord): string {
   const { series } = record;
-  const lines = [`Resultado: ${resultLine(record.result, series)}.`, `Duración: ${seconds(record.durationMs)}.`];
+  const lines = [`Resultado: ${resultLine(record.result, series, record.settings)}.`, `Duración: ${seconds(record.durationMs)}.`];
   if (series) {
     lines.push(`Fue una serie de hasta ${series.maxRounds} rondas. Rondas jugadas:`, ...series.rounds.map(roundLine));
     lines.push(`Marcador final de la serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}.`);
+    if (seriesByPoints(record.settings)) {
+      lines.push(`La serie se decidía por puntos del escenario: Rojo ${series.points.red}, Azul ${series.points.blue}.`);
+    }
     lines.push("La vida final es la de la última ronda; el daño y las decisiones suman toda la serie.");
   }
   for (const side of SIDES) {
@@ -235,6 +247,7 @@ function howRoundsWon(series: Series, side: Side): string {
 
 /** La plantilla del modo por rondas: el marcador, cómo se ganaron las rondas y el daño de toda la serie. */
 function seriesExplanation(record: MatchRecord, series: Series): string {
+  const tally = seriesTally(series, record.settings);
   const red = record.final.red;
   const blue = record.final.blue;
   const drawn = series.rounds.filter((round) => round.winner === null).length;
@@ -242,7 +255,7 @@ function seriesExplanation(record: MatchRecord, series: Series): string {
   const { winner } = record.result;
   if (!winner) {
     return truncate(
-      `Empate en la serie: ${series.wins.red} rondas cada uno${draws} ` +
+      `Empate en la serie: ${tally.red} ${tally.unit} cada uno${tally.unit === "rondas" ? draws : ""} ` +
         `(Rojo hizo ${num(red.damageDealt)} de daño y Azul ${num(blue.damageDealt)}).`,
       MAX_EXPLANATION_LENGTH,
     );
@@ -250,8 +263,8 @@ function seriesExplanation(record: MatchRecord, series: Series): string {
   const loserSide = otherSide(winner);
   const how = howRoundsWon(series, winner);
   return truncate(
-    `${SIDE_LABEL[winner]} ganó la serie ${score(series, winner)}${draws ? ` (con${draws.slice(2)})` : ""}: ` +
-      `${how ? `ganó ${how}` : "ganó más rondas"}; hizo ${num(record.final[winner].damageDealt)} de daño ` +
+    `${SIDE_LABEL[winner]} ganó la serie ${score(series, winner, record.settings)}${draws ? ` (con${draws.slice(2)})` : ""}: ` +
+      `${tally.unit === "puntos" ? "sumó más puntos" : how ? `ganó ${how}` : "ganó más rondas"}; hizo ${num(record.final[winner].damageDealt)} de daño ` +
       `contra ${num(record.final[loserSide].damageDealt)} de ${SIDE_LABEL[loserSide]}.`,
     MAX_EXPLANATION_LENGTH,
   );
