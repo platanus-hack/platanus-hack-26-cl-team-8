@@ -17,6 +17,7 @@ import {
   isSword,
   isWaterBucket,
 } from "./items";
+import { armorGuide, itemGuideLines } from "./item-guide";
 import {
   DIG_MAX_SECONDS,
   kitToolNames,
@@ -200,7 +201,14 @@ function kitSection(kit: Kit): string[] {
     items.length > 0 ? items.map(kitItemTitle).join(", ") : "nada";
   const armor = kit.items.filter((i) => i.slot.startsWith("armor."));
   const rest = kit.items.filter((i) => !i.slot.startsWith("armor."));
-  const lines = ["TU KIT", `- Armadura puesta: ${titles(armor)}.`, `- Objetos: ${titles(rest)}.`];
+  const lines = [
+    "TU KIT",
+    `- Armadura puesta: ${titles(armor)}.${armorGuide(kit)}`,
+    rest.length > 0
+      ? "- Objetos (qué hace cada uno, cómo se usa y situaciones en que suele servir; son ideas, no órdenes):"
+      : "- Objetos: nada.",
+    ...itemGuideLines(kit),
+  ];
   if (kit.effects.length > 0) {
     const effects = kit.effects.map((e) =>
       e.id === "speed" ? `${e.label} (caminas más rápido que un luchador sin ese efecto)` : e.label,
