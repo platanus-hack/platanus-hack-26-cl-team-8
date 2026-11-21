@@ -16,7 +16,6 @@ import {
   type Side,
 } from "@phack/protocol";
 import { clearHistory, describeError, fetchBench, judgeMatch } from "./api";
-import { initPresetPicker } from "./presetpicker";
 import { MOCK, apiUrl } from "./config";
 import { byId, el, setText } from "./dom";
 import { formatDateTime } from "./format";
@@ -446,10 +445,6 @@ async function load(): Promise<void> {
 }
 
 byId("bench-refresh").addEventListener("click", () => void load());
-
-// ---------- Pruebas automáticas ----------
-
-initPresetPicker("bench", () => void load());
 
 // ---------- Borrar historial: dos confirmaciones (y el servidor pide "BORRAR") ----------
 

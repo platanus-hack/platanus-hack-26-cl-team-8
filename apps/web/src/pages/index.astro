@@ -228,6 +228,20 @@ const stats = [
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
         <div class="match-settings" id="settings-field">
+          <!-- Pre-ajuste: elegir uno lo carga de inmediato; si algo cambia, vuelve a "Personalizado" (scripts/presetpicker.ts). -->
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Pre-ajuste</span>
+              <select id="preset" aria-describedby="preset-description">
+                <option value="">Personalizado</option>
+              </select>
+            </label>
+            <p class="comms__description" id="preset-description"></p>
+            <p class="comms__description preset__active" id="preset-active-row" hidden>
+              <span id="preset-active"></span>
+              <button type="button" class="btn btn--small" id="preset-reset">Quitar</button>
+            </p>
+          </div>
           <div class="comms">
             <label class="field">
               <span class="field__label">Rondas</span>
@@ -292,28 +306,6 @@ const stats = [
             </label>
             <p class="comms__description" id="voice-description">{VOICE_LABELS.off}</p>
           </div>
-        </div>
-
-        <!-- Benchmarks: escenario y reglas de la serie (scripts/benchsettings.ts). Ver /bench. -->
-        <div class="match-settings bench-settings" id="bench-settings">
-          <!-- Pre-ajustes: configuraciones guardadas de benchmark (scripts/presetpicker.ts). -->
-          <div class="preset" id="main-preset-field">
-            <div class="preset__row">
-              <label class="field preset__select">
-                <span class="field__label">Pre-ajuste</span>
-                <select id="main-preset" aria-describedby="main-preset-description"></select>
-              </label>
-              <button type="button" class="btn btn--small" id="main-preset-load">Cargar</button>
-              <button type="button" class="btn btn--small preset__run" id="main-preset-run">Ejecutar</button>
-              <button type="button" class="btn btn--small" id="main-preset-stop" hidden>Detener batería</button>
-            </div>
-            <p class="comms__description" id="main-preset-description"></p>
-            <p class="comms__description comms__hint" id="main-preset-status" role="status" hidden></p>
-            <p class="comms__description preset__active">
-              <span id="preset-active"></span>
-              <button type="button" class="btn btn--small" id="preset-reset" hidden>Volver a un duelo libre</button>
-            </p>
-          </div>
           <div class="comms">
             <label class="field switch">
               <span class="field__label">Juez</span>
@@ -347,7 +339,7 @@ const stats = [
                   </button>
                 </div>
 
-                <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
+                <textarea class="editor__text" id={`prompt-${side.id}`} rows="12" spellcheck="false"></textarea>
 
                 <!-- Kit del lado: se guarda con el prompt. El inventario lo dibuja scripts/inventory.ts. -->
                 <div class="kit">

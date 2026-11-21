@@ -10,7 +10,7 @@ import {
 } from "@phack/protocol";
 import { describeError, fetchPrompts, savePrompt, saveSettings } from "./api";
 import { byId, setText } from "./dom";
-import { initPresetPicker } from "./presetpicker";
+import { initPresetPicker, notePresetSettings } from "./presetpicker";
 import { showToast } from "./toast";
 
 /**
@@ -25,6 +25,7 @@ type Elements = {
   judge: HTMLInputElement;
   judgeState: HTMLElement;
   active: HTMLElement;
+  activeRow: HTMLElement;
   reset: HTMLButtonElement;
 };
 
@@ -56,7 +57,7 @@ function activeLine(s: MatchSettings): string {
     const rules = s.rules[side];
     if (rules.length > 0) parts.push(`reglas de ${side === "red" ? "Rojo" : "Azul"}: ${rules.map((r) => RULE_LABELS[r].name.toLowerCase()).join(", ")}`);
   }
-  return `Escenario activo (lo fijó un pre-ajuste, para medir): ${parts.join(" · ")}.`;
+  return `Puntaje del servidor: ${parts.join(" · ")}.`;
 }
 
 function render(settings: MatchSettings): void {
@@ -64,11 +65,12 @@ function render(settings: MatchSettings): void {
   els.judge.checked = settings.judge;
   setText(els.judgeState, settings.judge ? "Encendido" : "Apagado");
   setText(els.active, activeLine(settings));
-  els.reset.hidden = isPlainDuel(settings);
+  els.activeRow.hidden = isPlainDuel(settings);
 }
 
 /** Cada versión de los ajustes que llega del servidor (la pasa settings.ts). */
 export function applyRemoteBenchSettings(settings: MatchSettings): void {
+  notePresetSettings(settings);
   remote = settings;
   if (!saving) render(settings);
 }
@@ -111,11 +113,12 @@ async function copyFrom(side: Side, button: HTMLButtonElement): Promise<void> {
 }
 
 export function initBenchSettings(): void {
-  initPresetPicker("main");
+  initPresetPicker();
   els = {
     judge: byId<HTMLInputElement>("judge"),
     judgeState: byId("judge-state"),
     active: byId("preset-active"),
+    activeRow: byId("preset-active-row"),
     reset: byId<HTMLButtonElement>("preset-reset"),
   };
   const { judge, reset } = els;

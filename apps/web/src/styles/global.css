@@ -1552,7 +1552,7 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 .editor__text {
   display: block;
-  min-height: 9.5em;
+  min-height: 16em;
   padding: 12px 14px;
   resize: vertical;
   line-height: 1.5;
@@ -1582,12 +1582,19 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 /* ---------- Comunicación entre agentes ---------- */
 
+/* Ajustes de la partida: siempre en 2 columnas (1 en pantallas angostas). */
 .match-settings {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 20px 48px;
   margin-bottom: 24px;
+}
+
+@media (max-width: 640px) {
+  .match-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .match-settings[hidden] {
@@ -1722,24 +1729,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 .comms > .btn {
   justify-self: start;
-}
-
-/* Pre-ajustes de benchmark (scripts/presetpicker.ts): ocupa toda la fila. */
-.preset {
-  display: grid;
-  flex-basis: 100%;
-  gap: 6px;
-}
-
-.preset__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: end;
-}
-
-.preset__select select {
-  min-width: 240px;
 }
 
 .bench-settings {
