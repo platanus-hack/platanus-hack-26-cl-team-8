@@ -145,7 +145,9 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       const guard = find(isShield)
         ? ' Con "guard": true levantas el escudo entre golpe y golpe y lo bajas justo para pegar: recibes mucho menos daño de frente, pero persigues más lento.'
         : "";
-      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
+      const crit =
+        ' Con "crit": true saltas justo antes de que el arma recargue y pegas al caer: cada golpe en la caída es crítico (1.5 veces el daño) y el ritmo casi no cambia. Cerca del rival dejas de correr (un golpe a la carrera no es crítico, pero empuja más); en el agua pegas normal.';
+      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}${crit}`;
     }
     case "move":
       return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta que la reemplaces o termine su duración.';

@@ -12,7 +12,7 @@ Formato:
 Escríbelo como conocimiento, no como órdenes: el objetivo del agente lo deciden solo las
 instrucciones de su entrenador. Cada idea va traducida a lo que el agente puede hacer con
 sus herramientas: el cuerpo ya espera la recarga del arma, apunta el arco adelantando al
-rival y carga cada flecha a tope, pero no salta.
+rival y carga cada flecha a tope; salta solo con attack y "crit": true.
 -->
 
 ## Ritmo del combate cuerpo a cuerpo
@@ -24,7 +24,11 @@ rival y carga cada flecha a tope, pero no salta.
 
 ## Golpes críticos
 - Un crítico hace 1.5 veces el daño normal. Solo ocurre si el atacante está cayendo (después del punto más alto de un salto o al bajar de un bloque), no está en el agua, el arma está recargada y no viene corriendo: un golpe a la carrera da más retroceso en vez de crítico.
-- Tu cuerpo no salta, así que no puedes buscar críticos a voluntad. La única forma es pegar mientras caes de algo más alto, por ejemplo al bajar de una torre o un escalón sobre el rival.
+- attack con "crit": true hace el salto por ti: salta justo antes de que el arma recargue y pega en la caída. Un salto dura ~0.6 s, casi lo mismo que la recarga de una espada, así que el ritmo de golpes apenas baja y cada golpe que entra en la caída hace 1.5 veces el daño. Con hacha, el crítico suma todavía más por golpe.
+- Lo que se cede: cerca del rival dejas de correr, así que tus golpes empujan menos; en el aire no cambias de dirección; y si el arma recarga y la caída no llega a tiempo, el cuerpo pega normal para no perder el ritmo.
+- Un golpe a la carrera empuja más y un crítico quita más: el primero sirve para abrir distancia o separarlo de ti, el segundo para hacer daño cuando ya están pegados.
+- No hay críticos dentro del agua (el atacante no puede estar en ella) ni con un techo bajo que impida saltar, por ejemplo encerrado en bloques de 2 de alto.
+- Si el rival te pega con críticos, cada golpe suyo vale 1.5: el escudo los bloquea igual que a los normales, el agua bajo sus pies los anula, y alejarte o empujarlo primero le corta el ritmo de saltos.
 - La altura es ventaja: quien está arriba puede caer pegando; quien está abajo no. Si el rival está sobre bloques y tú abajo, romperle el apoyo (dig) o rodear suele ser mejor que pegarle desde abajo.
 
 ## Moverse cuando te atacan
@@ -77,10 +81,14 @@ rival y carga cada flecha a tope, pero no salta.
 
 ## Agua
 <!-- requiere: water -->
-- El agua corre unos 7 bloques por el piso, empuja a quien está dentro y frena su avance. Entre tú y un rival que te persigue, le corta el impulso y te da distancia.
-- Dentro del agua nadie consigue golpes críticos y todos se mueven lento.
-- Vaciarla a tus pies anula el daño de caída (al bajar de una torre o tras una perla larga) y apaga el fuego al instante: es la respuesta a la lava, a Aspecto ígneo o a flechas con Fuego.
-- Un cubo se vacía una sola vez. Guardarlo para cuando te prendan fuego o caigas desde alto suele servir más que usarlo de entrada.
+- El agua corre unos 7 bloques por el piso desde donde la vacías, empuja a quien está dentro en el sentido de la corriente y lo frena: dentro del agua nadie corre y todos avanzan lento.
+- Frenar una persecución: con "where": "between" contra un rival cuerpo a cuerpo que te viene encima, la corriente le corta el impulso. Esos segundos sirven para alejarte, dispararle mientras cruza despacio (es un blanco fácil) o comer y beber.
+- Anular críticos: quien está en el agua no hace golpes críticos. Si los críticos del rival te están haciendo mucho daño, pelear con agua bajo sus pies le quita esa ventaja; en el agua tú tampoco los haces.
+- Apagar el fuego: el agua apaga al instante. Estar prendido quema hasta ~15 s (1 de vida por segundo) después de la lava, y también tras un golpe con Aspecto ígneo o una flecha con Fuego: apagarte con "where": "feet" ahorra mucha vida.
+- Contra lava: el agua que llega a la lava la convierte en roca u obsidiana. Vaciar agua junto a la lava del rival cierra la zona de fuego y deja bloques sólidos que sirven de cobertura.
+- Caídas: vaciarla a tus pies anula el daño de caída al bajar de una torre o tras una perla larga.
+- Combinaciones: agua entre los dos y después arco (lo frenas y le disparas); agua entre los dos y después comer (te da el tiempo que la comida pide); agua a tus pies después de que te prendan fuego y antes de volver al cuerpo a cuerpo.
+- Un cubo se vacía una sola vez y no se recoge de vuelta. El agua que queda en el piso sigue frenando a los dos: no pelees tú dentro si buscas críticos o necesitas moverte rápido.
 
 ## Construir y romper bloques
 <!-- requiere: build, dig -->

@@ -25,6 +25,7 @@ import {
   isSword,
   isWaterBucket,
 } from "./items";
+import { critStep, CRIT_NO_SPRINT_RANGE } from "./crit";
 import { keepDistanceTarget, orbitTarget, placeTarget, strafeTarget, type MovePlace } from "./tactics";
 import { ConstructionPlan, inside, parseBlueprint, type PlannedBlock } from "./construction";
 import { lineOfSight, scanWorld } from "./spatial";
@@ -383,6 +384,12 @@ class MineflayerFighter implements Fighter {
   // Elecciones del modelo: arma, escudo entre golpes, comida, poción y a quién arrojarla.
   private attackWeapon: string | null = null;
   private attackGuard = false;
+  /** "crit": saltar para pegar cayendo (golpe crítico). Ver crit.ts. */
+  private attackCrit = false;
+  private crits = 0;
+  private lastJumpAt = 0;
+  /** Movimientos del pathfinder: el modo crítico apaga la carrera cerca del rival. */
+  private movements: InstanceType<typeof Movements> | null = null;
   /** Momento en que se bajó el escudo para pegar (0 = está arriba o no se usa). */
   private guardLoweredAt = 0;
   private eatFood: string | null = null;
@@ -754,6 +761,7 @@ class MineflayerFighter implements Fighter {
       // los bloques del kit son solo para la herramienta "build".
       movements.scafoldingBlocks = [];
       bot.pathfinder.setMovements(movements);
+      this.movements = movements;
     } catch (err) {
       this.log("warn", `No se pudo configurar el pathfinder: ${errorText(err)}`);
     }
@@ -1238,6 +1246,7 @@ class MineflayerFighter implements Fighter {
       if (name === "attack") {
         this.attackWeapon = args.weapon;
         this.attackGuard = args.guard;
+        this.attackCrit = args.crit;
       }
       if (name === "move") {
         this.moveStyle = args.style;
@@ -1277,7 +1286,8 @@ class MineflayerFighter implements Fighter {
               ? "con el hacha"
               : "sin arma";
         const guard = args.guard ? (this.hasShield(bot) ? ", cubriéndote con el escudo entre golpes" : " (no tienes escudo para cubrirte)") : "";
-        result = `${missing}atacando cuerpo a cuerpo ${how}${guard}`;
+        const crit = args.crit ? (args.guard && this.hasShield(bot) ? " (sin saltos críticos: con guard manda el escudo)" : ", saltando para pegar en la caída (crítico)") : "";
+        result = `${missing}atacando cuerpo a cuerpo ${how}${guard}${crit}`;
         break;
       }
       case "move": {
@@ -1377,6 +1387,7 @@ class MineflayerFighter implements Fighter {
     this.mode = name;
     this.modeUntil = isOpenEnded(name) && args.seconds !== null ? now + args.seconds * 1000 : null;
     this.hits = 0;
+    this.crits = 0;
     this.shots = 0;
     this.nextShotAt = 0;
     this.lastRetreatPlanAt = 0;
@@ -1392,6 +1403,8 @@ class MineflayerFighter implements Fighter {
     this.strafeSwitchAt = now + STRAFE_SWITCH_MS;
     this.attackWeapon = args.weapon;
     this.attackGuard = args.guard;
+    this.attackCrit = args.crit;
+    this.lastJumpAt = 0;
     this.guardLoweredAt = 0;
     this.eatFood = args.food;
     this.potionChoice = args.potion;
@@ -1583,7 +1596,21 @@ class MineflayerFighter implements Fighter {
     }
     this.buildGeneration++;
     this.pearlNote = "";
+    this.allowSprint(bot, true);
     this.clearGoal(bot);
+  }
+
+  /** Enciende o apaga la carrera del pathfinder (el crítico no sale corriendo). */
+  private allowSprint(bot: Bot, allowed: boolean): void {
+    if (!this.movements || this.movements.allowSprinting === allowed) return;
+    this.movements.allowSprinting = allowed;
+    if (!allowed) {
+      try {
+        bot.setControlState("sprint", false);
+      } catch {
+        // nada
+      }
+    }
   }
 
   /** Vuelve a "wait" sin tocar al bot (para muerte / reaparición). */
@@ -1743,16 +1770,46 @@ class MineflayerFighter implements Fighter {
         bot.deactivateItem();
         this.using = false;
       }
+    } else if (this.attackCrit) {
+      this.tickCrit(bot, opponent, dist, now);
     } else if (dist <= MELEE_REACH && ready) {
       this.lastAttackAt = now;
       bot.attack(opponent);
       this.hits++;
     }
+    const critNote = this.crits > 0 ? `, ${this.crits} en la caída de un salto` : "";
     const progress =
       this.hits > 0
-        ? `atacando: ${this.hits} golpes lanzados (distancia ${round1(dist)})`
+        ? `atacando: ${this.hits} golpes lanzados${critNote} (distancia ${round1(dist)})`
         : `persiguiendo al rival para golpear (distancia ${round1(dist)})`;
     this.lastResult = this.pearlNote + progress;
+  }
+
+  /** Ataque con salto: salta antes de que el arma recargue y pega al caer. Ver crit.ts. */
+  private tickCrit(bot: Bot, opponent: Entity, dist: number, now: number): void {
+    // Cerca del rival no se corre: un golpe a la carrera no es crítico.
+    this.allowSprint(bot, dist > CRIT_NO_SPRINT_RANGE);
+    // El salto ya quedó pedido (jumpQueued): se suelta para no seguir rebotando.
+    if (this.lastJumpAt > 0 && now - this.lastJumpAt >= BODY_TICK_MS && bot.controlState?.jump) bot.setControlState("jump", false);
+    const step = critStep({
+      now,
+      readyAt: this.lastAttackAt + attackCooldownMs(heldItemName(bot)),
+      dist,
+      reach: MELEE_REACH,
+      onGround: bot.entity.onGround,
+      vy: bot.entity.velocity?.y ?? 0,
+      inWater: Boolean((bot.entity as { isInWater?: boolean }).isInWater),
+      lastJumpAt: this.lastJumpAt,
+    });
+    if (step.action === "jump") {
+      bot.setControlState("jump", true);
+      this.lastJumpAt = now;
+    } else if (step.action === "hit") {
+      this.lastAttackAt = now;
+      bot.attack(opponent);
+      this.hits++;
+      if (step.crit) this.crits++;
+    }
   }
 
   private tickRetreat(bot: Bot, opponent: Entity | null, now: number): void {
@@ -2105,6 +2162,7 @@ class MineflayerFighter implements Fighter {
     this.mode = "attack";
     this.modeUntil = this.plan.hasNext() ? Date.now() + QUEUE_STEP_DEFAULT_MS : null;
     this.hits = 0;
+    this.crits = 0;
     this.pearlNote = `te teletransportaste junto al rival (${where}); `;
     this.lastResult = `${this.pearlNote}atacando`;
   }

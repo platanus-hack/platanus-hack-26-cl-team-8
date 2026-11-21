@@ -279,6 +279,9 @@ describe("move, pociones y elecciones", () => {
     expect(parseToolArgs({ food: "golden_apple" }).food).toBe("golden_apple");
     expect(parseToolArgs({ potion: "splash_potion:harming" }).potion).toBe("harming");
     expect(parseToolArgs({ guard: true }).guard).toBe(true);
+    expect(parseToolArgs({ crit: true }).crit).toBe(true);
+    expect(parseToolArgs({ crit: "true" }).crit).toBe(true);
+    expect(parseToolArgs({}).crit).toBe(false);
     expect(parseToolArgs({ guard: "true" }).guard).toBe(true);
     expect(parseToolArgs({ at: "self" })).toMatchObject({ at: "self" });
   });
