@@ -81,10 +81,10 @@ describe("Arena Platanus", () => {
   const world = simulate(commands);
   const { minX, maxX, minZ, maxZ } = floorBounds(ARENA);
 
-  it("tiene el tamaño de la arena original: piso de 27×27 y 25×25 caminables", () => {
-    expect(maxX - minX + 1).toBe(27);
-    expect(maxZ - minZ + 1).toBe(27);
-    expect(ARENA.radius).toBe(12);
+  it("es compacta: piso de 25×25 y 23×23 caminables", () => {
+    expect(maxX - minX + 1).toBe(25);
+    expect(maxZ - minZ + 1).toBe(25);
+    expect(ARENA.radius).toBe(11);
     for (let x = minX - 1; x <= maxX + 1; x += 1)
       for (let z = minZ - 1; z <= maxZ + 1; z += 1) {
         const inside = x >= minX && x <= maxX && z >= minZ && z <= maxZ;
@@ -105,7 +105,6 @@ describe("Arena Platanus", () => {
     for (const [key, block] of after) {
       const [x, , z] = key.split(",").map(Number) as [number, number, number];
       expect(x >= minX && x <= maxX && z >= minZ && z <= maxZ, `${key} ${block}`).toBe(true);
-      expect(block).not.toContain("glass");
     }
     // Lo construido es idéntico con o sin restos previos.
     expect([...after].sort()).toEqual([...world].sort());
@@ -116,21 +115,20 @@ describe("Arena Platanus", () => {
     expect(out.maxZ).toBeGreaterThanOrEqual(22);
   });
 
-  it("no tiene nada a la vista sobre el piso: solo pared y techo de barrera, sin huecos", () => {
-    for (let y = Y + 1; y <= WALL_TOP + 1; y += 1)
+  it("queda cerrada por muros de vidrio sin huecos y abierta arriba (sin techo ni barrier)", () => {
+    for (let y = Y + 1; y <= WALL_TOP; y += 1)
       for (let x = minX; x <= maxX; x += 1)
         for (let z = minZ; z <= maxZ; z += 1) {
           const border = x === minX || x === maxX || z === minZ || z === maxZ;
-          const lid = y === WALL_TOP + 1;
-          expect(blockAt(world, x, y, z), `${x},${y},${z}`).toBe(border || lid ? WALL_BLOCK : "minecraft:air");
+          expect(blockAt(world, x, y, z), `${x},${y},${z}`).toBe(border ? WALL_BLOCK : "minecraft:air");
         }
-    expect(WALL_BLOCK).toBe("minecraft:barrier");
+    expect(WALL_BLOCK).toBe("minecraft:glass");
     for (const [key, block] of world) {
       const y = Number(key.split(",")[1]);
-      expect(y).toBeLessThanOrEqual(WALL_TOP + 1);
+      expect(y).toBeLessThanOrEqual(WALL_TOP);
       if (y > Y) expect(block).toBe(WALL_BLOCK);
     }
-    expect(commands.join("\n")).not.toMatch(/glass|sea_lantern/);
+    expect(commands.join("\n")).not.toMatch(/barrier|sea_lantern/);
   });
 
   it("marca en el piso el lugar de cada lado", () => {
@@ -175,7 +173,7 @@ describe("Arena Platanus", () => {
   it("las cámaras quedan altas, en +Z (rojo a la izquierda) y fuera del piso", () => {
     for (const cam of [ARENA.camera, ARENA.cameraWide]) {
       expect(cam.x).toBe(ARENA.center.x);
-      // Sobre el techo invisible, que va en WALL_TOP + 1.
+      // Por encima de los muros.
       expect(cam.y).toBeGreaterThan(WALL_TOP + 1);
       expect(cam.z).toBeGreaterThan(ARENA.center.z);
     }

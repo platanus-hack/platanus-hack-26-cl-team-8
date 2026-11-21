@@ -1113,9 +1113,9 @@ export function startMockVideo(video: HTMLVideoElement): boolean {
     ctx.restore();
 
     // El logo del centro del piso, con el mismo dibujo que construye el servidor: cada
-    // letra es un bloque (la arena mide 25 de lado), aplastado como el piso en perspectiva.
-    const blockW = (rx * 2) / 25;
-    const blockH = (ry * 2) / 25;
+    // letra es un bloque (la arena mide 23 de lado), aplastado como el piso en perspectiva.
+    const blockW = (rx * 2) / 23;
+    const blockH = (ry * 2) / 23;
     FLOOR_LOGO_ROWS.forEach((row, rowIndex) => {
       Array.from(row).forEach((letter, column) => {
         const color = FLOOR_LOGO_PALETTE[letter]?.color;

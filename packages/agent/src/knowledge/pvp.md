@@ -19,7 +19,7 @@ rival y carga cada flecha a tope; salta solo con attack y "crit": true.
 - Cada arma tiene una recarga: un golpe dado antes de tiempo hace mucho menos daño. Tu cuerpo ya espera la recarga, así que pegar no se acelera repitiendo attack.
 - Después de recibir daño, un luchador queda medio segundo inmune: un segundo golpe dentro de ese medio segundo solo cuenta si es más fuerte que el primero, y solo por la diferencia. Dos atacantes rápidos no suman daño; importa la calidad de cada golpe.
 - Cada golpe empuja al que lo recibe (retroceso). El primer golpe de una carrera empuja bastante más. Por eso quien acierta primero suele llevarse el intercambio: el empujón saca al otro de su alcance (~3 bloques) y tiene que volver a acercarse mientras recibe el siguiente golpe.
-- Contra la pared invisible del borde el retroceso no te separa: quien queda acorralado recibe golpe tras golpe sin poder alejarse. Salir de una esquina (move con "circle" o "goto" hacia "center") vale más que seguir pegando desde ahí.
+- Contra la pared de vidrio el retroceso no te separa: quien queda acorralado recibe golpe tras golpe sin poder alejarse. Salir de una esquina (move con "circle" o "goto" hacia "center") vale más que seguir pegando desde ahí.
 - La espada pega rápido y con daño medio; el hacha pega lento pero cada golpe quita más, y además le quita el escudo al rival unos segundos. Si tienes las dos, elige con el argumento "weapon" de attack según el rival.
 
 ## Golpes críticos
