@@ -54,7 +54,9 @@ function describeBodyError(issues: { path: (string | number)[]; code: string }[]
     return `El prompt supera el máximo de ${MAX_PROMPT_LENGTH} caracteres`;
   }
   if (first?.path[0] === "prompt") return "Falta el campo 'prompt' o no es texto";
-  if (first?.path[0] === "provider") return "Proveedor inválido: usa mock, openai, anthropic, openrouter o gateway";
+  if (first?.path[0] === "provider") {
+    return "Proveedor inválido: usa mock, vercel, openai, anthropic, openrouter o gateway";
+  }
   if (first?.path[0] === "model") return "Modelo inválido: debe ser texto de hasta 100 caracteres";
   return "Cuerpo inválido: se espera un JSON { prompt, provider?, model? }";
 }

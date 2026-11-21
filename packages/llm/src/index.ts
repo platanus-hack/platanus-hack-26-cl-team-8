@@ -3,6 +3,7 @@ import { createAnthropicClient } from "./anthropic";
 import { createMockClient } from "./mock";
 import { createOpenAiCompatibleClient } from "./openai";
 import type { ApiKeys, LlmClient } from "./types";
+import { createVercelClient } from "./vercel";
 
 export type { ApiKeys, ChatMessage, LlmClient, LlmRequest, LlmResponse, ToolCall, ToolDef } from "./types";
 export { LlmError, httpConfig } from "./http";
@@ -17,6 +18,8 @@ export type { MockToolName } from "./mock";
  */
 export const DEFAULT_MODELS: Record<Provider, string> = {
   mock: "mock-scripted",
+  // Id del Vercel AI Gateway: "proveedor/modelo".
+  vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
   openai: "gpt-6-luna",
   openrouter: "openai/gpt-6-luna",
   anthropic: "claude-haiku-5-5",
@@ -24,6 +27,7 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
 };
 
 const KEY_ENV_NAMES = {
+  vercel: "VERCEL_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
@@ -46,6 +50,8 @@ export function createLlmClient(opts: { provider: Provider; model?: string; apiK
   switch (opts.provider) {
     case "mock":
       return createMockClient(model);
+    case "vercel":
+      return createVercelClient({ apiKey: requireKey("vercel", opts.apiKeys), model });
     case "openai":
       return createOpenAiCompatibleClient({
         provider: "openai",

@@ -67,6 +67,7 @@ const defaults: ServerDefaults = {
   provider: "gateway",
   models: {
     mock: "mock-scripted",
+    vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
     openai: "gpt-6-luna",
     anthropic: "claude-haiku-5-5",
     openrouter: "openai/gpt-6-luna",

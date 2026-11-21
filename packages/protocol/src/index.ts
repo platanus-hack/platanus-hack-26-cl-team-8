@@ -17,8 +17,11 @@ export const ARENA = {
     red: { x: -8, y: 65, z: 0, yaw: -90 },
     blue: { x: 8, y: 65, z: 0, yaw: 90 },
   },
-  /** Posición de la cámara espectadora: elevada, mirando al centro. */
-  camera: { x: 0, y: 78, z: -18 },
+  /**
+   * Posición de la cámara espectadora: elevada, mirando al centro. Va en +Z para que el
+   * lado rojo (x negativo) quede a la izquierda de la imagen, igual que en la web.
+   */
+  camera: { x: 0, y: 78, z: 18 },
 } as const;
 
 // ---------- Agentes ----------
@@ -29,8 +32,11 @@ export type Side = z.infer<typeof SideSchema>;
 
 export const AGENT_USERNAMES: Record<Side, string> = { red: "AgenteRojo", blue: "AgenteAzul" };
 
-/** "gateway" = Vercel AI Gateway (un solo endpoint y una sola clave para todos los modelos). */
-export const ProviderSchema = z.enum(["mock", "openai", "anthropic", "openrouter", "gateway"]);
+/**
+ * "vercel" y "gateway" = Vercel AI Gateway (un solo endpoint y una sola clave para todos
+ * los modelos): "vercel" va por el SDK `ai`, "gateway" por la API compatible con OpenAI.
+ */
+export const ProviderSchema = z.enum(["mock", "vercel", "openai", "anthropic", "openrouter", "gateway"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const MAX_PROMPT_LENGTH = 4000;
@@ -180,6 +186,7 @@ export const ServerDefaultsSchema = z.object({
   provider: ProviderSchema,
   models: z.object({
     mock: z.string(),
+    vercel: z.string(),
     openai: z.string(),
     anthropic: z.string(),
     openrouter: z.string(),

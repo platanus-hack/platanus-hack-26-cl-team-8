@@ -11,7 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@phack/protocol": "workspace:*"
+    "@phack/protocol": "workspace:*",
+    "ai": "^7.0.179",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@phack/tsconfig": "workspace:*",

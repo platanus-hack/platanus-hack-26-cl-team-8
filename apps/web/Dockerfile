@@ -21,8 +21,8 @@ ENV PUBLIC_API_BASE=${PUBLIC_API_BASE} \
 
 # Se instala desde la raíz, pero solo @phack/web y sus dependencias del
 # workspace: así esta imagen no compila las dependencias nativas de otras apps
-# (canvas, gl...). Todavía no hay lockfile, por eso --no-frozen-lockfile.
-RUN pnpm install --no-frozen-lockfile --filter "@phack/web..."
+# (canvas, gl...). pnpm-lock.yaml fija las versiones.
+RUN pnpm install --frozen-lockfile --filter "@phack/web..."
 RUN pnpm --filter @phack/web build
 
 # ---------- Etapa 2: Caddy ----------

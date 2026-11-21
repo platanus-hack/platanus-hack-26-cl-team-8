@@ -70,7 +70,8 @@ trap 'rm -f "$BODY_FILE"' EXIT
 # http_get URL [max_segundos] -> imprime el código HTTP; deja el cuerpo en $BODY_FILE.
 http_get() {
   : >"$BODY_FILE"
-  curl -s -o "$BODY_FILE" -w '%{http_code}' --max-time "${2:-10}" "$1" 2>/dev/null || true
+  # -L: MediaMTX responde el playlist HLS con un 302 a "?cookieCheck=1" antes del 200.
+  curl -s -L -o "$BODY_FILE" -w '%{http_code}' --max-time "${2:-10}" "$1" 2>/dev/null || true
 }
 
 # http_send METODO URL [json] -> imprime el código HTTP; deja el cuerpo en $BODY_FILE.

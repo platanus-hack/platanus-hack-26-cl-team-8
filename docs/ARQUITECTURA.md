@@ -1,13 +1,13 @@
 # Arquitectura
 
-Este documento describe el diseño según los contratos del repo: `packages/protocol/src/index.ts` (estado, eventos, API), `libs/env/src/index.ts` (configuración) y las interfaces de `@phack/llm` y `@phack/agent`. Si el código y este documento difieren, manda el código. Igual que el resto del repo, fue escrito sin ejecutar nada (ver el README).
+Este documento describe el diseño según los contratos del repo: `packages/protocol/src/index.ts` (estado, eventos, API), `libs/env/src/index.ts` (configuración) y las interfaces de `@phack/llm` y `@phack/agent`. Si el código y este documento difieren, manda el código. El estado de lo que se ha probado está en el README.
 
 ## Piezas
 
 | Pieza | Responsabilidad | No hace |
 |---|---|---|
 | `packages/protocol` | Tipos y esquemas zod compartidos: `ARENA`, `Side`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
-| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `mock`, `openai`, `anthropic`, `openrouter`, `gateway` (Vercel AI Gateway). | Saber de Minecraft. |
+| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `mock`, `vercel` (Vercel AI Gateway, vía el SDK `ai`), `openai`, `anthropic`, `openrouter`, `gateway` (Vercel AI Gateway, vía su API compatible con OpenAI). | Saber de Minecraft. |
 | `packages/agent` | `createFighter(opts)` devuelve un `Fighter` (`connect`, `start`, `stop`): un bot de mineflayer con el ciclo percibir → LLM → actuar. Informa lo que pasa a través de `FighterEvents`. | Teletransportarse, darse el kit o cambiar su modo de juego: eso lo hace el orquestador por RCON. |
 | `apps/orchestrator` | Único dueño del estado. API HTTP + websocket, ciclo de vida de la pelea, RCON, decisión del ganador, historial en `DATA_DIR`. | Renderizar video. |
 | `apps/camera` | Bot espectador (`CAMERA_USERNAME`) ubicado en `ARENA.camera`; renderiza y publica RTMP en `RTMP_URL`. | Conocer el estado de la pelea. |

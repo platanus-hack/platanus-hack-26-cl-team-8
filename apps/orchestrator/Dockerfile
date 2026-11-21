@@ -10,9 +10,9 @@ RUN npm i -g pnpm@10
 
 COPY . .
 
-# Aún no hay lockfile, así que no se usa --frozen-lockfile.
+# pnpm-lock.yaml fija las versiones; sin él pnpm resuelve todo el workspace y necesita git.
 # El filtro "..." instala solo el orquestador y sus dependencias del workspace.
-RUN pnpm install --filter "@phack/orchestrator..."
+RUN pnpm install --frozen-lockfile --filter "@phack/orchestrator..."
 
 ENV NODE_ENV=production
 EXPOSE 8787

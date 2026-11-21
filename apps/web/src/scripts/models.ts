@@ -59,6 +59,7 @@ const NAME_BRAND: [RegExp, BrandId][] = [
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   mock: "Simulado",
+  vercel: "Vercel AI Gateway",
   openai: "OpenAI",
   anthropic: "Anthropic",
   openrouter: "OpenRouter",

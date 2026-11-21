@@ -44,6 +44,8 @@ export interface Stage {
   /** Conecta el mundo del bot a la escena. Lanza FatalError si la versión no está soportada. */
   attachWorld(bot: Bot): WorldHandle;
   setCamera(position: Vec, lookAt: Vec): void;
+  /** FOV vertical en grados (zoom). */
+  setFov(degrees: number): void;
   /** `feet` = posición de los pies del peleador, o null para ocultar el marcador. */
   setMarker(side: Side, feet: Vec | null, timeSeconds: number): void;
   /** Avanza animaciones y sube a la GPU los chunks ya procesados, sin dibujar. */
@@ -115,9 +117,42 @@ function loadNativeModules(): NativeModules {
   }
 }
 
+/**
+ * prismarine-viewer no trae datos de 1.20.4: `setVersion` la reemplaza por 1.20.1 y usa esa
+ * versión también para DECODIFICAR los chunks en sus workers. Pero los ids de estado de
+ * bloque cambiaron en 1.20.3 (bloques nuevos), así que casi todo se dibujaba como otro
+ * bloque (el piso de piedra lisa salía como cubitos rosados). Las texturas y modelos se
+ * buscan por NOMBRE de bloque, así que basta con que los workers decodifiquen con la
+ * versión real del servidor y sigan usando los assets de 1.20.1.
+ */
+function useRealVersionInWorkers(viewer: any, realVersion: string): void {
+  if (viewer.version === realVersion) return;
+  const workers: any[] = viewer.world?.workers ?? [];
+  if (workers.length === 0) {
+    log("warn", "No se encontraron los workers del viewer: los bloques pueden verse mal.");
+    return;
+  }
+  for (const worker of workers) worker.postMessage({ type: "version", version: realVersion });
+  log("info", `Viewer: assets de ${String(viewer.version)}, chunks decodificados como ${realVersion}.`);
+}
+
+/**
+ * El viewer hace console.log de un Error con stack cada vez que aparece una entidad que no
+ * sabe dibujar (flechas, ítems en el suelo) y la reemplaza por un cubo. Es ruido: se filtra.
+ */
+function silenceUnknownEntityLogs(): void {
+  const original = console.log.bind(console);
+  console.log = (...args: unknown[]): void => {
+    const first = args[0];
+    if (first instanceof Error && first.message.startsWith("Unknown entity")) return;
+    original(...args);
+  };
+}
+
 export function createStage(opts: { width: number; height: number; viewDistance: number }): Stage {
   const { width, height, viewDistance } = opts;
   const { THREE, createCanvas, Viewer, WorldView, Vec3 } = loadNativeModules();
+  silenceUnknownEntityLogs();
 
   let renderer: any;
   let gl: any;
@@ -175,6 +210,7 @@ export function createStage(opts: { width: number; height: number; viewDistance:
       if (!supported) {
         throw new FatalError(`prismarine-viewer no soporta la versión de Minecraft ${bot.version}${detail}`);
       }
+      useRealVersionInWorkers(viewer, bot.version);
       ready = true;
 
       // Centrado en la arena (no en el bot): solo se dibujan los chunks cercanos al centro.
@@ -217,6 +253,12 @@ export function createStage(opts: { width: number; height: number; viewDistance:
     setCamera(position: Vec, lookAt: Vec): void {
       viewer.camera.position.set(position.x, position.y, position.z);
       viewer.camera.lookAt(lookAt.x, lookAt.y, lookAt.z);
+    },
+
+    setFov(degrees: number): void {
+      if (Math.abs(viewer.camera.fov - degrees) < 0.01) return;
+      viewer.camera.fov = degrees;
+      viewer.camera.updateProjectionMatrix();
     },
 
     setMarker(side: Side, feet: Vec | null, timeSeconds: number): void {

@@ -1,4 +1,6 @@
 node_modules/
+# El repo usa pnpm (workspace:*). Un lockfile de npm aquí solo confunde.
+package-lock.json
 dist/
 .astro/
 .env
