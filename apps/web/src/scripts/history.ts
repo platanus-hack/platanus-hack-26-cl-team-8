@@ -51,6 +51,12 @@ type Draft = { key: string; tags: string; note: string; saving: boolean };
 let list: HTMLElement | null = null;
 let filters: HTMLElement | null = null;
 let summary: HTMLElement | null = null;
+let count: HTMLElement | null = null;
+
+/** Si el historial quedó abierto o plegado se recuerda en este navegador. */
+const STORAGE_KEY = "arena-historial";
+/** Peleas que el usuario abrió: cada una parte plegada, en una sola línea. */
+const openBouts = new Set<string>();
 
 let records: MatchRecord[] = [];
 let flags: FlaggedPrompt[] = [];
@@ -344,34 +350,67 @@ function sideCell(bout: Bout, side: Side): HTMLElement {
   return cell;
 }
 
+/**
+ * Una pelea, plegada en una línea: qué pasó, las etiquetas de lo marcado y cuándo. Al
+ * abrirla aparecen el prompt de cada lado, su marca y los botones.
+ */
 function boutNode(bout: Bout): HTMLElement {
   const node = el("li", "bout");
   if (bout.live) node.classList.add("is-live");
+  const fold = el("details", "bout__fold");
+  // La pelea en curso y la que tiene una marca a medio escribir se ven abiertas.
+  const drafting = draft !== null && draft.key.startsWith(`${bout.id}:`);
+  fold.open = openBouts.has(bout.id) || drafting;
+  fold.addEventListener("toggle", () => {
+    if (fold.open) openBouts.add(bout.id);
+    else openBouts.delete(bout.id);
+  });
 
-  const head = el("header", "bout__head");
+  const head = el("summary", "bout__head");
   head.append(el("h3", "bout__title", headline(bout)));
   const facts: string[] = [];
   if (bout.result && !bout.live) facts.push(resultDetail(bout.result));
   if (bout.durationMs !== null) facts.push(`Duró ${formatDuration(bout.durationMs)}.`);
   if (bout.settings.comms !== "none") facts.push(`${COMMS_LABELS[bout.settings.comms].name}.`);
   if (!bout.settings.timer) facts.push("Sin límite de tiempo.");
-  if (facts.length > 0) head.append(el("p", "bout__facts", facts.join(" ")));
+  head.append(el("p", "bout__facts", facts.join(" ")));
+  // Plegada, las etiquetas dicen qué se marcó en esta pelea y de qué lado.
+  const marked = SIDES.flatMap((side) => {
+    const flag = bout.flags[side];
+    if (!flag) return [];
+    const tags = el("ul", "tags");
+    tags.dataset.side = side;
+    if (flag.tags.length === 0) tags.append(el("li", "tags__item tags__item--plain", "Marcado"));
+    for (const tag of flag.tags) tags.append(el("li", "tags__item", tag));
+    return [tags];
+  });
+  if (marked.length > 0) {
+    const holder = el("div", "bout__marks");
+    holder.append(...marked);
+    head.append(holder);
+  }
   if (!bout.live) head.append(el("time", "bout__when", formatDateTime(bout.at)));
+  fold.append(head);
+
+  const body = el("div", "bout__body");
+  if (bout.result?.explanation) body.append(el("p", "bout__why", bout.result.explanation));
   if (!MOCK) {
     const link = el("a", "bout__transcript", "Ver transcripción");
     link.href = transcriptHref(bout.id);
     link.target = "_blank";
     link.rel = "noopener";
-    head.append(link);
+    body.append(link);
   }
-  node.append(head);
-
-  if (bout.result?.explanation) node.append(el("p", "bout__why", bout.result.explanation));
-
   const sides = el("div", "bout__sides");
   for (const side of SIDES) sides.append(sideCell(bout, side));
-  node.append(sides);
+  body.append(sides);
+  fold.append(body);
+  node.append(fold);
   return node;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 function filterButton(text: string, pressed: boolean, onClick: () => void): HTMLButtonElement {
@@ -381,7 +420,14 @@ function filterButton(text: string, pressed: boolean, onClick: () => void): HTML
 }
 
 function render(): void {
-  if (!list || !filters || !summary) return;
+  if (!list || !filters || !summary || !count) return;
+
+  // Lo que hay adentro, para decidir si vale la pena abrirlo.
+  const total = buildBouts().length;
+  count.textContent =
+    total === 0
+      ? "Todavía no hay peleas"
+      : `${plural(total, "pelea", "peleas")}, ${plural(flags.length, "prompt marcado", "prompts marcados")}`;
 
   const tags = allTags();
   const nodes: HTMLElement[] = [
@@ -437,6 +483,21 @@ export function initHistory(): void {
   list = byId("history-list");
   filters = byId("history-filters");
   summary = byId("history-summary");
+  count = byId("history-count");
+
+  const section = byId<HTMLDetailsElement>("history");
+  try {
+    section.open = window.localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    // Sin acceso al almacenamiento: parte plegado.
+  }
+  section.addEventListener("toggle", () => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, section.open ? "1" : "0");
+    } catch {
+      // Solo no se recuerda la preferencia.
+    }
+  });
   // Los modelos "por defecto del servidor" recién se pueden nombrar cuando llegan los valores por defecto.
   onDefaultsChange(renderQuietly);
   render();
@@ -446,6 +507,8 @@ export function initHistory(): void {
 /** Con cada estado: la pelea en curso se puede marcar mientras ocurre. */
 export function syncHistory(state: MatchState): void {
   const before = live ? `${live.id}:${live.phase}` : "";
+  // Una pelea que recién parte se muestra abierta: es la que se está mirando.
+  if (state.phase === "preparing" && live?.id !== state.id) openBouts.add(state.id);
   live = state;
   if (before !== `${state.id}:${state.phase}`) renderQuietly();
 }

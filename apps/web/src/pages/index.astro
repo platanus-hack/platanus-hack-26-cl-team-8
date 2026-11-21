@@ -301,18 +301,20 @@ const stats = [
         </aside>
       </div>
       <!-- Las últimas peleas y los prompts marcados: lo arma scripts/history.ts. -->
-      <section class="history" aria-labelledby="history-title">
-        <header class="section__head">
+      <!-- Parte plegado: el historial es largo y lo de arriba (video y prompts) es lo principal. -->
+      <details class="history" id="history">
+        <summary class="history__toggle">
           <h2 class="section__title" id="history-title">Historial</h2>
-          <p class="section__hint">
-            Las últimas peleas y los prompts que alguien marcó. Marca un prompt para guardarlo con etiquetas y una nota;
-            después puedes compararlo con otros o cargarlo de nuevo en un editor.
-          </p>
-        </header>
+          <span class="history__count" id="history-count"></span>
+        </summary>
+        <p class="section__hint history__hint">
+          Las últimas peleas y los prompts que alguien marcó. Abre una pelea para ver el prompt de cada lado; márcalo para
+          guardarlo con etiquetas y una nota, y después compararlo con otros o cargarlo de nuevo en un editor.
+        </p>
         <div class="history__filters" id="history-filters" role="group" aria-label="Filtrar el historial"></div>
         <p class="history__summary" id="history-summary" hidden></p>
         <ol class="history__list" id="history-list"></ol>
-      </section>
+      </details>
     </main>
 
     <footer class="footer">

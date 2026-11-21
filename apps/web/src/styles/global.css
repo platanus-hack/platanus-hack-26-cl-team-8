@@ -1771,8 +1771,59 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .history {
   margin-top: 72px;
-  padding-top: 40px;
   border-top: 1px solid var(--line);
+}
+
+/* El historial parte plegado: una línea con su título y cuánto hay adentro. */
+.history__toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 28px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history__toggle::-webkit-details-marker,
+.bout__head::-webkit-details-marker {
+  display: none;
+}
+
+/* Flecha de "se despliega", dibujada con bordes: apunta a la derecha y gira al abrir. */
+.history__toggle::before,
+.bout__head::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease-out;
+}
+
+.history[open] > .history__toggle::before,
+.bout__fold[open] > .bout__head::before {
+  transform: rotate(45deg);
+}
+
+.history__toggle:hover::before,
+.bout__head:hover::before {
+  border-color: var(--text);
+}
+
+.history__count {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.history__hint {
+  margin-bottom: 20px;
+}
+
+.history[open] {
+  padding-bottom: 24px;
 }
 
 .history__filters {
@@ -1819,11 +1870,8 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   font-size: 14px;
 }
 
-/* Una pelea: qué pasó arriba, y abajo el prompt de cada lado con su marca. */
+/* Una pelea: plegada es una línea; abierta muestra el prompt de cada lado con su marca. */
 .bout {
-  display: grid;
-  gap: 14px;
-  padding: 24px 0;
   border-top: 1px solid var(--line);
 }
 
@@ -1832,9 +1880,25 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 16px;
+  padding: 14px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.bout__body {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 26px 23px;
+}
+
+.bout__marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .bout__title {
+  margin: 0;
   font-size: 17px;
   font-weight: 600;
 }
@@ -1844,7 +1908,8 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 .bout__facts {
-  flex: 1 1 320px;
+  margin: 0;
+  flex: 1 1 240px;
   min-width: 0;
   color: var(--muted);
   font-size: 14px;
