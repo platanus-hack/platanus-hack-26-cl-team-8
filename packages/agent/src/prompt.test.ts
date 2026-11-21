@@ -182,8 +182,14 @@ describe("buildSystemPrompt", () => {
 
   it("describe en TU KIT los ítems con cantidades y encantamientos, y los efectos", () => {
     const classic = section(promptFor(KITS.classic), "TU KIT");
-    expect(classic[0]).toBe("- Armadura puesta: Casco de hierro, Peto de hierro, Grebas de hierro, Botas de hierro.");
-    expect(classic[1]).toBe("- Objetos: Espada de hierro, Arco, Filete x4, Flechas x16.");
+    expect(classic[0]).toMatch(/^- Armadura puesta: Casco de hierro, Peto de hierro, Grebas de hierro, Botas de hierro\. Reduce el daño/);
+    expect(classic[1]).toMatch(/^- Objetos \(qué hace cada uno/);
+    expect(classic.slice(2, 6).map((line) => line.slice(4, line.indexOf(". Qué hace")))).toEqual([
+      "Espada de hierro",
+      "Arco",
+      "Filete x4",
+      "Flechas x16",
+    ]);
     expect(classic.join("\n")).not.toContain("Efectos permanentes");
 
     const archer = section(promptFor(KITS.archer), "TU KIT").join("\n");
@@ -216,6 +222,35 @@ describe("buildSystemPrompt", () => {
         expect(lines.some((line) => line.startsWith(`- ${tool}:`))).toBe(false);
       }
     }
+  });
+
+  it("explica qué hace cada objeto, cómo se usa y cuándo sirve", () => {
+    for (const kit of KIT_LIST.filter((k) => k.items.length > 0)) {
+      const objects = section(promptFor(kit), "TU KIT").filter((line) => line.startsWith("  - "));
+      expect(objects.length).toBeGreaterThan(0);
+      for (const line of objects) {
+        expect(line).toContain("Qué hace:");
+        expect(line).toContain("Cómo usarlo:");
+        expect(line).toContain("Situaciones comunes:");
+      }
+    }
+    const archer = section(promptFor(KITS.archer), "TU KIT").join("\n");
+    expect(archer).toContain("Empuje: cada flecha que acierta empuja al rival hacia atrás.");
+    const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
+    expect(ender).toContain('pearl con "target": "rival"');
+    expect(ender).toContain("Caída de pluma: reduce el daño de caída");
+    const { kit } = buildCustomKit({
+      items: [
+        { item: "cooked_beef", count: 2 },
+        { item: "bread", count: 2 },
+        { item: "splash_potion", potion: "harming" },
+        { item: "splash_potion", potion: "healing", count: 2 },
+      ],
+    });
+    const mine = section(promptFor(kit), "TU KIT").join("\n");
+    expect(mine).toContain('eat con "food": "bread"');
+    expect(mine).toContain('throw con "potion": "harming" y "at": "rival"');
+    expect(mine).toContain('throw con "potion": "healing" y "at": "self"');
   });
 
   it("da los datos que el modelo no puede adivinar", () => {
