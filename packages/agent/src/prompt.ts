@@ -1,5 +1,5 @@
 import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, MAX_HEALTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
-import { CONVERSATION_MAX, MESSAGE_INTERVAL_MS, RESPONSE_MAX_WORDS } from "./comms";
+import { CONVERSATION_MAX } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
   ALWAYS_EDIBLE,
@@ -262,8 +262,9 @@ function commsSection(comms: CommsMode): string[] {
       return [
         "COMUNICACIÓN",
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
-        `- Habla con naturalidad: una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras. Di solo algo nuevo; no narres cada acción ni contestes por obligación. Puedes actuar en silencio.`,
-        `- Deja al menos ${MESSAGE_INTERVAL_MS / 1000} segundos entre tus mensajes. Si aparece "sayCooldown", son los segundos que faltan para volver a hablar: omite "say" mientras tanto. Los mensajes enviados durante esa pausa no se entregan ni se guardan para después; la acción sí se ejecuta.`,
+        '- Habla como en una conversación: normalmente basta una frase corta; usa una segunda si la idea lo necesita. No cuentes palabras ni fuerces frases telegráficas. Reacciona a lo que acaba de pasar o a lo que dijo el otro, sin narrar cada acción.',
+        '- Puedes actuar en silencio. Habla cuando tengas algo que decir, no por haber llegado otro turno: no hace falta contestar cada mensaje, llenar los silencios ni terminar siempre con una pregunta. Si no te responde, dale espacio en vez de insistir con lo mismo.',
+        '- La pausa para hablar varía según el largo de los mensajes, el tiempo para leer al otro y cuántas veces hablaste sin respuesta. Si aparece "sayCooldown", son los segundos que faltan: omite "say" mientras tanto. Que desaparezca solo significa que puedes hablar, no que debas hacerlo. Los mensajes enviados durante esa pausa no se entregan ni se guardan para después; la acción sí se ejecuta.',
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
         `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
         "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
@@ -321,8 +322,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
     ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente."] : []),
-    `Todas aceptan un argumento opcional "reason": una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.`,
-    `Si respondes sin herramientas, usa también una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras.`,
+    'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
+    'Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.',
     "",
     ...kitSection(input.kit),
     "",

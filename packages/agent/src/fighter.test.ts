@@ -57,6 +57,7 @@ afterEach(async () => {
   await Promise.all(fighters.splice(0).map((fighter) => fighter.stop()));
   vi.useRealTimers();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 type ScriptedAction = { name: string; args: Record<string, unknown> };
@@ -106,33 +107,72 @@ async function start(
   await connected;
   fighter.start();
   await vi.advanceTimersByTimeAsync(0);
-  return { bot, fighter, received, requests, events: options.events };
+  return { fighter, bot, received, requests, events: options.events };
 }
 
 describe("agente: observar, decidir y construir", () => {
   it("espacia el chat sin frenar decisiones ni guardar mensajes descartados", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const { received, events } = await start([
       { name: "wait", args: { say: "Hola." } },
       { name: "wait", args: { say: "Demasiado pronto." } },
       { name: "wait", args: {} },
-      { name: "wait", args: { say: "Todavía pronto." } },
       { name: "wait", args: { say: "Ahora sí." } },
       { name: "wait", args: {} },
     ], 1000, "chat");
     expect(events.onMessage).toHaveBeenCalledWith("Hola.");
     expect(received[0]).not.toHaveProperty("sayCooldown");
-    await vi.advanceTimersByTimeAsync(3999);
+    await vi.advanceTimersByTimeAsync(2999);
     expect(events.onMessage).toHaveBeenCalledTimes(1);
-    expect(events.onAction).toHaveBeenCalledTimes(4);
-    expect(events.onDecision).toHaveBeenCalledTimes(4);
-    expect(received[1]?.sayCooldown).toBe(3);
+    expect(events.onAction).toHaveBeenCalledTimes(3);
+    expect(events.onDecision).toHaveBeenCalledTimes(3);
+    expect(received[1]?.sayCooldown).toBe(2);
     expect(events.onAction).toHaveBeenCalledWith("wait", { say: "Demasiado pronto." }, expect.stringContaining("mensaje no enviado"));
     await vi.advanceTimersByTimeAsync(1);
     expect(events.onMessage).toHaveBeenCalledTimes(2);
     expect(events.onMessage).toHaveBeenLastCalledWith("Ahora sí.");
-    expect(received[4]).not.toHaveProperty("sayCooldown");
+    expect(received[3]).not.toHaveProperty("sayCooldown");
     await vi.advanceTimersByTimeAsync(1000);
-    expect(received[5]?.conversation).toEqual([{ from: "tú", text: "Hola." }, { from: "tú", text: "Ahora sí." }]);
+    expect(received[4]?.conversation).toEqual([{ from: "tú", text: "Hola." }, { from: "tú", text: "Ahora sí." }]);
+  });
+
+  it("da tiempo para leer al rival y permite seguir en silencio después", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const { fighter, received, events } = await start([
+      { name: "wait", args: {} },
+      { name: "wait", args: { say: "Respuesta apresurada." } },
+      { name: "wait", args: {} },
+      { name: "wait", args: { say: "Vamos." } },
+    ], 1000, "chat");
+    fighter.hear("message", "¿Nos movemos hacia el centro?");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(received[1]?.sayCooldown).toBeGreaterThan(0);
+    expect(received[1]?.rivalMessages).toEqual(["¿Nos movemos hacia el centro?"]);
+    expect(received[2]).not.toHaveProperty("sayCooldown");
+    expect(events.onMessage).not.toHaveBeenCalled();
+    expect(events.onAction).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(events.onMessage).toHaveBeenCalledTimes(1);
+    expect(events.onMessage).toHaveBeenCalledWith("Vamos.");
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(events.onMessage).toHaveBeenCalledTimes(1);
+    expect(received.at(-1)?.conversation).toEqual([
+      { from: "rival", text: "¿Nos movemos hacia el centro?" }, { from: "tú", text: "Vamos." },
+    ]);
+  });
+
+  it.each(["none", "thoughts"] as const)("la pausa del chat no afecta el modo %s", async (comms) => {
+    const { fighter, received, events } = await start([
+      { name: "wait", args: {} },
+      { name: "wait", args: { reason: "Voy a esperar.", say: "Hola." } },
+    ], 1000, comms);
+    fighter.hear("message", "¿Nos movemos hacia el centro?");
+    fighter.hear("thought", "Voy al centro.");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(received[1]).not.toHaveProperty("sayCooldown");
+    expect(events.onMessage).not.toHaveBeenCalled();
+    expect(events.onThought).toHaveBeenCalledWith("Voy a esperar.");
+    expect(events.onAction).toHaveBeenCalledTimes(2);
   });
 
   it("aplica la pausa a los mensajes de acciones en cola", async () => {

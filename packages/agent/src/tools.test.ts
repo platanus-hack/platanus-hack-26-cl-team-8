@@ -145,7 +145,7 @@ describe("kitToolDefs", () => {
   it('"reason" pide una decisión breve sin repeticiones', () => {
     for (const def of TOOL_DEFS) {
       const properties = (def.parameters as { properties: Record<string, { description?: string }> }).properties;
-      expect(properties.reason?.description).toBe("Opcional: una frase de hasta 10 palabras con tu decisión. Omítela si repite lo anterior; el público la ve.");
+      expect(properties.reason?.description).toBe("Opcional: una idea breve con tu decisión. Omítela si repite lo anterior; el público la ve.");
     }
   });
 
@@ -204,8 +204,9 @@ describe("modo chat: argumento say", () => {
     const say = (def?.parameters as { properties: Record<string, { description: string }> }).properties["say"];
     expect(say?.description).toContain(String(MAX_AGENT_MESSAGE_LENGTH));
     expect(say?.description).toContain("tal cual");
-    expect(say?.description).toContain("hasta 10 palabras");
-    expect(say?.description).toContain("al menos 4 segundos");
+    expect(say?.description).toContain("normalmente una frase");
+    expect(say?.description).toContain("Puedes actuar en silencio");
+    expect(say?.description).toContain("tampoco es obligatorio hablar");
     expect(say?.description).toContain("sayCooldown");
   });
 });
