@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  eyePosition,
-  framingDistance,
+  cameraPose,
   framingFov,
   lookAngles,
   lookDirection,
   orbitPosition,
   pickAimTarget,
+  pickShot,
   quantizeAngle,
   smoothScalar,
   smoothToward,
@@ -147,42 +147,46 @@ describe("quantizeAngle", () => {
   });
 });
 
-describe("framingDistance", () => {
-  const options = { aspect: 16 / 9, lensFov: 40, margin: 1.3, minDistance: 7, maxDistance: 34, idleDistance: 30 };
-  const direction = lookDirection(0, -Math.PI / 5);
-  const aim = { x: 0, y: 66, z: 0 };
+describe("cameraPose", () => {
+  const position = { x: 0, y: 78, z: 18 };
 
-  it("sin sujetos usa la distancia de reposo", () => {
-    expect(framingDistance(aim, direction, [], options)).toBe(30);
+  it("usa ángulos que el protocolo puede transmitir", () => {
+    const pose = cameraPose(position, { x: 3.3, y: 66, z: -1.7 });
+    expect(quantizeAngle(pose.yaw)).toBeCloseTo(pose.yaw, 12);
+    expect(quantizeAngle(pose.pitch)).toBeCloseTo(pose.pitch, 12);
   });
 
-  it("se aleja cuando los peleadores se separan", () => {
-    const near = framingDistance(aim, direction, [{ x: -2, y: 65, z: 0 }, { x: 2, y: 65, z: 0 }], options);
-    const far = framingDistance(aim, direction, [{ x: -8, y: 65, z: 0 }, { x: 8, y: 65, z: 0 }], options);
-    expect(far).toBeGreaterThan(near);
+  it("el objetivo queda exactamente en el centro de la imagen", () => {
+    const aim = { x: 3.3, y: 66, z: -1.7 };
+    const pose = cameraPose(position, aim);
+    const again = lookAngles(pose.eye, aim);
+    expect(again.yaw).toBeCloseTo(pose.yaw, 9);
+    expect(again.pitch).toBeCloseTo(pose.pitch, 9);
   });
 
-  it("respeta el zoom máximo y el mínimo", () => {
-    expect(framingDistance(aim, direction, [aim], options)).toBe(7);
-    expect(framingDistance(aim, direction, [{ x: -200, y: 65, z: 0 }], options)).toBe(34);
-  });
-
-  it("los sujetos quedan dentro de la imagen a esa distancia", () => {
-    const subjects = [
-      { x: -8, y: 65, z: 3 },
-      { x: 8, y: 68, z: -4 },
-    ];
-    const distance = framingDistance(aim, direction, subjects, options);
-    const eye = eyePosition(aim, direction, distance);
-    // Con el lente fijo, el FOV necesario para verlos desde ahí no supera el del cliente.
-    const needed = framingFov(eye, aim, subjects, { aspect: 16 / 9, minFov: 1, maxFov: 170, idleFov: 40, margin: 1 });
-    expect(needed).toBeLessThanOrEqual(40);
+  it("el ojo casi no se mueve de su sitio", () => {
+    const pose = cameraPose(position, { x: 3.3, y: 66, z: -1.7 });
+    const moved = Math.hypot(pose.eye.x - position.x, pose.eye.y - position.y, pose.eye.z - position.z);
+    // A ~23 bloques, medio paso de ángulo (0,7°) en cada eje son a lo más unos 40 cm.
+    expect(moved).toBeLessThan(0.45);
   });
 });
 
-describe("eyePosition", () => {
-  it("queda detrás del punto de mira, en la dirección contraria a la que se mira", () => {
-    const eye = eyePosition({ x: 0, y: 65, z: 0 }, { x: 0, y: 0, z: -1 }, 10);
-    expect(eye).toEqual({ x: 0, y: 65, z: 10 });
+describe("pickShot", () => {
+  it("sin pelea muestra la cámara general", () => {
+    expect(pickShot(false, 3, 20, 6)).toBe("wide");
+  });
+
+  it("con pelea alterna: primero la que sigue, después la general", () => {
+    expect(pickShot(true, 0, 20, 6)).toBe("follow");
+    expect(pickShot(true, 19.9, 20, 6)).toBe("follow");
+    expect(pickShot(true, 20.1, 20, 6)).toBe("wide");
+    expect(pickShot(true, 25.9, 20, 6)).toBe("wide");
+    expect(pickShot(true, 26.1, 20, 6)).toBe("follow");
+  });
+
+  it("se puede dejar una sola cámara", () => {
+    expect(pickShot(true, 500, 20, 0)).toBe("follow");
+    expect(pickShot(true, 5, 0, 6)).toBe("wide");
   });
 });

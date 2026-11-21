@@ -2,19 +2,7 @@ import type { Bot } from "mineflayer";
 import { AGENT_USERNAMES, ARENA, SIDES } from "@phack/protocol";
 import { connectBot, runRcon } from "./bot";
 import type { CameraConfig } from "./config";
-import {
-  eyePosition,
-  framingDistance,
-  lookAngles,
-  lookDirection,
-  orbitPosition,
-  pickAimTarget,
-  quantizeAngle,
-  smoothScalar,
-  smoothToward,
-  type DollyOptions,
-  type Vec,
-} from "./director";
+import { cameraPose, orbitPosition, pickAimTarget, pickShot, smoothToward, type Shot, type Vec } from "./director";
 import { errorText, FatalError, log } from "./log";
 
 /**
@@ -24,30 +12,30 @@ import { errorText, FatalError, log } from "./log";
  * servidor como espectador. Desde aquí lo montamos en el bot cámara con /spectate, así que
  * ve exactamente lo que "ve" el bot. Mover la cámara = mover al bot.
  *
- * La cámara mira siempre en la misma dirección (la de ARENA.camera hacia el centro) y
- * encuadra trasladándose; el porqué está en director.ts.
+ * Hay dos cámaras y el bot salta de una a otra:
+ *  - la que sigue ("follow"): parada en ARENA.camera, gira para mirar a los peleadores;
+ *  - la general ("wide"): estática, alta, muestra toda la arena como en un partido.
+ * Sin pelea se muestra la general; con pelea se alternan (CAMERA_FOLLOW_SECONDS /
+ * CAMERA_WIDE_SECONDS).
  */
 
 /** Cada cuánto se recalcula la posición del bot. mineflayer la envía al servidor a 20 Hz. */
 const FLIGHT_TICK_MS = 25;
 /** Constante de tiempo del suavizado del punto de mira, en segundos. */
 const AIM_SMOOTHING_SECONDS = 0.6;
-/** Constante de tiempo del suavizado del zoom (distancia), en segundos. */
-const ZOOM_SMOOTHING_SECONDS = 0.9;
 /** Altura sobre los pies a la que se apunta (más o menos el pecho). */
 const AIM_HEIGHT = 1;
-/** Alto que debe caber en cuadro por peleador: cuerpo (1.8) + su nombre flotando encima. */
-const SUBJECT_TOP = 2.6;
 /** Altura de los ojos de un jugador sobre sus pies: ahí queda la cámara del cliente. */
 const EYE_HEIGHT = 1.62;
-/** En reposo se ve lo mismo que vería un lente de este FOV desde ARENA.camera: toda la arena. */
-const IDLE_EQUIVALENT_FOV = 50;
-const FRAMING = { margin: 1.3, minDistance: 7 };
+/** Dónde se para la cámara general, relativo al centro de la arena: alta y un poco hacia atrás. */
+const WIDE_OFFSET: Vec = { x: 0, y: 22, z: 13 };
 /**
- * Si el bot está más lejos que esto de donde debería, no vuela hasta allá: se pide un /tp.
- * (El servidor rechaza movimientos demasiado largos en un solo paso.)
+ * Lo máximo que el bot avanza por iteración. Al cambiar de cámara cruza en un par de
+ * décimas de segundo; más rápido y el servidor rechazaría el movimiento.
  */
-const MAX_FLIGHT_STEP = 6;
+const MAX_FLIGHT_STEP = 3;
+/** Si el bot está más lejos que esto de donde debería (recién conectado), se pide un /tp. */
+const TELEPORT_DISTANCE = 30;
 /** Cada cuánto se vuelve a montar al cliente por si se soltó, aunque nada lo indique. */
 const REMOUNT_INTERVAL_MS = 30_000;
 const MAINTAIN_INTERVAL_MS = 1_000;
@@ -98,26 +86,19 @@ function fighterFeet(bot: Bot, username: string): Vec | null {
 
 const toDegrees = (radians: number): number => (radians * 180) / Math.PI;
 
-/** Loop de vuelo: calcula el encuadre y deja al bot en esa posición, mirando en la dirección fija. */
+/** Loop de vuelo: decide qué cámara está al aire y deja al bot en esa pose. */
 function startFlightLoop(config: CameraConfig): void {
   const center: Vec = { x: ARENA.center.x, y: ARENA.center.y + AIM_HEIGHT, z: ARENA.center.z };
-  const base: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
-  const lensTan = Math.tan((config.lensFov * Math.PI) / 360);
-  const idleDistance =
-    (Math.hypot(base.x - center.x, base.y - center.y, base.z - center.z) *
-      Math.tan((IDLE_EQUIVALENT_FOV * Math.PI) / 360)) /
-    lensTan;
-  const framing: DollyOptions = {
-    aspect: config.width / config.height,
-    lensFov: config.lensFov,
-    margin: FRAMING.margin,
-    minDistance: FRAMING.minDistance,
-    maxDistance: idleDistance * 1.15,
-    idleDistance,
-  };
+  const followBase: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
+  // La general nunca cambia: se calcula una sola vez.
+  const widePose = cameraPose(
+    { x: center.x + WIDE_OFFSET.x, y: center.y + WIDE_OFFSET.y, z: center.z + WIDE_OFFSET.z },
+    center,
+  );
 
   let aim: Vec = { ...center };
-  let distance = idleDistance;
+  let fightStartedAt: number | null = null;
+  let shot: Shot = "wide";
   const startedAt = performance.now();
   let lastTick = startedAt;
 
@@ -130,27 +111,30 @@ function startFlightLoop(config: CameraConfig): void {
     if (!bot?.entity) return;
 
     const fighters: Vec[] = [];
-    const subjects: Vec[] = [];
     for (const side of SIDES) {
       const feet = fighterFeet(bot, AGENT_USERNAMES[side]);
-      if (!feet) continue;
-      fighters.push({ x: feet.x, y: feet.y + AIM_HEIGHT, z: feet.z });
-      subjects.push(feet, { x: feet.x, y: feet.y + SUBJECT_TOP, z: feet.z });
+      if (feet) fighters.push({ x: feet.x, y: feet.y + AIM_HEIGHT, z: feet.z });
     }
+    const fighting = fighters.length > 0;
+    if (!fighting) fightStartedAt = null;
+    else if (fightStartedAt === null) fightStartedAt = now;
+    const fightSeconds = fightStartedAt === null ? 0 : (now - fightStartedAt) / 1000;
 
-    // Dirección fija: la de la cámara base hacia el centro, redondeada a lo que el
-    // protocolo puede transmitir (así el punto de mira queda exactamente al centro).
-    const cameraBase = orbitPosition(base, center, (now - startedAt) / 1000, config.orbitSeconds);
-    const angles = lookAngles(cameraBase, center);
-    const yaw = quantizeAngle(angles.yaw);
-    const pitch = quantizeAngle(angles.pitch);
-    const direction = lookDirection(yaw, pitch);
-
+    // La mira se sigue actualizando aunque esté al aire la general: al volver a la cámara
+    // que sigue, ya está apuntando a la pelea.
     aim = smoothToward(aim, pickAimTarget(fighters, center), dt, AIM_SMOOTHING_SECONDS);
-    distance = smoothScalar(distance, framingDistance(aim, direction, subjects, framing), dt, ZOOM_SMOOTHING_SECONDS);
-    const eye = eyePosition(aim, direction, distance);
-    const feet: Vec = { x: eye.x, y: eye.y - EYE_HEIGHT, z: eye.z };
-    desired = { feet, yaw, pitch };
+
+    const nextShot = pickShot(fighting, fightSeconds, config.followSeconds, config.wideSeconds);
+    if (nextShot !== shot) {
+      shot = nextShot;
+      log("info", `Al aire: cámara ${shot === "follow" ? "que sigue a los peleadores" : "general"}.`);
+    }
+    const pose =
+      shot === "follow"
+        ? cameraPose(orbitPosition(followBase, center, (now - startedAt) / 1000, config.orbitSeconds), aim)
+        : widePose;
+    const feet: Vec = { x: pose.eye.x, y: pose.eye.y - EYE_HEIGHT, z: pose.eye.z };
+    desired = { feet, yaw: pose.yaw, pitch: pose.pitch };
 
     // Solo un espectador puede volar; antes de serlo, el servidor expulsaría al bot.
     if (bot.game?.gameMode !== "spectator") {
@@ -158,14 +142,22 @@ function startFlightLoop(config: CameraConfig): void {
       return;
     }
     const position = bot.entity.position;
-    const off = Math.hypot(position.x - feet.x, position.y - feet.y, position.z - feet.z);
-    if (off > MAX_FLIGHT_STEP) {
+    const dx = feet.x - position.x;
+    const dy = feet.y - position.y;
+    const dz = feet.z - position.z;
+    const off = Math.hypot(dx, dy, dz);
+    if (off > TELEPORT_DISTANCE) {
       needsTeleport = true;
       return;
     }
-    position.set(feet.x, feet.y, feet.z);
-    bot.entity.yaw = yaw;
-    bot.entity.pitch = pitch;
+    if (off > MAX_FLIGHT_STEP) {
+      const scale = MAX_FLIGHT_STEP / off;
+      position.set(position.x + dx * scale, position.y + dy * scale, position.z + dz * scale);
+    } else {
+      position.set(feet.x, feet.y, feet.z);
+    }
+    bot.entity.yaw = pose.yaw;
+    bot.entity.pitch = pose.pitch;
   }, FLIGHT_TICK_MS);
 }
 
@@ -291,8 +283,8 @@ export async function runOperator(config: CameraConfig): Promise<void> {
   log(
     "info",
     `Cámara en modo cliente real: el video lo dibuja ${config.clientUsername} (infra/stream), ` +
-      `montado en ${config.username}. Lente fijo de ${config.lensFov}°, ` +
-      `órbita: ${config.orbitSeconds > 0 ? `${config.orbitSeconds} s por vuelta` : "fija"}.`,
+      `montado en ${config.username}. Con pelea: ${config.followSeconds} s siguiéndola y ` +
+      `${config.wideSeconds} s de cámara general.`,
   );
   startFlightLoop(config);
   try {

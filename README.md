@@ -50,7 +50,7 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
 |---|---|---|
 | `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mundo plano sin mobs, modo offline, RCON activado. |
 | `orchestrator` | `apps/orchestrator` | Dueño de la pelea: prepara la arena por RCON, conecta a los dos agentes, lleva el estado, decide el ganador, guarda el historial y emite eventos por websocket. |
-| `camera` | `apps/camera` | Bot cámara. Vuela siguiendo la pelea; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
+| `camera` | `apps/camera` | Bot cámara. Alterna entre seguir la pelea y una toma general; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
 | `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
 | `mediamtx` | `bluenviron/mediamtx` | Convierte el RTMP en HLS de baja latencia. |
 | `web` | `apps/web` + Caddy | Sitio estático (Astro) y proxy inverso de un solo origen. |
@@ -347,7 +347,7 @@ Xvfb (pantalla virtual) -> cliente de Minecraft, dibujado por la GPU (VirtualGL)
   -> ffmpeg captura la pantalla y codifica H.264 (NVENC) -> RTMP -> MediaMTX -> HLS -> web
 ```
 
-El cliente entra al servidor como el espectador `Camarografo`. El contenedor `camera` lo monta (`/spectate`) en el bot `Camara` y mueve ese bot para encuadrar la pelea, siempre mirando en la misma dirección.
+El cliente entra al servidor como el espectador `Camarografo`. El contenedor `camera` lo monta (`/spectate`) en el bot `Camara` y mueve ese bot: lo que hace el bot es lo que se ve.
 
 Se instala una sola vez en el servidor (Fedora, GPU NVIDIA con su driver):
 
@@ -379,7 +379,7 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 | Pelea con LLM real | Completa con `LLM_PROVIDER=vercel` y `deepseek/deepseek-v4.1-flash-1017-fast`: cada agente decide con tool calls y explica su razón. |
 | Web | Sitio, API y websocket a través de Caddy en el puerto 8080. |
 | Video | El cliente real de Minecraft corre en el servidor sin monitor (RTX 3080 vía VirtualGL), ffmpeg lo captura y codifica con la GPU a 30 fps, y MediaMTX entrega HLS: en la web se ven armaduras, armas, flechas, golpes y nombres. Se recupera solo si expulsan al cliente o se reinicia MediaMTX. |
-| Tests y typecheck de la cámara | 23 tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
+| Tests y typecheck de la cámara | 24 tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
 
 ### Lo que no se ha probado
 
@@ -392,7 +392,7 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 
 ### Limitaciones conocidas
 
-- **Cámara del cliente real.** El campo de visión es fijo (`STREAM_FOV`), así que el zoom se hace acercando la cámara. La cámara no gira: el servidor transmite la rotación de un jugador en pasos de 1,4°, y girar se vería a saltos; por eso encuadra deslizándose. El video no lleva audio.
+- **Cámara del cliente real.** Son dos y se alternan: la que sigue a los peleadores (parada en un punto, gira para mirarlos) y la general (estática, desde arriba). Sin pelea se muestra la general; con pelea, 20 s de una y 6 s de la otra (`CAMERA_FOLLOW_SECONDS`, `CAMERA_WIDE_SECONDS`). El campo de visión es fijo (`STREAM_FOV`): no hay zoom. El video no lleva audio.
 - **Render sin GPU (`CAMERA_MODE=viewer`).** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin. Es el respaldo para máquinas sin GPU y lo que se usa en desarrollo local.
 - **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
 - **Peleas cortas.** Con el kit actual (espada y armadura de hierro) un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar el kit en `apps/orchestrator/src/arena.ts`.

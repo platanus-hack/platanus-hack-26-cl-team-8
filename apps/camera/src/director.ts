@@ -130,10 +130,7 @@ export function smoothScalar(current: number, target: number, dtSeconds: number,
 // ---------- Modo "cliente real": la cámara es un bot que vuela ----------
 //
 // En ese modo quien dibuja es el cliente real de Minecraft, montado (/spectate) en el bot
-// cámara. El servidor reenvía la ROTACIÓN de una entidad con 1 byte por eje (pasos de
-// 1,4°), pero su POSICIÓN con mucha precisión. Por eso la cámara mantiene una dirección
-// fija y encuadra TRASLADÁNDOSE: se desliza para seguir la pelea y se acerca o aleja para
-// hacer zoom. Girar se vería a saltos.
+// cámara: lo que se ve es lo que "ve" el bot.
 
 /** Pasos por vuelta con los que el protocolo de Minecraft transmite un ángulo de entidad. */
 export const ANGLE_STEPS = 256;
@@ -161,63 +158,43 @@ export function lookDirection(yaw: number, pitch: number): Vec {
   return { x: -Math.sin(yaw) * flat, y: Math.sin(pitch), z: -Math.cos(yaw) * flat };
 }
 
-export type DollyOptions = {
-  /** Relación de aspecto del video (ancho / alto). */
-  aspect: number;
-  /** FOV vertical FIJO del cliente de Minecraft, en grados. */
-  lensFov: number;
-  /** Aire alrededor de los sujetos (1 = justo al borde de la imagen). */
-  margin: number;
-  /** Lo más cerca que la cámara se pone del punto al que mira (zoom máximo). */
-  minDistance: number;
-  /** Lo más lejos (zoom mínimo). */
-  maxDistance: number;
-  /** Distancia cuando no hay nadie a quien encuadrar: se ve toda la arena. */
-  idleDistance: number;
-};
+export type CameraPose = { eye: Vec; yaw: number; pitch: number };
 
 /**
- * Distancia a la que debe ponerse una cámara de lente fijo, que mira hacia `aim` en la
- * dirección `direction` (unitaria), para que todos los `subjects` quepan en la imagen.
- * Es el equivalente a `framingFov` cuando no se puede cambiar el FOV: en vez de cerrar
- * el lente, la cámara se acerca.
+ * Pose de una cámara parada en `position` que mira hacia `aim`, lista para un bot.
+ *
+ * El servidor reenvía la rotación de una entidad con 1 byte por eje (pasos de 1,4°), así
+ * que el giro exacto no se puede transmitir. Se usa el ángulo transmisible más cercano y
+ * se corre el ojo lo justo (unos centímetros) para que `aim` quede igual en el centro de
+ * la imagen: la cámara sigue a su objetivo sin los saltitos del redondeo.
  */
-export function framingDistance(aim: Vec, direction: Vec, subjects: readonly Vec[], options: DollyOptions): number {
-  if (subjects.length === 0) return options.idleDistance;
-  // right = direction × (0,1,0)
-  let rx = -direction.z;
-  let rz = direction.x;
-  const rLen = Math.hypot(rx, rz);
-  if (rLen === 0) return options.idleDistance; // cámara mirando recto hacia abajo
-  rx /= rLen;
-  rz /= rLen;
-  // up = right × direction
-  const ux = -rz * direction.y;
-  const uy = rz * direction.x - rx * direction.z;
-  const uz = rx * direction.y;
-
-  const tanV = Math.tan((options.lensFov * Math.PI) / 360) / options.margin;
-  const tanH = tanV * options.aspect;
-  let need = options.minDistance;
-  for (const s of subjects) {
-    const ox = s.x - aim.x;
-    const oy = s.y - aim.y;
-    const oz = s.z - aim.z;
-    // Profundidad del sujeto respecto al punto de mira: si está más cerca de la cámara
-    // que `aim` (ahead < 0), la cámara tiene que alejarse más para que quepa.
-    const ahead = ox * direction.x + oy * direction.y + oz * direction.z;
-    const horizontal = Math.abs(ox * rx + oz * rz);
-    const vertical = Math.abs(ox * ux + oy * uy + oz * uz);
-    need = Math.max(need, horizontal / tanH - ahead, vertical / tanV - ahead);
-  }
-  return Math.min(options.maxDistance, Math.max(options.minDistance, need));
+export function cameraPose(position: Vec, aim: Vec): CameraPose {
+  const angles = lookAngles(position, aim);
+  const yaw = quantizeAngle(angles.yaw);
+  const pitch = quantizeAngle(angles.pitch);
+  const direction = lookDirection(yaw, pitch);
+  const distance = Math.hypot(aim.x - position.x, aim.y - position.y, aim.z - position.z);
+  return {
+    eye: {
+      x: aim.x - direction.x * distance,
+      y: aim.y - direction.y * distance,
+      z: aim.z - direction.z * distance,
+    },
+    yaw,
+    pitch,
+  };
 }
 
-/** Posición del ojo de una cámara que mira hacia `aim` en `direction`, a `distance` bloques. */
-export function eyePosition(aim: Vec, direction: Vec, distance: number): Vec {
-  return {
-    x: aim.x - direction.x * distance,
-    y: aim.y - direction.y * distance,
-    z: aim.z - direction.z * distance,
-  };
+export type Shot = "follow" | "wide";
+
+/**
+ * Qué cámara está al aire. Sin pelea, la general ("wide", estática desde arriba). Con
+ * pelea se alternan: `followSeconds` de la que sigue a los peleadores y `wideSeconds` de
+ * la general, partiendo por la que sigue. Con `wideSeconds` <= 0 nunca se corta a la
+ * general durante la pelea; con `followSeconds` <= 0 siempre se muestra la general.
+ */
+export function pickShot(fighting: boolean, fightSeconds: number, followSeconds: number, wideSeconds: number): Shot {
+  if (!fighting || followSeconds <= 0) return "wide";
+  if (wideSeconds <= 0) return "follow";
+  return fightSeconds % (followSeconds + wideSeconds) < followSeconds ? "follow" : "wide";
 }

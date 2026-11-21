@@ -166,7 +166,9 @@ services:
       # contenedor solo vuela al bot cámara. viewer = render propio (sin GPU).
       CAMERA_MODE: ${CAMERA_MODE:-client}
       STREAM_CLIENT_USERNAME: ${STREAM_CLIENT_USERNAME:-Camarografo}
-      STREAM_FOV: ${STREAM_FOV:-40}
+      # Con pelea se alternan dos cámaras: la que sigue a los peleadores y la general.
+      CAMERA_FOLLOW_SECONDS: ${CAMERA_FOLLOW_SECONDS:-20}
+      CAMERA_WIDE_SECONDS: ${CAMERA_WIDE_SECONDS:-6}
       CAMERA_ORBIT_SECONDS: ${CAMERA_ORBIT_SECONDS:-0}
       CAMERA_VIEW_DISTANCE: ${CAMERA_VIEW_DISTANCE:-4}
       CAMERA_BITRATE_KBPS: ${CAMERA_BITRATE_KBPS:-2500}

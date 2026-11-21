@@ -15,7 +15,7 @@
 # claves de la lista de abajo). Todas tienen valor por defecto.
 #   STREAM_HOME             carpeta con el juego y el lanzador (~/.local/share/phack-stream)
 #   STREAM_CLIENT_USERNAME  usuario del cliente (Camarografo)
-#   STREAM_FOV              campo de visión vertical en grados, 30 a 110 (40)
+#   STREAM_FOV              campo de visión vertical en grados, 30 a 110 (60)
 #   STREAM_DISPLAY          pantalla virtual (:99)
 #   STREAM_ENCODER          h264_nvenc (GPU NVIDIA) | libopenh264 | libx264 (h264_nvenc)
 #   STREAM_HUD              1 = deja visibles los títulos del juego (cuenta regresiva,
@@ -46,7 +46,7 @@ read_env_file "$REPO_ROOT/.env"
 
 STREAM_HOME="${STREAM_HOME:-$HOME/.local/share/phack-stream}"
 USERNAME="${STREAM_CLIENT_USERNAME:-Camarografo}"
-FOV="${STREAM_FOV:-40}"
+FOV="${STREAM_FOV:-60}"
 DISPLAY_ID="${STREAM_DISPLAY:-:99}"
 ENCODER="${STREAM_ENCODER:-h264_nvenc}"
 SHOW_HUD="${STREAM_HUD:-1}"

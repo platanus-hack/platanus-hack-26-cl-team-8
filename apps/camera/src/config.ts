@@ -13,8 +13,10 @@ export type CameraConfig = {
   mode: CameraMode;
   /** Usuario con el que entra el cliente real de Minecraft (modo "client"). */
   clientUsername: string;
-  /** FOV vertical fijo del cliente real, en grados (el mismo que escribe infra/stream en options.txt). */
-  lensFov: number;
+  /** Modo "client": segundos seguidos de la cámara que sigue a los peleadores. 0 = solo la general. */
+  followSeconds: number;
+  /** Modo "client": segundos de la cámara general (estática, desde arriba) entre medio. 0 = nunca. */
+  wideSeconds: number;
   mc: { host: string; port: number; version: string };
   rcon: { host: string; port: number; password: string };
   username: string;
@@ -78,7 +80,8 @@ export function loadConfig(): CameraConfig {
   return {
     mode: readMode(),
     clientUsername: readName("STREAM_CLIENT_USERNAME", "Camarografo"),
-    lensFov: readNumber("STREAM_FOV", 40, 30, 110),
+    followSeconds: readNumber("CAMERA_FOLLOW_SECONDS", 20, 0, 3600),
+    wideSeconds: readNumber("CAMERA_WIDE_SECONDS", 6, 0, 3600),
     mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
     rcon: { host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD },
     username: env.CAMERA_USERNAME,
