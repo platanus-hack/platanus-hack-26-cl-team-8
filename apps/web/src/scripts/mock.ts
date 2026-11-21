@@ -1057,8 +1057,10 @@ export function startMockVideo(video: HTMLVideoElement): boolean {
     // Piso de la arena (elipse vista desde arriba) con muro.
     const cx = w / 2;
     const cy = h * 0.6;
-    const rx = w * 0.36;
-    const ry = h * 0.26;
+    // Proporción parecida a la de la cámara real (mira el piso a unos 38°): con el piso
+    // más aplastado el logo del centro no se reconoce.
+    const rx = w * 0.3;
+    const ry = h * 0.29;
     ctx.fillStyle = "#6b6f7a";
     ctx.beginPath();
     ctx.ellipse(cx, cy - 26, rx + 14, ry + 10, 0, 0, Math.PI * 2);

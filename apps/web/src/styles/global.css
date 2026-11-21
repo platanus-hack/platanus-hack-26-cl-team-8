@@ -1716,10 +1716,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   flex: 1;
 }
 
-span.setting__label {
-  cursor: default;
-}
-
 .setting__help,
 .setting__note {
   grid-column: 1 / -1;
@@ -1738,6 +1734,15 @@ span.setting__label {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Una acción suelta al pie del grupo (espejo): el botón y, a su lado, qué hace. */
+.settings__action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 
 /* Las reglas de la serie solo existen con 2 rondas o más. */

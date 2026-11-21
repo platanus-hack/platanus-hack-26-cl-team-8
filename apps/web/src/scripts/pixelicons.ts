@@ -16,7 +16,7 @@
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
  *
- *   sword, axe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
+ *   sword, axe, pickaxe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
  *   helmet, chestplate, leggings, boots                  las cuatro piezas de armadura
  *
  * Cada ícono es una lista de filas; cada letra es un color de su paleta y "." es
@@ -36,6 +36,9 @@ export const MATERIALS = {
   diamond: { a: "#b5fbf2", b: "#4fe0d2", c: "#1f9c93" },
   wood: { a: "#d2a468", b: "#a97c44", c: "#7b5730" },
   chainmail: { a: "#a7adb8", b: "#6a717d", c: "#3e434c" },
+  gold: { a: "#fdf55f", b: "#eac33b", c: "#b8860b" },
+  netherite: { a: "#6d6569", b: "#4a4347", c: "#2c2729" },
+  leather: { a: "#c0764a", b: "#9b5a36", c: "#6b3d24" },
   /** Lana (un solo tono neutro para todos los colores: el nombre del ítem dice cuál es). */
   wool: { a: "#f4f1ea", b: "#d9d4c8", c: "#a9a397" },
 } satisfies Record<string, MaterialColors>;
@@ -242,6 +245,23 @@ export const ICONS = {
       ".khhkkck...",
       "khhk..kk...",
       "kkk........",
+    ],
+  },
+  // Pico: el mango en diagonal y la cabeza curva que lo cruza arriba.
+  pickaxe: {
+    palette: { k: OUTLINE, h: HANDLE, ...MATERIALS.iron },
+    rows: [
+      "...kkkkkk..",
+      "..kaaabbbk.",
+      "...kkkkhbbk",
+      "......khkbk",
+      ".....khkkck",
+      "....khk.kck",
+      "...khk...kk",
+      "..khk......",
+      ".khk.......",
+      "khk........",
+      "kk.........",
     ],
   },
   axe: {
