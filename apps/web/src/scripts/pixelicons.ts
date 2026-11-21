@@ -654,23 +654,6 @@ export const ICONS = {
       "...........",
     ],
   },
-  // Nube con sus dos burbujas, como el globo de pensamiento de una historieta.
-  thought: {
-    palette: { x: "currentColor" },
-    rows: [
-      "...........",
-      "..xxxxxxx..",
-      ".xxxxxxxxx.",
-      ".xxxxxxxxx.",
-      ".xxxxxxxxx.",
-      "..xxxxxxx..",
-      "...........",
-      "..xx.......",
-      "..xx.......",
-      "...........",
-      "x..........",
-    ],
-  },
   talk: {
     palette: { x: "currentColor" },
     rows: [

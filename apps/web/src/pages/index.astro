@@ -199,7 +199,8 @@ const stats = [
               </p>
               <ol class="thoughts__list" id={`thoughts-list-${side.id}`} aria-hidden="true" />
               <div class="thoughts__thinking" id={`thinking-${side.id}`} aria-hidden="true">
-                <i /><i /><i />
+                <span class="thoughts__caption">{side.label} piensa</span>
+                <span class="thoughts__dots"><i /><i /><i /></span>
               </div>
             </section>
           ))

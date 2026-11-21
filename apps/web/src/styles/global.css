@@ -842,29 +842,46 @@ textarea {
   overflow-y: clip;
 }
 
+/*
+ * La columna es un solo panel: un velo continuo con la regla del color del lado en el
+ * borde de afuera, que se pierde hacia el centro de la imagen. Adentro van las entradas,
+ * sin caja propia; las separa el aire. Vacía, no se dibuja.
+ */
 .thoughts__list {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 8px;
+  padding: 3px 0;
+  border-left: 3px solid var(--side);
+  background: linear-gradient(to right, rgba(6, 7, 9, 0.76), rgba(6, 7, 9, 0.54) 62%, rgba(6, 7, 9, 0.14));
+}
+
+.thoughts__list:empty {
+  display: none;
+}
+
+/* Azul es el espejo: su regla va al lado derecho y el velo se pierde hacia la izquierda. */
+.thoughts__col--blue .thoughts__list {
+  border-left: 0;
+  border-right: 3px solid var(--side);
+  background: linear-gradient(to left, rgba(6, 7, 9, 0.76), rgba(6, 7, 9, 0.54) 62%, rgba(6, 7, 9, 0.14));
 }
 
 /*
- * Un pensamiento con la ficha de su acción. El puesto se cuenta desde el más nuevo con
- * :nth-last-child: el último es el que se está leyendo y los anteriores se achican y se
- * apagan (--dim) hasta irse. thoughts.ts solo agrega al final y quita los que sobran.
+ * Una entrada: lo que el agente pensó y, debajo, la acción que eligió. El puesto se cuenta
+ * desde la más nueva con :nth-last-child: la última es la que se está leyendo y las
+ * anteriores se achican y se apagan (--dim) hasta irse. thoughts.ts solo agrega al final
+ * y quita las que sobran.
  */
 .thought {
   --dim: 1;
   display: grid;
-  /* Primera columna: la marca de qué es (nube = lo piensa). El texto y la ficha, en la segunda. */
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   justify-items: start;
-  gap: 6px 9px;
-  max-height: 240px;
-  padding: 6px 14px 7px 12px;
-  border-left: 3px solid var(--side);
-  background: linear-gradient(to right, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
+  gap: 5px;
+  max-height: 260px;
+  /* El aire de los lados va en la entrada: su destello, al repetirse, cruza todo el panel. */
+  padding: 7px 18px 7px 12px;
   font-size: 17px;
   opacity: var(--dim);
   transition:
@@ -883,14 +900,10 @@ textarea {
   }
 }
 
-/* Azul es el espejo: su regla va al lado derecho y el velo se pierde hacia la izquierda. */
 .thoughts__col--blue .thought {
-  grid-template-columns: minmax(0, 1fr) 22px;
   justify-items: end;
-  padding: 6px 12px 7px 14px;
-  border-left: 0;
-  border-right: 3px solid var(--side);
-  background: linear-gradient(to left, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
+  padding-right: 12px;
+  padding-left: 18px;
   text-align: right;
 }
 
@@ -914,6 +927,17 @@ textarea {
   font-size: 13px;
 }
 
+/*
+ * Lo que el agente le dice en voz alta al otro (modo "chat") es un globo de conversación.
+ * El globo va dentro de la entrada; el aire de abajo es para su cola.
+ */
+.thought--said {
+  padding-top: 8px;
+  padding-bottom: 19px;
+  /* Un mensaje viejo se apaga menos que un pensamiento: el papel translúcido se ve sucio. */
+  opacity: calc(0.6 + var(--dim) * 0.4);
+}
+
 /* El que ya no cabe entre los visibles se apaga y deja de ocupar lugar. */
 .thought:nth-last-child(n + 6) {
   max-height: 0;
@@ -924,47 +948,23 @@ textarea {
   visibility: hidden;
 }
 
-/* Con el mouse sobre la ficha, ese pensamiento recupera su brillo: la ayuda no sale apagada. */
+/* Con el mouse sobre la ficha, esa entrada recupera su brillo: la ayuda no sale apagada. */
 .thought:has(.thought__chip:hover) {
   opacity: 1;
 }
 
 /*
- * La marca de cada entrada con texto. En un pensamiento es una nube del color del lado,
- * suelta sobre el velo; en lo dicho en voz alta pasa a ser el cuadro del que sale el globo.
- */
-.thought__kind {
-  display: flex;
-  grid-column: 1;
-  grid-row: 1;
-  color: var(--side);
-}
-
-.thoughts__col--blue .thought__kind {
-  grid-column: 2;
-}
-
-.thought__text,
-.thought__chip {
-  grid-column: 2;
-}
-
-.thoughts__col--blue .thought__text,
-.thoughts__col--blue .thought__chip {
-  grid-column: 1;
-}
-
-/*
- * El más nuevo se lee completo (hasta 5 líneas); los anteriores quedan en una o dos. Lo
- * que el agente piensa va en cursiva: es su voz interior, nadie más lo recibe.
+ * Lo que el agente piensa: su voz interior, nadie más lo recibe. Va en cursiva, directo
+ * sobre el velo. El más nuevo se lee completo (hasta 5 líneas); los anteriores quedan en
+ * una o dos.
  */
 .thought__text {
-  font-style: italic;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
   min-width: 0;
   overflow: hidden;
+  font-style: italic;
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -980,91 +980,95 @@ textarea {
 }
 
 /*
- * Benchmarks: mensaje falso que el sistema le mandó al agente (inyección o aviso). Va con
- * borde y texto ámbar, para que se distinga de lo que el agente piensa o dice.
+ * Benchmarks: mensaje falso que el sistema le mandó al agente (inyección o aviso). Va en
+ * ámbar y con su señal de alerta, para que se distinga de lo que el agente piensa o dice.
  */
-.thoughts__col .thought--injected {
-  border-left: 3px solid var(--amber);
-  padding-left: 8px;
+.thought--injected {
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 9px;
   color: var(--amber);
 }
 
-.thoughts__col .thought--injected .thought__text {
+.thoughts__col--blue .thought--injected {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.thoughts__col--blue .thought--injected .thought__kind {
+  order: 2;
+}
+
+.thought--injected .thought__text {
   font-style: normal;
   -webkit-line-clamp: 4;
 }
 
-/*
- * Lo que el agente le dice en voz alta al otro (modo "chat"): una fila de conversación.
- * En el borde de la columna, un cuadro del color del lado con un globo (quién habla); a su
- * lado, el mensaje sobre papel claro, con una cola de bloques de 4 px que apunta al cuadro.
- * Es lo único con forma de globo en la pantalla: lo que piensa va en cursiva sobre el velo
- * oscuro, lo que dice va derecho y en negrita sobre papel.
- */
-.thoughts__col .thought--said {
-  position: relative;
-  grid-template-columns: minmax(0, 1fr);
-  margin: 4px 0 8px 36px;
-  padding: 8px 13px 9px 12px;
-  border: 0;
-  background: var(--text);
-  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
-  color: #0b0b0d;
-  /* Un mensaje viejo se apaga menos que un pensamiento: el papel translúcido se ve sucio. */
-  opacity: calc(0.6 + var(--dim) * 0.4);
+.thought__kind {
+  display: flex;
 }
 
-.thoughts__col--blue .thought--said {
-  margin: 4px 36px 8px 0;
-  padding: 8px 12px 9px 13px;
-  /* El globo va hacia el borde derecho, pero su texto se lee de izquierda a derecha. */
+/*
+ * El globo: papel claro con el texto derecho y en negrita, y arriba quién habla y a quién.
+ * Es lo único con forma de globo en la pantalla, y lo único que el rival también recibe.
+ */
+.thought__bubble {
+  position: relative;
+  display: grid;
+  justify-self: stretch;
   justify-items: start;
+  gap: 5px;
+  padding: 7px 12px 9px;
+  background: var(--text);
+  color: #0b0b0d;
   text-align: left;
 }
 
-/* El cuadro de quien habla, pegado al borde de la columna. */
-.thought--said .thought__kind {
-  position: absolute;
-  top: 0;
-  left: -36px;
-  padding: 3px;
-  background: var(--side);
-  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
-  color: #0b0b0d;
-}
-
-.thoughts__col--blue .thought--said .thought__kind {
-  left: auto;
-  right: -36px;
-}
-
-.thought--said .thought__text,
-.thoughts__col--blue .thought--said .thought__text {
-  grid-column: 1;
-}
-
-/* La cola: una punta de bloques de 4 px que sale del globo y toca el cuadro. */
-.thought--said::before {
+/* La cola: una escalera de bloques de 4 px que baja desde el globo, del lado del agente. */
+.thought__bubble::after {
   content: "";
   position: absolute;
-  top: 12px;
-  left: -8px;
+  top: 100%;
+  left: 14px;
   width: 4px;
   height: 4px;
   background: var(--text);
   box-shadow:
-    4px -4px 0 var(--text),
     4px 0 0 var(--text),
-    4px 4px 0 var(--text);
+    8px 0 0 var(--text),
+    0 4px 0 var(--text),
+    4px 4px 0 var(--text),
+    0 8px 0 var(--text);
 }
 
-.thoughts__col--blue .thought--said::before {
+.thoughts__col--blue .thought__bubble::after {
   left: auto;
-  right: -8px;
+  right: 14px;
   box-shadow:
-    -4px -4px 0 var(--text),
     -4px 0 0 var(--text),
-    -4px 4px 0 var(--text);
+    -8px 0 0 var(--text),
+    0 4px 0 var(--text),
+    -4px 4px 0 var(--text),
+    0 8px 0 var(--text);
+}
+
+/* "Le dice a Azul": el cuadro del color de quien habla y, al lado, a quién le habla. */
+.thought__who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(11, 11, 13, 0.66);
+  font: 400 10px/1 var(--pixel);
+  letter-spacing: 0.04em;
+}
+
+.thought__who .thought__kind {
+  padding: 2px;
+  background: var(--side);
+  color: #0b0b0d;
+}
+
+.thought__who .pixel-icon {
+  width: 11px;
+  height: 11px;
 }
 
 /* Un mensaje se lee entero mientras es el más nuevo; el texto completo queda en "Eventos". */
@@ -1074,6 +1078,14 @@ textarea {
   font-weight: 600;
   text-shadow: none;
   white-space: pre-line;
+}
+
+.thought--said:nth-last-child(2) .thought__text {
+  -webkit-line-clamp: 3;
+}
+
+.thought--said:nth-last-child(n + 3) .thought__text {
+  -webkit-line-clamp: 2;
 }
 
 /* Mientras se oye la voz de un mensaje (voice.ts), el cuadro muestra un medidor de voz que late. */
@@ -1096,30 +1108,30 @@ textarea {
 }
 
 /*
- * Ficha de la acción que vino con el pensamiento: ícono de la herramienta + frase corta,
- * como un casillero del juego. La llamada tal cual y su resultado van en la ayuda.
+ * La acción que vino con el pensamiento: ícono de la herramienta + frase corta, en letra
+ * derecha y más apagada que el pensamiento. La llamada tal cual y su resultado van en la ayuda.
  */
 .thought__chip {
   display: flex;
   align-items: center;
   gap: 7px;
   max-width: 100%;
-  padding: 2px 9px 2px 4px;
-  background: rgba(0, 0, 0, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(237, 236, 232, 0.24);
+  color: rgba(237, 236, 232, 0.78);
   font-size: 13px;
   line-height: 1.3;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   pointer-events: auto;
   cursor: default;
 }
 
 .thoughts__col--blue .thought__chip {
   flex-direction: row-reverse;
-  padding: 2px 4px 2px 9px;
 }
 
 .thought__chip .pixel-icon {
   flex: none;
+  width: 18px;
+  height: 18px;
 }
 
 .thought__label {
@@ -1127,44 +1139,68 @@ textarea {
 }
 
 /*
- * "Pensando": tres cuadros que laten al pie de la columna mientras el agente pelea y
- * lleva un rato sin decir nada. Su lugar está siempre reservado, así la pila no salta
- * cuando aparecen o se van.
+ * El pie del panel dice de quién es la columna y qué es: "Rojo piensa". Mientras el agente
+ * pelea y lleva un rato sin novedades, al lado laten tres cuadros. Su lugar está siempre
+ * reservado, así la pila no salta cuando aparece o se va.
  */
 .thoughts__thinking {
   display: flex;
   flex: none;
-  align-self: flex-start;
-  gap: 4px;
-  margin-top: 10px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 18px 8px 12px;
+  border-left: 3px solid var(--side);
+  background: linear-gradient(to right, rgba(6, 7, 9, 0.76), rgba(6, 7, 9, 0.54) 62%, rgba(6, 7, 9, 0.14));
   opacity: 0;
   transition: opacity 0.25s ease-out;
 }
 
 .thoughts__col--blue .thoughts__thinking {
-  align-self: flex-end;
+  flex-direction: row-reverse;
+  padding: 7px 12px 8px 18px;
+  border-left: 0;
+  border-right: 3px solid var(--side);
+  background: linear-gradient(to left, rgba(6, 7, 9, 0.76), rgba(6, 7, 9, 0.54) 62%, rgba(6, 7, 9, 0.14));
 }
 
+.thoughts__list:not(:empty) + .thoughts__thinking,
 .thoughts__thinking.is-on {
   opacity: 1;
 }
 
-.thoughts__thinking i {
-  width: 6px;
-  height: 6px;
+.thoughts__caption {
+  color: var(--side);
+  font: 400 10px/1 var(--pixel);
+  letter-spacing: 0.04em;
+}
+
+.thoughts__dots {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+}
+
+.thoughts__thinking.is-on .thoughts__dots {
+  opacity: 1;
+}
+
+.thoughts__dots i {
+  width: 5px;
+  height: 5px;
   background: var(--side);
   opacity: 0.6;
 }
 
-.thoughts__thinking.is-on i {
+.thoughts__thinking.is-on .thoughts__dots i {
   animation: thinking 1.2s ease-in-out infinite;
 }
 
-.thoughts__thinking i:nth-child(2) {
+.thoughts__dots i:nth-child(2) {
   animation-delay: 0.2s;
 }
 
-.thoughts__thinking i:nth-child(3) {
+.thoughts__dots i:nth-child(3) {
   animation-delay: 0.4s;
 }
 
@@ -1248,17 +1284,31 @@ textarea {
  */
 @media (max-width: 699px) {
   .thoughts {
-    bottom: 90px;
+    /* Sobre el selector de mapa y el botón de la pelea. */
+    bottom: 126px;
   }
 
   .thoughts__col {
     width: calc(50% - 5px);
   }
 
+  .thoughts__col .thoughts__thinking {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
   .thoughts__col .thought {
     gap: 4px;
-    padding: 5px 8px 6px;
+    padding: 5px 8px;
     font-size: 13px;
+  }
+
+  .thoughts__col .thought--said {
+    padding-bottom: 17px;
+  }
+
+  .thought__bubble {
+    padding: 6px 8px 7px;
   }
 
   .thoughts__col .thought:nth-last-child(2) {
