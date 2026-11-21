@@ -14,8 +14,11 @@ import {
   isAxe,
   isBow,
   isBuildBlock,
+  isLavaBucket,
   isPearl,
+  isShield,
   isSword,
+  isWaterBucket,
 } from "./items";
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
@@ -26,14 +29,20 @@ import {
   isToolName,
   kitToolDefs,
   kitToolNames,
+  LAVA_MAX_DISTANCE,
+  LAVA_MIN_DISTANCE,
   parseToolArgs,
   PEARL_COOLDOWN_MS,
   PEARL_MIN_HEALTH,
   refusalText,
   shootRefusal,
+  TOWER_HEIGHT,
+  WATER_BETWEEN_MIN_DISTANCE,
+  type BuildShape,
   type ParsedToolArgs,
   type PearlTarget,
   type ToolName,
+  type WaterPlace,
 } from "./tools";
 import type { DecisionReport, Fighter, FighterOptions } from "./types";
 import { countedAbsorption, storeAttributes } from "./vitals";
@@ -112,9 +121,34 @@ const FLOOR_TOLERANCE = 0.1;
 const BUILD_MAX_AIRBORNE = 1.3;
 
 const AIR_BLOCKS = new Set(["air", "cave_air", "void_air"]);
+/**
+ * Altura máxima de los pies sobre el piso: la tapa invisible está un bloque sobre los muros
+ * y el jugador mide 1.8, así que más arriba no cabe.
+ */
+const MAX_FEET_HEIGHT = ARENA.wallHeight - 2;
+/** Cuánto se espera a que el salto suba lo suficiente, o a volver a pisar, al levantar una torre. */
+const TOWER_STEP_TIMEOUT_MS = 900;
+/** Alcance para vaciar un cubo (el servidor no deja más de ~5 bloques desde los ojos). */
+const POUR_REACH = 4.6;
+/** Cuánto se espera a que el servidor vacíe el cubo antes de dar el intento por fallido. */
+const POUR_CONFIRM_MS = 400;
+/** Distancia (bloques) hacia el rival en que cae el agua "between". */
+const WATER_BETWEEN_STEP = 2;
+/** Slot de la mano secundaria en la ventana de inventario del jugador. */
+const OFFHAND_SLOT = 45;
 
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Espera a que `done()` sea verdad (revisando cada 50 ms) o a que pase `timeoutMs`. */
+async function waitUntil(done: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (done()) return true;
+    await delay(50);
+  }
+  return done();
 }
 
 /** Segundos que faltan para `readyAt`, con un decimal y nunca 0 (para los textos de recarga). */
@@ -282,6 +316,10 @@ class MineflayerFighter implements Fighter {
   /** Número de la última cadena lanzada: solo ella suelta `buildBusy` al terminar. */
   private buildChain = 0;
   private buildReadyAt = 0;
+  /** Qué levanta "build" en curso. */
+  private buildShape: BuildShape = "wall";
+  /** Dónde va el agua del "water" en curso. */
+  private waterPlace: WaterPlace = "between";
 
   constructor(private readonly opts: FighterOptions) {
     const kit = opts.kit;
@@ -813,7 +851,7 @@ class MineflayerFighter implements Fighter {
         health: typeof bot.health === "number" && Number.isFinite(bot.health) ? bot.health : 0,
         food: typeof bot.food === "number" && Number.isFinite(bot.food) ? bot.food : 0,
         heldItem: held ? held.name : null,
-        inventory: bot.inventory.items().map((item) => ({ name: item.name, count: item.count })),
+        inventory: this.inventoryWithOffhand(bot),
         absorption: readAbsorption(bot.entity),
       },
       opponent: opponent ? { position: opponent.position, health: readEntityHealth(opponent) } : null,
@@ -896,9 +934,26 @@ class MineflayerFighter implements Fighter {
         break;
       }
       case "build": {
-        const refusal = this.buildRefusal(bot, opponent, now);
+        const refusal = args.shape === "tower" ? this.towerRefusal(bot, now) : this.buildRefusal(bot, opponent, now);
         if (refusal) return refusalText(refusal, this.mode);
-        result = "preparando los bloques para el muro";
+        result = args.shape === "tower" ? "preparando los bloques para la torre" : "preparando los bloques para el muro";
+        break;
+      }
+      case "shield": {
+        if (!this.hasShield(bot)) return refusalText("no tienes escudo", this.mode);
+        result = opponent ? "levantando el escudo hacia el rival" : "levantando el escudo (rival no visible)";
+        break;
+      }
+      case "water": {
+        const refusal = this.waterRefusal(bot, opponent, args.where);
+        if (refusal) return refusalText(refusal, this.mode);
+        result = args.where === "feet" ? "preparando el agua bajo tus pies" : "preparando el agua entre tú y el rival";
+        break;
+      }
+      case "lava": {
+        const refusal = this.lavaRefusal(bot, opponent);
+        if (refusal) return refusalText(refusal, this.mode);
+        result = "preparando la lava a los pies del rival";
         break;
       }
       case "wait":
@@ -915,6 +970,8 @@ class MineflayerFighter implements Fighter {
     this.lastRetreatPlanAt = 0;
     this.oneShotStartedAt = now;
     this.pearlTarget = args.target;
+    this.buildShape = args.shape;
+    this.waterPlace = args.where;
     this.pearlAimedAt = 0;
     this.pearlThrownAt = 0;
     this.lastResult = result;
@@ -953,6 +1010,52 @@ class MineflayerFighter implements Fighter {
       return "no puedes construir desde arriba de un bloque: baja al piso de la arena";
     }
     return null;
+  }
+
+  /** Por qué no se puede levantar una torre ahora, o null si se puede. */
+  private towerRefusal(bot: Bot, now: number): string | null {
+    const blocks = this.countItems(bot, isBuildBlock);
+    if (blocks === 0) return "no te quedan bloques";
+    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
+    if (!bot.entity.onGround) return "no puedes levantar una torre en el aire: espera a pisar";
+    if (bot.entity.position.y - FLOOR_Y + 1 > MAX_FEET_HEIGHT) return "ya estás tan alto como deja el techo de la arena";
+    return null;
+  }
+
+  /** Por qué no se puede vaciar el agua ahí, o null si se puede. */
+  private waterRefusal(bot: Bot, opponent: Entity | null, where: WaterPlace): string | null {
+    if (this.countItems(bot, isWaterBucket) === 0) return "no te quedan cubos de agua";
+    if (where === "feet") return null;
+    if (!opponent) return "no ves al rival: no hay hacia dónde vaciar el agua";
+    const dist = round1(distance3(bot.entity.position, opponent.position));
+    if (dist < WATER_BETWEEN_MIN_DISTANCE) {
+      return `el rival está a ${dist} bloques: muy cerca para poner agua entre los dos (usa where "feet" o aléjate)`;
+    }
+    return null;
+  }
+
+  /** Por qué no se puede vaciar la lava ahora, o null si se puede. */
+  private lavaRefusal(bot: Bot, opponent: Entity | null): string | null {
+    if (this.countItems(bot, isLavaBucket) === 0) return "no te quedan cubos de lava";
+    if (!opponent) return "no ves al rival: no hay dónde vaciar la lava";
+    const dist = round1(distance3(bot.entity.position, opponent.position));
+    if (dist < LAVA_MIN_DISTANCE) return `el rival está a ${dist} bloques: tan cerca te quemarías tú también`;
+    if (dist > LAVA_MAX_DISTANCE) return `el rival está a ${dist} bloques: fuera de tu alcance (máximo ${LAVA_MAX_DISTANCE})`;
+    return null;
+  }
+
+  /** Inventario para la observación: items() no trae la mano secundaria, donde va el escudo. */
+  private inventoryWithOffhand(bot: Bot): { name: string; count: number }[] {
+    const items = bot.inventory.items().map((item) => ({ name: item.name, count: item.count }));
+    const offhand = bot.inventory.slots[OFFHAND_SLOT];
+    if (offhand) items.push({ name: offhand.name, count: offhand.count });
+    return items;
+  }
+
+  /** ¿Tiene un escudo, en la mano secundaria o en el inventario? */
+  private hasShield(bot: Bot): boolean {
+    if (bot.inventory.slots[OFFHAND_SLOT]?.name === "shield") return true;
+    return bot.inventory.items().some((item) => isShield(item.name));
   }
 
   /** ¿Está parado sobre el piso de la arena (no en el aire ni encima de un bloque)? */
@@ -1044,7 +1147,15 @@ class MineflayerFighter implements Fighter {
         this.tickPearl(bot, opponent, now);
         break;
       case "build":
-        this.tickBuild(bot, opponent, now);
+        if (this.buildShape === "tower") this.tickTower(bot, now);
+        else this.tickBuild(bot, opponent, now);
+        break;
+      case "shield":
+        this.tickShield(bot, opponent);
+        break;
+      case "water":
+      case "lava":
+        this.tickPour(bot, opponent, this.mode, now);
         break;
       case "wait":
         this.clearGoal(bot);
@@ -1367,6 +1478,230 @@ class MineflayerFighter implements Fighter {
         // (resetBody ya la dio por cortada) no debe liberar a la que corre ahora.
         if (chain === this.buildChain) this.buildBusy = false;
       });
+  }
+
+  /**
+   * Torre, de un solo uso: salta y pone un bloque bajo los pies, TOWER_HEIGHT veces (o
+   * menos si el techo no deja). Corre en la misma cadena asíncrona que el muro.
+   */
+  private tickTower(bot: Bot, now: number): void {
+    if (this.buildBusy) return;
+    const held = this.ensureHeld(bot, isBuildBlock);
+    if (held === "missing") {
+      this.enterWait(bot, "no te quedan bloques");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    const timedOut = now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS;
+    if (held === "pending" || !bot.entity.onGround) {
+      if (timedOut) this.enterWait(bot, held === "pending" ? "no pudiste equipar los bloques" : "no pudiste construir: no estás pisando nada");
+      return;
+    }
+
+    const height = Math.round(bot.entity.position.y - FLOOR_Y);
+    const steps = Math.min(TOWER_HEIGHT, MAX_FEET_HEIGHT - height);
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
+    this.lastResult = "subiendo la torre";
+    this.raiseTower(bot, steps, generation)
+      .then((placed) => {
+        if (!this.buildActive(generation)) return;
+        const up = round1(bot.entity.position.y - FLOOR_Y);
+        const left = this.countItems(bot, isBuildBlock);
+        this.enterWait(
+          bot,
+          placed > 0
+            ? `torre de ${placed} bloques: estás a ${up} bloques del piso; te quedan ${left} bloques`
+            : "no pudiste subir: no se colocó ningún bloque",
+        );
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al levantar la torre: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar la torre");
+      })
+      .finally(() => {
+        bot.setControlState("jump", false);
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
+  }
+
+  /** Salta y pone un bloque bajo los pies `steps` veces; devuelve cuántos quedaron puestos. */
+  private async raiseTower(bot: Bot, steps: number, generation: number): Promise<number> {
+    const up = this.vec(bot, 0, 1, 0);
+    let placed = 0;
+    for (let i = 0; i < steps; i += 1) {
+      if (!this.buildActive(generation)) break;
+      const held = bot.heldItem;
+      if (!held || !isBuildBlock(held.name)) break;
+      const feet = bot.entity.position;
+      const support = bot.blockAt(this.vec(bot, Math.floor(feet.x), Math.floor(feet.y) - 1, Math.floor(feet.z)));
+      if (!support || support.boundingBox !== "block") break;
+      try {
+        await bot.lookAt(support.position.offset(0.5, 1, 0.5), true);
+      } catch {
+        break;
+      }
+      const startY = bot.entity.position.y;
+      bot.setControlState("jump", true);
+      const rose = await waitUntil(() => bot.entity.position.y >= startY + 1.05, TOWER_STEP_TIMEOUT_MS);
+      bot.setControlState("jump", false);
+      if (!rose || !this.buildActive(generation)) break;
+      const placing = bot.placeBlock(support, up).catch(() => undefined);
+      await Promise.race([placing, delay(BUILD_PLACE_TIMEOUT_MS)]);
+      await waitUntil(() => bot.entity.onGround, TOWER_STEP_TIMEOUT_MS);
+      // Si el bloque no quedó, el salto vuelve a caer a la misma altura.
+      if (bot.entity.position.y < startY + 0.9) break;
+      placed += 1;
+    }
+    return placed;
+  }
+
+  /**
+   * Escudo: en la mano secundaria (si está en el inventario, se pasa ahí), levantado y
+   * mirando al rival hasta la próxima decisión. leaveMode lo baja.
+   */
+  private tickShield(bot: Bot, opponent: Entity | null): void {
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (opponent) this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
+    if (bot.inventory.slots[OFFHAND_SLOT]?.name !== "shield") {
+      const shield = bot.inventory.items().find((item) => isShield(item.name));
+      if (!shield) {
+        this.enterWait(bot, "no tienes escudo");
+        return;
+      }
+      if (!this.equipBusy) {
+        this.equipBusy = true;
+        bot
+          .equip(shield, "off-hand")
+          .catch((err: unknown) => this.log("warn", `No se pudo pasar el escudo a la mano secundaria: ${errorText(err)}`))
+          .finally(() => {
+            this.equipBusy = false;
+          });
+      }
+      return;
+    }
+    if (!this.using) {
+      bot.activateItem(true);
+      this.using = true;
+      this.useStartedAt = Date.now();
+    }
+    this.lastResult = opponent ? "escudo levantado hacia el rival" : "escudo levantado (rival no visible)";
+  }
+
+  /**
+   * Cubo de agua o de lava, de un solo uso: equipar, mirar el bloque donde va el líquido
+   * y usar el cubo. El servidor pone el líquido donde apunta la mirada.
+   */
+  private tickPour(bot: Bot, opponent: Entity | null, kind: "water" | "lava", now: number): void {
+    if (this.buildBusy) return;
+    const match = kind === "water" ? isWaterBucket : isLavaBucket;
+    const name = kind === "water" ? "agua" : "lava";
+    const held = this.ensureHeld(bot, match);
+    if (held === "missing") {
+      this.enterWait(bot, `no te quedan cubos de ${name}`);
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, `no pudiste sacar el cubo de ${name}`);
+      return;
+    }
+    const target = this.pourTarget(bot, opponent, kind);
+    if (typeof target === "string") {
+      this.enterWait(bot, target);
+      return;
+    }
+
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    this.lastResult = `vaciando el cubo de ${name}`;
+    this.pour(bot, target, match, generation)
+      .then((done) => {
+        if (!this.buildActive(generation)) return;
+        if (!done) {
+          this.enterWait(bot, `no se pudo vaciar el cubo de ${name} (no había un bloque al alcance donde apuntar)`);
+          return;
+        }
+        const left = this.countItems(bot, match);
+        const rest = left > 0 ? ` Te quedan ${left} cubos de ${name}.` : ` No te quedan cubos de ${name}.`;
+        if (kind === "lava") {
+          const dist = opponent ? round1(distance3(bot.entity.position, opponent.position)) : null;
+          this.enterWait(
+            bot,
+            `vaciaste la lava a los pies del rival${dist !== null ? ` (a ${dist} bloques)` : ""}; se extiende unos 3 bloques: no te acerques.${rest}`,
+          );
+        } else {
+          this.enterWait(
+            bot,
+            this.waterPlace === "feet"
+              ? `vaciaste el agua bajo tus pies: no recibes daño de caída y no te quemas mientras estés en ella.${rest}`
+              : `vaciaste el agua entre tú y el rival: corre por el piso y lo empuja.${rest}`,
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al vaciar el cubo de ${name}: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, `no pudiste vaciar el cubo de ${name}`);
+      })
+      .finally(() => {
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
+  }
+
+  /**
+   * Punto (cara de arriba de un bloque sólido) donde apuntar el cubo, o el motivo por el
+   * que no hay dónde. Agua "feet": el primer bloque bajo los pies (también cayendo). Agua
+   * "between": el piso a WATER_BETWEEN_STEP bloques hacia el rival. Lava: lo que pisa el rival.
+   */
+  private pourTarget(bot: Bot, opponent: Entity | null, kind: "water" | "lava"): Vec3 | string {
+    const self = bot.entity.position;
+    let column: Vec3Like;
+    let fromY: number;
+    if (kind === "water" && this.waterPlace === "feet") {
+      column = self;
+      fromY = Math.floor(self.y) - 1;
+    } else {
+      if (!opponent) return "no ves al rival: no hay hacia dónde vaciar el cubo";
+      if (kind === "lava") {
+        column = opponent.position;
+        fromY = Math.floor(opponent.position.y) - 1;
+      } else {
+        const dx = opponent.position.x - self.x;
+        const dz = opponent.position.z - self.z;
+        const len = Math.hypot(dx, dz) || 1;
+        column = { x: self.x + (dx / len) * WATER_BETWEEN_STEP, y: self.y, z: self.z + (dz / len) * WATER_BETWEEN_STEP };
+        fromY = FLOOR_Y - 1;
+      }
+    }
+    // Primer bloque sólido de la columna hacia abajo (nunca bajo el piso de la arena).
+    for (let y = fromY; y >= FLOOR_Y - 1; y -= 1) {
+      const block = bot.blockAt(this.vec(bot, Math.floor(column.x), y, Math.floor(column.z)));
+      if (!block || block.boundingBox !== "block") continue;
+      const above = bot.blockAt(block.position.offset(0, 1, 0));
+      if (above && !AIR_BLOCKS.has(above.name) && above.name !== "water" && above.name !== "lava") {
+        return "no hay espacio libre donde vaciar el cubo (hay un bloque encima)";
+      }
+      const point = block.position.offset(0.5, 1, 0.5);
+      const eye = self.offset(0, EYE_HEIGHT, 0);
+      if (distance3(eye, point) > POUR_REACH) return "ese lugar queda fuera de tu alcance para vaciar el cubo";
+      return point;
+    }
+    return "no hay piso donde vaciar el cubo";
+  }
+
+  /** Mira el punto y usa el cubo; true si el servidor lo vació (el cubo quedó vacío en la mano). */
+  private async pour(bot: Bot, point: Vec3, match: (name: string) => boolean, generation: number): Promise<boolean> {
+    const before = this.countItems(bot, match);
+    await bot.lookAt(point, true);
+    if (!this.buildActive(generation)) return false;
+    bot.activateItem();
+    return waitUntil(() => this.countItems(bot, match) < before, POUR_CONFIRM_MS);
   }
 
   /**

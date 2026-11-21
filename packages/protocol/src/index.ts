@@ -292,6 +292,25 @@ const ARMOR_MATERIALS = {
   netherite: "netherita",
 } as const;
 const ARMOR_PIECE_LABELS = ["Casco", "Peto", "Grebas", "Botas"] as const;
+/** Colores de la lana (bloques para construir): id de Minecraft -> adjetivo en español. */
+const WOOL_COLORS = {
+  white: "blanca",
+  orange: "naranja",
+  magenta: "magenta",
+  light_blue: "celeste",
+  yellow: "amarilla",
+  lime: "verde lima",
+  pink: "rosada",
+  gray: "gris",
+  light_gray: "gris claro",
+  cyan: "cian",
+  purple: "morada",
+  blue: "azul",
+  brown: "café",
+  green: "verde",
+  red: "roja",
+  black: "negra",
+} as const;
 
 function buildCatalog(): Record<string, CatalogEntry> {
   const catalog: Record<string, CatalogEntry> = {};
@@ -309,6 +328,9 @@ function buildCatalog(): Record<string, CatalogEntry> {
     arrow: { label: "Flechas", stack: 64 },
     ender_pearl: { label: "Perla de ender", stack: 16 },
     oak_planks: { label: "Tablones de roble", stack: 64 },
+    water_bucket: { label: "Cubo de agua", stack: 1 },
+    lava_bucket: { label: "Cubo de lava", stack: 1 },
+    shield: { label: "Escudo", stack: 1 },
     cooked_beef: { label: "Filete", stack: 64 },
     cooked_porkchop: { label: "Chuleta cocinada", stack: 64 },
     cooked_chicken: { label: "Pollo asado", stack: 64 },
@@ -319,6 +341,9 @@ function buildCatalog(): Record<string, CatalogEntry> {
     golden_apple: { label: "Manzana dorada", stack: 64 },
     enchanted_golden_apple: { label: "Manzana dorada encantada", stack: 64 },
   } satisfies Record<string, CatalogEntry>);
+  for (const [id, name] of Object.entries(WOOL_COLORS)) {
+    catalog[`${id}_wool`] = { label: `Lana ${name}`, stack: 64 };
+  }
   return catalog;
 }
 
@@ -374,7 +399,7 @@ function preferredHotbar(id: string): number {
   if (/_(sword|axe)$/.test(id)) return 0;
   if (id === "bow") return 1;
   if (id === "arrow") return 8;
-  if (id === "ender_pearl" || id === "oak_planks") return 3;
+  if (id === "ender_pearl" || id === "oak_planks" || id.endsWith("_wool") || id.endsWith("_bucket")) return 3;
   return 2;
 }
 
@@ -434,6 +459,13 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
       }
       used.add(armorSlot);
       items.push(enchantments.length ? { slot: armorSlot, item: id, count: 1, label: entry.label, enchantments } : { slot: armorSlot, item: id, count: 1, label: entry.label });
+      continue;
+    }
+
+    // El escudo va en la mano secundaria: así se levanta sin soltar el arma.
+    if (id === "shield" && !used.has("weapon.offhand")) {
+      used.add("weapon.offhand");
+      items.push({ slot: "weapon.offhand", item: id, count: 1, label: entry.label });
       continue;
     }
 

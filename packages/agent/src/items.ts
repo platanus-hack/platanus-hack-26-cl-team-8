@@ -9,10 +9,13 @@ export const isBow = (name: string): boolean => name === "bow";
 export const isArrow = (name: string): boolean => name === "arrow" || name.endsWith("_arrow");
 export const isPearl = (name: string): boolean => name === "ender_pearl";
 /**
- * Bloques con los que se levanta el muro. Son tablones y no piedra a propósito: el
- * pathfinder usa tierra y piedra como andamio por defecto y se los gastaría caminando.
+ * Bloques con los que se levanta el muro o la torre: tablones y lana (no piedra ni tierra,
+ * que el pathfinder usaría de andamio si se le permitiera).
  */
-export const isBuildBlock = (name: string): boolean => name.endsWith("_planks");
+export const isBuildBlock = (name: string): boolean => name.endsWith("_planks") || name.endsWith("_wool");
+export const isShield = (name: string): boolean => name === "shield";
+export const isWaterBucket = (name: string): boolean => name === "water_bucket";
+export const isLavaBucket = (name: string): boolean => name === "lava_bucket";
 
 /** Comidas conocidas, por si el registro de mineflayer no trae la tabla de comidas. */
 export const FOOD_NAMES: ReadonlySet<string> = new Set([

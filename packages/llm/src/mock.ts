@@ -6,7 +6,7 @@ import { extractJsonObject, isRecord } from "./util";
  *
  * CONVENCIÓN con @phack/agent
  * - Tools que busca POR NOMBRE en la lista recibida: "approach", "attack", "retreat",
- *   "shoot", "eat", "pearl", "build", "wait" (las mismas de TOOL_NAMES del agente). Solo
+ *   "shoot", "eat", "pearl", "build", "shield", "water", "lava", "wait" (las mismas de TOOL_NAMES del agente). Solo
  *   usa las que estén presentes; si la preferida falta, cae a la siguiente de su lista.
  *   Si no hay ninguna conocida, no llama tools.
  * - Observación: lee el ÚLTIMO mensaje con role "user" y espera un JSON (el mensaje
@@ -51,7 +51,19 @@ import { extractJsonObject, isRecord } from "./util";
  *   existe porque el agente recorta el historial y la cuenta de mensajes se estanca.
  */
 
-export const MOCK_TOOL_NAMES = ["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "wait"] as const;
+export const MOCK_TOOL_NAMES = [
+  "approach",
+  "attack",
+  "retreat",
+  "shoot",
+  "eat",
+  "pearl",
+  "build",
+  "shield",
+  "water",
+  "lava",
+  "wait",
+] as const;
 export type MockToolName = (typeof MOCK_TOOL_NAMES)[number];
 
 /** Distancia (bloques) a la que un golpe cuerpo a cuerpo alcanza. */
@@ -286,6 +298,9 @@ const LINES: Record<MockToolName, string[]> = {
   eat: ["Pausa para comer.", "Recargando energía."],
   pearl: ["¡Sorpresa!", "Nos vemos al otro lado."],
   build: ["Un muro no le hace mal a nadie.", "Construyendo."],
+  shield: ["Me cubro.", "Escudo arriba."],
+  water: ["Un poco de agua.", "Cuidado con la corriente."],
+  lava: ["Cuidado con la lava.", "No te quemes."],
   wait: ["Te espero.", "Tu turno."],
 };
 

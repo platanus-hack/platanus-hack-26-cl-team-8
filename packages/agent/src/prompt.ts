@@ -1,12 +1,28 @@
 import { ARENA, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
-import { ALWAYS_EDIBLE, attackCooldownMs, isArrow, isAxe, isBow, isBuildBlock, isFoodName, isPearl, isSword } from "./items";
+import {
+  ALWAYS_EDIBLE,
+  attackCooldownMs,
+  isArrow,
+  isAxe,
+  isBow,
+  isBuildBlock,
+  isFoodName,
+  isLavaBucket,
+  isPearl,
+  isShield,
+  isSword,
+  isWaterBucket,
+} from "./items";
 import {
   BUILD_COOLDOWN_MS,
   BUILD_MIN_DISTANCE,
   kitToolNames,
+  LAVA_MAX_DISTANCE,
+  LAVA_MIN_DISTANCE,
   PEARL_COOLDOWN_MS,
   PEARL_MIN_HEALTH,
+  TOWER_HEIGHT,
   WALL_BLOCKS,
   type ToolName,
 } from "./tools";
@@ -55,7 +71,13 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "pearl":
       return '- pearl: lanzar una perla de ender y aparecer donde cae; con target "rival" caes junto al rival y con target "away" lejos de él.';
     case "build":
-      return "- build: levantar un muro de bloques entre tú y el rival; te deja quieto 1 a 2 segundos.";
+      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques. Te deja quieto 1 a 3 segundos.';
+    case "shield":
+      return "- shield: levantar el escudo hacia el rival para bloquear golpes y flechas de frente.";
+    case "water":
+      return '- water: vaciar un cubo de agua; con where "between" entre tú y el rival (lo empuja y lo frena), con where "feet" bajo tus pies (anula el daño de caída y apaga el fuego).';
+    case "lava":
+      return "- lava: vaciar un cubo de lava a los pies del rival para quemarlo y obligarlo a alejarse.";
     case "wait":
       return "- wait: quedarte quieto.";
   }
@@ -105,7 +127,23 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
     case "build": {
       const blocks = find(isBuildBlock);
       if (!blocks) return null;
-      return `- build: ${kitItemTitle(blocks)}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo. Solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Entre un muro y otro hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+      const total = kit.items.filter((i) => isBuildBlock(i.item)).reduce((sum, i) => sum + i.count, 0);
+      const amount = total > blocks.count ? `${blocks.label} (${total} en total)` : kitItemTitle(blocks);
+      return `- build: ${amount}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo; solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Una torre gasta ${TOWER_HEIGHT} y te deja ${TOWER_HEIGHT} bloques más arriba: cuerpo a cuerpo el rival no te alcanza, pero con arco sí, y bajar te quita vida por la caída salvo que uses agua bajo tus pies (si tienes). Entre una construcción y otra hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+    }
+    case "shield": {
+      if (!find(isShield)) return null;
+      return "- shield: tu Escudo va en la mano secundaria, así que no sueltas el arma. Levantado frena todo el daño que llega de frente (no por la espalda); mientras lo sostienes no atacas ni caminas. Un golpe de hacha puede bajarlo unos segundos.";
+    }
+    case "water": {
+      const buckets = kit.items.filter((i) => isWaterBucket(i.item)).length;
+      if (buckets === 0) return null;
+      return `- water: tienes ${buckets === 1 ? "1 Cubo de agua" : `${buckets} Cubos de agua`}; cada uno se vacía una sola vez. El agua corre unos 7 bloques por el piso y empuja a quien esté en ella.`;
+    }
+    case "lava": {
+      const buckets = kit.items.filter((i) => isLavaBucket(i.item)).length;
+      if (buckets === 0) return null;
+      return `- lava: tienes ${buckets === 1 ? "1 Cubo de lava" : `${buckets} Cubos de lava`}; cada uno se vacía una sola vez y solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. La lava quema a cualquiera que la pise, también a ti, y se extiende unos 3 bloques.`;
     }
     default:
       return null;
@@ -126,7 +164,7 @@ function kitSection(kit: Kit): string[] {
     lines.push(`- Efectos permanentes: ${effects.join(", ")}.`);
   }
   lines.push(
-    '- Lo que gastas (flechas, comida, perlas, bloques) no se repone; el campo "inventory" de la observación dice cuánto te queda.',
+    '- Lo que gastas (flechas, comida, perlas, bloques, cubos) no se repone; el campo "inventory" de la observación dice cuánto te queda.',
   );
   for (const tool of kitToolNames(kit)) {
     const line = mechanicsLine(tool, kit);

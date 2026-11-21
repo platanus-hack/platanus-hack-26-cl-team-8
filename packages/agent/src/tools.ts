@@ -1,9 +1,21 @@
 import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
 import { cleanMessage } from "./comms";
-import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isPearl } from "./items";
+import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isLavaBucket, isPearl, isShield, isWaterBucket } from "./items";
 
-export const TOOL_NAMES = ["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "wait"] as const;
+export const TOOL_NAMES = [
+  "approach",
+  "attack",
+  "retreat",
+  "shoot",
+  "eat",
+  "pearl",
+  "build",
+  "shield",
+  "water",
+  "lava",
+  "wait",
+] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
 export function isToolName(name: string): name is ToolName {
@@ -13,6 +25,22 @@ export function isToolName(name: string): name is ToolName {
 /** Dónde cae la perla: junto al rival o lejos de él. */
 export const PEARL_TARGETS = ["rival", "away"] as const;
 export type PearlTarget = (typeof PEARL_TARGETS)[number];
+
+/** Qué levanta "build": un muro hacia el rival o una torre bajo los propios pies. */
+export const BUILD_SHAPES = ["wall", "tower"] as const;
+export type BuildShape = (typeof BUILD_SHAPES)[number];
+
+/** Dónde se vacía el cubo de agua: entre tú y el rival, o bajo tus pies. */
+export const WATER_PLACES = ["between", "feet"] as const;
+export type WaterPlace = (typeof WATER_PLACES)[number];
+
+/** Bloques que sube una torre (el techo de la arena no deja más). */
+export const TOWER_HEIGHT = 3;
+/** Distancias al rival entre las que se puede vaciar la lava a sus pies (alcance del brazo y margen para no quemarse). */
+export const LAVA_MIN_DISTANCE = 3;
+export const LAVA_MAX_DISTANCE = 5;
+/** Con el rival más cerca que esto no cabe agua "between": caería encima de uno mismo. */
+export const WATER_BETWEEN_MIN_DISTANCE = 2.5;
 
 /**
  * Recarga propia de la perla (la de Minecraft es de 1 segundo). Evita que el LLM gaste
@@ -76,6 +104,9 @@ export function kitToolNames(kit: Kit): ToolName[] {
   if (has(isFoodName)) names.push("eat");
   if (has(isPearl)) names.push("pearl");
   if (has(isBuildBlock)) names.push("build");
+  if (has(isShield)) names.push("shield");
+  if (has(isWaterBucket)) names.push("water");
+  if (has(isLavaBucket)) names.push("lava");
   names.push("wait");
   return names;
 }
@@ -141,9 +172,46 @@ export const TOOL_DEFS: ToolDef[] = [
       required: ["target"],
     },
   },
+  {
+    name: "build",
+    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. Tarda 1 a 3 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        shape: {
+          type: "string",
+          enum: [...BUILD_SHAPES],
+          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir.",
+        },
+      },
+      required: [],
+    },
+  },
   simpleTool(
-    "build",
-    `Coloca bloques: levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás). Gasta hasta ${WALL_BLOCKS} bloques. Tarda 1 a 2 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos. Solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena.`,
+    "shield",
+    "Levanta el escudo (en tu mano secundaria) mirando al rival: bloquea por completo los golpes y las flechas que vienen de frente. Mientras lo tienes levantado te quedas quieto y no atacas. Sigue levantado hasta tu próxima decisión. Un hacha puede desactivarlo unos segundos.",
+  ),
+  {
+    name: "water",
+    description:
+      "Vacía un cubo de agua. where='between' (por defecto): a unos 2 bloques hacia el rival; el agua corre por el piso varios bloques, lo empuja y lo frena. where='feet': en el piso bajo tus pies (sirve aunque estés cayendo): anula el daño de caída y apaga el fuego si te estás quemando. Cada cubo sirve una sola vez.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        where: {
+          type: "string",
+          enum: [...WATER_PLACES],
+          description: "'between' = entre tú y el rival; 'feet' = bajo tus pies.",
+        },
+      },
+      required: [],
+    },
+  },
+  simpleTool(
+    "lava",
+    `Vacía un cubo de lava a los pies del rival: se prende fuego, recibe daño mientras esté en ella o quemándose y tiene que alejarse. Solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. La lava se extiende unos 3 bloques alrededor: no camines hacia ella. Cada cubo sirve una sola vez.`,
   ),
   simpleTool("wait", "Quédate quieto mirando al rival."),
 ];
@@ -174,6 +242,8 @@ export type ParsedToolArgs = {
   reason: string | null;
   seconds: number | null;
   target: PearlTarget;
+  shape: BuildShape;
+  where: WaterPlace;
   /** Modo "chat": lo que el agente le dice al rival, con limpieza técnica (cleanMessage); null si no dijo nada. */
   say: string | null;
 };
@@ -190,7 +260,14 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   // Solo "away" cambia el destino; cualquier otra cosa (o nada) es el rival.
   const rawTarget = source["target"];
   const target: PearlTarget = typeof rawTarget === "string" && rawTarget.trim().toLowerCase() === "away" ? "away" : "rival";
+  const word = (key: string): string => {
+    const raw = source[key];
+    return typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  };
+  // Como con la perla: solo el valor alternativo cambia algo; lo demás es el por defecto.
+  const shape: BuildShape = word("shape") === "tower" ? "tower" : "wall";
+  const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
   // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
   const say = cleanMessage(source["say"]);
-  return { reason, seconds, target, say };
+  return { reason, seconds, target, shape, where, say };
 }
