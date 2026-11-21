@@ -214,7 +214,7 @@ describe("modo chat: argumento say", () => {
 describe("escudo, agua y lava", () => {
   it("se ofrecen solo si el kit trae el ítem", () => {
     const { kit } = buildCustomKit({
-      items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "red_wool", count: 128 }],
+      items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "cobblestone", count: 128 }],
     });
     expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "move", "build", "dig", "shield", "water", "lava", "wait"]);
     for (const k of KIT_LIST) {

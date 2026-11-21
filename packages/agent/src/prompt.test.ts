@@ -293,7 +293,7 @@ describe("buildSystemPrompt", () => {
         { item: "diamond_chestplate" },
         { item: "diamond_leggings" },
         { item: "diamond_boots" },
-        { item: "red_wool", count: 128 },
+        { item: "cobblestone", count: 128 },
         { item: "water_bucket" },
         { item: "lava_bucket" },
         { item: "shield" },
@@ -303,7 +303,7 @@ describe("buildSystemPrompt", () => {
     const tools = section(prompt, "HERRAMIENTAS").join("\n");
     for (const tool of ["build", "shield", "water", "lava"]) expect(tools).toContain(`- ${tool}:`);
     const mine = section(prompt, "TU KIT").join("\n");
-    expect(mine).toContain("Lana roja (128 en total)");
+    expect(mine).toContain("Roca (128 en total)");
     expect(mine).toContain("define blocks como una lista ordenada");
     expect(mine).toContain("- shield: tu Escudo va en la mano secundaria");
     expect(mine).toContain("- water: tienes 1 Cubo de agua");

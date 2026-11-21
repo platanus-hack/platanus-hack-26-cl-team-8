@@ -12,7 +12,6 @@ import {
   isLavaBucket,
   isPearl,
   isPickaxe,
-  isShears,
   isShield,
   isSword,
   isWaterBucket,
@@ -172,9 +171,9 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       return `- build: ${amount}; define blocks como una lista ordenada de celdas {x,y,z,material}. La geometría la decides tú: puedes combinar materiales, construir apoyos, escaleras, plataformas, pasillos o huecos para mirar. Cada bloque nuevo consume uno del material elegido. Tu cuerpo se acerca para colocarlos respetando alcance y línea de visión. No hay formas fijas ni recarga artificial; la colocación lleva tiempo físico y continúa entre decisiones. Otra herramienta pausa el plano y build sin blocks lo retoma; blocks nuevos lo reemplazan. Consulta construction para conocer progreso y obstáculos. No puedes poner bloques donde hay agentes, fuera de buildBounds o sobre una celda ocupada. Ordena primero los apoyos; si algo falla, corrige el plano o usa dig/move con position.`;
     }
     case "dig": {
-      const tools = kit.items.filter((i) => isPickaxe(i.item) || isShears(i.item) || isAxe(i.item));
+      const tools = kit.items.filter((i) => isPickaxe(i.item) || isAxe(i.item));
       const with_ = tools.length > 0 ? `Tus herramientas para romper: ${tools.map(kitItemTitle).join(", ")}.` : "No tienes herramientas: rompes a mano.";
-      return `- dig: ${with_} A mano la lana tarda ~1 s y los tablones ~3 s; la roca y la obsidiana necesitan pico (sin pico no se intentan: pasarían de ${DIG_MAX_SECONDS} s). Las tijeras rompen la lana al instante, el hacha la madera y el pico la piedra.`;
+      return `- dig: ${with_} A mano los tablones tardan ~3 s (el hacha los rompe rápido); la roca necesita pico (sin pico no se intenta: pasaría de ${DIG_MAX_SECONDS} s).`;
     }
     case "shield": {
       if (!find(isShield)) return null;

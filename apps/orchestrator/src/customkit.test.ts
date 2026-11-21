@@ -52,7 +52,7 @@ describe("buildCustomKit", () => {
     expect(new Set(kit.items.map((i) => i.slot)).size).toBe(kit.items.length);
   });
 
-  it("kit de supervivencia: escudo en la mano secundaria, lana en dos stacks y los dos cubos", () => {
+  it("kit de supervivencia: escudo en la mano secundaria, roca en dos stacks y los dos cubos", () => {
     // El inventario del prompt "Intenta aguantar la mayor cantidad de tiempo".
     const { kit, ignored } = buildCustomKit({
       items: [
@@ -60,7 +60,7 @@ describe("buildCustomKit", () => {
         { item: "diamond_chestplate" },
         { item: "diamond_leggings" },
         { item: "diamond_boots" },
-        { item: "red_wool", count: 128 },
+        { item: "cobblestone", count: 128 },
         { item: "water_bucket" },
         { item: "lava_bucket" },
         { item: "shield" },
@@ -70,8 +70,8 @@ describe("buildCustomKit", () => {
     const bySlot = Object.fromEntries(kit.items.map((i) => [i.slot, `${i.item}x${i.count}`]));
     expect(bySlot).toMatchObject({
       "armor.head": "diamond_helmetx1",
-      "hotbar.3": "red_woolx64",
-      "hotbar.4": "red_woolx64",
+      "hotbar.3": "cobblestonex64",
+      "hotbar.4": "cobblestonex64",
       "hotbar.5": "water_bucketx1",
       "hotbar.6": "lava_bucketx1",
       "weapon.offhand": "shieldx1",

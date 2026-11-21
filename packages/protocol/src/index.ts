@@ -295,26 +295,6 @@ const ARMOR_MATERIALS = {
   netherite: "netherita",
 } as const;
 const ARMOR_PIECE_LABELS = ["Casco", "Peto", "Grebas", "Botas"] as const;
-/** Colores de la lana (bloques para construir): id de Minecraft -> adjetivo en español. */
-const WOOL_COLORS = {
-  white: "blanca",
-  orange: "naranja",
-  magenta: "magenta",
-  light_blue: "celeste",
-  yellow: "amarilla",
-  lime: "verde lima",
-  pink: "rosada",
-  gray: "gris",
-  light_gray: "gris claro",
-  cyan: "cian",
-  purple: "morada",
-  blue: "azul",
-  brown: "café",
-  green: "verde",
-  red: "roja",
-  black: "negra",
-} as const;
-
 function buildCatalog(): Record<string, CatalogEntry> {
   const catalog: Record<string, CatalogEntry> = {};
   for (const [id, name] of Object.entries(TOOL_MATERIALS)) {
@@ -335,13 +315,10 @@ function buildCatalog(): Record<string, CatalogEntry> {
     water_bucket: { label: "Cubo de agua", stack: 1 },
     lava_bucket: { label: "Cubo de lava", stack: 1 },
     shield: { label: "Escudo", stack: 1 },
-    shears: { label: "Tijeras", stack: 1 },
     // Las pociones llevan además su tipo (CustomKitRequest.items[].potion).
     potion: { label: "Poción", stack: 1 },
     splash_potion: { label: "Poción arrojadiza", stack: 1 },
     cobblestone: { label: "Roca", stack: 64 },
-    dirt: { label: "Tierra", stack: 64 },
-    obsidian: { label: "Obsidiana", stack: 64 },
     cooked_beef: { label: "Filete", stack: 64 },
     cooked_porkchop: { label: "Chuleta cocinada", stack: 64 },
     cooked_chicken: { label: "Pollo asado", stack: 64 },
@@ -352,9 +329,6 @@ function buildCatalog(): Record<string, CatalogEntry> {
     golden_apple: { label: "Manzana dorada", stack: 64 },
     enchanted_golden_apple: { label: "Manzana dorada encantada", stack: 64 },
   } satisfies Record<string, CatalogEntry>);
-  for (const [id, name] of Object.entries(WOOL_COLORS)) {
-    catalog[`${id}_wool`] = { label: `Lana ${name}`, stack: 64 };
-  }
   return catalog;
 }
 
@@ -428,7 +402,7 @@ function preferredHotbar(id: string): number {
   if (/_(sword|axe)$/.test(id)) return 0;
   if (id === "bow") return 1;
   if (id === "arrow") return 8;
-  if (id.endsWith("_pickaxe") || id === "shears") return 7;
+  if (id.endsWith("_pickaxe")) return 7;
   // Comida en la 3; bloques, cubos y perlas desde la 4 (lo que no quepa, en la siguiente libre).
   const food = /^(cooked_|golden_|enchanted_golden_)|^(bread|baked_potato|apple)$/.test(id);
   return food ? 2 : 3;

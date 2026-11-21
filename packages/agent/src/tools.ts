@@ -291,7 +291,7 @@ export const TOOL_DEFS: ToolDef[] = [
           description: "Plano en coordenadas absolutas del mapa world. Primero apoyos y después lo que depende de ellos. Cada bloque consume uno de material.",
           items: {
             type: "object",
-            properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" }, material: { type: "string", description: "Id del material, por ejemplo oak_planks o red_wool." } },
+            properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" }, material: { type: "string", description: "Id del material, por ejemplo oak_planks o cobblestone." } },
             required: ["x", "y", "z", "material"], additionalProperties: false,
           },
         },
@@ -301,7 +301,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "dig",
-    description: `Rompe un bloque exacto con position, o elige bloques cercanos con target; nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (tijeras para lana, hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
+    description: `Rompe un bloque exacto con position, o elige bloques cercanos con target; nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
     parameters: {
       type: "object",
       properties: {
