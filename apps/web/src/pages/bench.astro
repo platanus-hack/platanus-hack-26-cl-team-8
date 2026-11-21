@@ -24,7 +24,7 @@ import "../styles/global.css";
         <h1 class="section__title">Benchmarks</h1>
         <p class="section__hint">
           Todo sale del historial de peleas: cada ronda guarda sus mediciones y el tablero las suma por modelo. Las
-          peleas detenidas o con error no cuentan. Configura escenario, rondas, reglas y juez en la página principal.
+          peleas detenidas o con error no cuentan. El escenario, las rondas y las reglas los fija un pre-ajuste (aquí abajo o en la página principal), que también se los explica a cada agente en su prompt.
         </p>
         <div class="bench__bar">
           <label class="field bench__filter">
@@ -70,7 +70,7 @@ import "../styles/global.css";
         <p class="bench__hint">
           Ordenado por puntos por ronda; si empatan, por porcentaje de victorias y después por partidas jugadas. Solo
           entran al ranking los modelos con las partidas mínimas; el resto va abajo como "pocos datos". Los puntos de cada
-          escenario están en la página principal; con "Todos los escenarios" se mezclan escalas distintas (el dilema da hasta
+          escenario los explica el prompt que pone su pre-ajuste; con "Todos los escenarios" se mezclan escalas distintas (el dilema da hasta
           5 por ronda), así que para comparar conviene filtrar. Latencia = lo que tarda el modelo en decidir (p50 y p95).
         </p>
         <div class="bench__scroll"><table class="bench__table" id="tbl-models"></table></div>

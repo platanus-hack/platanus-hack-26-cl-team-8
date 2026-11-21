@@ -1700,7 +1700,7 @@ describe("MatchManager: benchmarks", () => {
       price: () => ({ input: 0.000001, output: 0.000002 }),
     });
     await startRunning(t);
-    expect(t.fighters.red?.rules).toEqual(["no_bow", "no_first_strike"]);
+    // Las reglas ya no van al prompt de sistema (las escribe el pre-ajuste en el del jugador): solo se cuentan.
     t.ev("red").onDecision(decision(400, { inputTokens: 1000, outputTokens: 100 }, { text: "", toolCalls: [{ name: "volar", args: {} }] }));
     t.ev("red").onDecision(decision(800));
     t.ev("red").onMessage("Tranquilo, no te voy a atacar");

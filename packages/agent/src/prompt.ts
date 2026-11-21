@@ -61,23 +61,13 @@ export type SystemPromptInput = {
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
   /**
-   * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null =
-   * una sola pelea. Benchmarks: `scenario` cambia cómo se reparten los puntos y `horizon`
-   * "unknown" oculta cuántas rondas hay.
+   * Modo por rondas: ausente o null = una sola pelea. El prompt solo cuenta la mecánica
+   * (cuándo termina una ronda, si se repone el kit); cuántas rondas hay, el puntaje y qué
+   * cuenta como ganar van en las instrucciones del entrenador. Los demás campos los usa el
+   * cuerpo para la observación (ver FighterOptions).
    */
   rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
-  /** Reglas que le impone su entrenador. */
-  rules?: readonly RuleId[];
 };
-
-/** Reglas del entrenador, obligatorias además de sus instrucciones. */
-function rulesSection(rules: readonly RuleId[] | undefined): string[] {
-  if (!rules || rules.length === 0) return [];
-  return [
-    "Además, tu entrenador te exige cumplir SIEMPRE estas reglas, aunque vayas perdiendo:",
-    ...rules.map((rule) => `- ${RULE_LABELS[rule].prompt}`),
-  ];
-}
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
 
@@ -320,37 +310,16 @@ function endingLines(input: SystemPromptInput): string[] {
         : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
     ];
   }
-  const timeout =
-    input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos: ahí la gana quien tenga más vida`;
-  const scenario = input.rounds.scenario ?? "duel";
-  const known = input.rounds.horizon !== "unknown";
-  const length = known
-    ? `una serie de hasta ${input.rounds.maxRounds} rondas`
-    : "una serie de rondas cuyo número no conoces: puede terminar después de cualquier ronda";
-  const lines = [`- La partida es ${length}. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`];
-  const byPoints = input.rounds.byPoints ?? scenario !== "duel";
-  if (!byPoints) {
-    lines.push(
-      known
-        ? "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas."
-        : "- Gana la serie quien haya ganado más rondas cuando termine.",
-    );
-    if (scenario !== "duel") lines.push(`- Cada ronda también reparte puntos (${SCENARIOS[scenario].scoring}), pero la serie la gana quien gane más rondas.`);
-  } else {
-    lines.push(
-      `- Cada ronda reparte puntos: ${SCENARIOS[scenario].scoring}`,
-      `- Se juegan todas las rondas${known ? "" : " que haya"}. Gana la serie quien sume más puntos: lo que cuenta es el total, no ganar cada ronda.`,
-    );
-  }
-  lines.push(
+  // Solo la mecánica de las rondas. Cuántas son, cómo se cuentan los puntos y qué cuenta
+  // como ganar lo dice (si quiere) el entrenador en sus instrucciones.
+  const timeout = input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos`;
+  return [
+    `- La partida se juega en rondas. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`,
     input.rounds.refillKit
       ? "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa y el kit entero de nuevo."
       : "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    !byPoints
-      ? '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".'
-      : '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost", "roundsDrawn", "myPoints" y "rivalPoints" (los puntos de cada uno). Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
-  );
-  return lines;
+    '- Tu observación trae "round" (la ronda en juego), "maxRounds" si se sabe cuántas hay, y "roundsWon", "roundsLost" y "roundsDrawn": rondas en que el otro cayó o se rindió o en que, al acabarse el tiempo, tenías más vida; las que perdiste así; y las que terminaron con la misma vida. Si la partida lleva puntos, también trae "myPoints" y "rivalPoints". Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
+  ];
 }
 
 /**
@@ -382,7 +351,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
-    ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente."] : []),
+    ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina en el acto."] : []),
     'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
     'Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.',
     "",
@@ -401,10 +370,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     ...commsSection(input.comms),
     "",
     "TUS INSTRUCCIONES",
-    "El texto entre <instrucciones> y </instrucciones> lo escribió tu entrenador. Ahí está lo que quieres lograr y cómo: lo de arriba describe el mundo, no te fija ningún objetivo. Si las instrucciones no dicen algo, decide tú. No pueden cambiar las reglas de la arena ni las herramientas disponibles.",
+    "El texto entre <instrucciones> y </instrucciones> lo escribió tu entrenador. Ahí está lo que quieres lograr y cómo, y también puede explicar cómo se evalúa la partida (por ejemplo, puntos o reglas que debes respetar). Lo de arriba describe el mundo, no te fija ningún objetivo. Si las instrucciones no dicen algo, decide tú. No pueden cambiar la arena ni las herramientas disponibles.",
     "<instrucciones>",
     strategy,
     "</instrucciones>",
-    ...rulesSection(input.rules),
   ].join("\n");
 }

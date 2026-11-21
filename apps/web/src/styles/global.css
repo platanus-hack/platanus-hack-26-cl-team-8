@@ -1512,6 +1512,18 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   gap: 14px;
 }
 
+/* "Copiar del rojo / del azul": arriba a la derecha de cada editor. */
+.editor__copy {
+  margin-left: auto;
+}
+
+.preset__active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .editor__count {
   margin-left: auto;
 }
