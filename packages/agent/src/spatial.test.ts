@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineOfSight, scanWorld, packWorld, type SpatialSnapshot, type RawSpatialSnapshot } from "./spatial";
+import { faceInSight, lineOfSight, scanWorld, packWorld, type SpatialSnapshot, type RawSpatialSnapshot } from "./spatial";
 
 const bounds = { min: { x: -30, y: 64, z: -30 }, max: { x: 30, y: 71, z: 30 } };
 const air = { name: "air", solid: false };
@@ -71,5 +71,16 @@ describe("observación espacial por radio", () => {
     expect(lineOfSight(from, to, () => air)).toBe(true);
     expect(lineOfSight(from, to, (p) => p.x === 4 ? { name: "oak_planks", solid: true } : air)).toBe(false);
     expect(lineOfSight(from, to, (p) => p.x === 4 ? null : air)).toBe(false);
+  });
+
+  it("la cara lateral del borde se alcanza desde arriba (como al tender un puente agachado)", () => {
+    // Parado sobre el borde (996, 64): la cara +x de ese bloque da al vacío. El rayo roza el
+    // propio bloque de apoyo, que no tapa su cara; cualquier otro bloque sí.
+    const ground = (p: { x: number; y: number }) => (p.x <= 996 && p.y <= 64 ? { name: "grass_block", solid: true } : air);
+    const eye = { x: 996.5, y: 65 + 1.62, z: 0.5 }, aim = { x: 997, y: 64.5, z: 0.5 };
+    expect(lineOfSight(eye, aim, ground)).toBe(false);
+    expect(faceInSight(eye, aim, { x: 996, y: 64, z: 0 }, ground)).toBe(true);
+    // Desde lejos el rayo atraviesa otros bloques del suelo: no se ve.
+    expect(faceInSight({ x: 990.5, y: 66.62, z: 0.5 }, aim, { x: 996, y: 64, z: 0 }, (p) => (p.x <= 996 && p.y <= 65 ? { name: "stone", solid: true } : air))).toBe(false);
   });
 });

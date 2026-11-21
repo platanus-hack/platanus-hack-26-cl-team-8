@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createLlmClient } from "@phack/llm";
-import { buildCustomKit, KIT_LIST, kitItemTitle, KITS, MAX_ROUNDS, type CommsMode, type Kit } from "@phack/protocol";
+import { ARENAS, buildCustomKit, KIT_LIST, kitForArena, kitItemTitle, KITS, MAX_ROUNDS, type CommsMode, type Kit } from "@phack/protocol";
 import { buildSystemPrompt } from "./prompt";
 import { kitToolDefs, kitToolNames } from "./tools";
 
@@ -625,5 +625,43 @@ describe("buildSystemPrompt: escenario de arena", () => {
       if (previous === undefined) delete process.env.ARENA_SCENARIO;
       else process.env.ARENA_SCENARIO = previous;
     }
+  });
+});
+
+describe("buildSystemPrompt: mapa de la pelea", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: kitForArena(KITS.classic, ARENAS["chunk-battle"]),
+    strategy: "Instrucciones del jugador.",
+    tickMs: 1500,
+    durationSeconds: 60,
+    comms: "none" as const,
+  };
+
+  it("Chunk Battle describe las islas y el hueco de vacío, sin sugerir tácticas", () => {
+    const prompt = buildSystemPrompt({ ...base, arena: ARENAS["chunk-battle"] });
+    expect(prompt).toContain("Dos islas flotantes de unos 20 x 20 bloques");
+    expect(prompt).toContain("hueco de al menos 6 bloques de vacío");
+    // Los bordes de las islas temáticas son irregulares: en algunas filas el hueco es mayor.
+    expect(prompt).toContain("los bordes de las islas son irregulares");
+    expect(prompt).toContain("la isla oeste ocupa x=977..996 y la este x=1003..1022, las dos de z=-10..9; el suelo de ambas está alrededor de y=64.");
+    expect(prompt).toContain("caer ahí mata");
+    expect(prompt).toContain("también el terreno de las islas");
+    expect(prompt).toContain("abarca las dos islas y el hueco entre ellas");
+    // Solo describe: no dice qué conviene hacer para llegar al otro lado.
+    expect(prompt).not.toMatch(/puente|cruzar|cruza el/i);
+    // El kit del mapa ya trae con qué construir y romper.
+    expect(prompt).toContain("Roca");
+    expect(prompt).toContain("Pico de hierro");
+  });
+
+  it("el mismo resultado con el id o con el objeto del mapa; Platanus sigue igual", () => {
+    expect(buildSystemPrompt({ ...base, arena: "chunk-battle" })).toBe(buildSystemPrompt({ ...base, arena: ARENAS["chunk-battle"] }));
+    const platanus = buildSystemPrompt({ ...base, kit: KITS.classic, arena: ARENAS.platanus });
+    expect(platanus).toContain("rodeado por muros de vidrio");
+    expect(platanus).toContain("El piso, los muros de vidrio y el techo invisible de la arena no se rompen.");
+    expect(platanus).not.toContain("islas");
   });
 });

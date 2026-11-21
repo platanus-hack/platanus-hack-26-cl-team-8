@@ -14,9 +14,10 @@
 #   MC_PORT        puerto del juego (25565)
 #   RCON_PORT      puerto de RCON (25575)
 #   RCON_PASSWORD  contraseña de RCON (phack-rcon)
-#   ARENA_SCENARIO platanus (mundo vacío, por defecto) o pizza-spleef-2 (mapa del ZIP).
-#                  Si no está en el entorno se toma del .env de la raíz, igual que el
-#                  orquestador; es también el nombre del mundo (level-name).
+#   ARENA_SCENARIO escenario por defecto: platanus (por defecto) o chunk-battle usan el
+#                  mundo vacío "arena" (se eligen por pelea, sin reiniciar); pizza-spleef-2
+#                  usa su propio mundo (mapa del ZIP). Si no está en el entorno se toma del
+#                  .env de la raíz, igual que el orquestador.
 #   JAVA_BIN       ruta a `java` si no es la de Homebrew (openjdk@21) ni la del PATH
 
 set -euo pipefail
@@ -36,9 +37,10 @@ if [ -z "${ARENA_SCENARIO:-}" ] && [ -f "$ROOT/.env" ]; then
 fi
 ARENA_SCENARIO="${ARENA_SCENARIO:-platanus}"
 case "$ARENA_SCENARIO" in
-  platanus | pizza-spleef-2) ;;
+  platanus | chunk-battle) LEVEL=arena ;;
+  pizza-spleef-2) LEVEL=pizza-spleef-2 ;;
   *)
-    echo "ARENA_SCENARIO inválido: \"$ARENA_SCENARIO\" (usa platanus o pizza-spleef-2)" >&2
+    echo "ARENA_SCENARIO inválido: \"$ARENA_SCENARIO\" (usa platanus, chunk-battle o pizza-spleef-2)" >&2
     exit 1
     ;;
 esac
@@ -78,10 +80,10 @@ cd "$SERVER_DIR"
 
 # ---------- Mundo compartido con Docker ----------
 
-# Un mundo por escenario: platanus/ (vacío, lo crea el servidor) y pizza-spleef-2/.
-# La pizza se importa una sola vez y solo si es el escenario activo; el mundo anterior
-# (world/) se conserva para poder volver atrás.
-if [ "$ARENA_SCENARIO" = pizza-spleef-2 ] && [ ! -f "$SERVER_DIR/pizza-spleef-2/level.dat" ]; then
+# Dos mundos: arena/ (vacío, lo crea el servidor; ahí se construyen Platanus y Chunk
+# Battle) y pizza-spleef-2/. La pizza se importa una sola vez y solo si es el escenario
+# activo; los mundos anteriores (world/, platanus/) se conservan para poder volver atrás.
+if [ "$LEVEL" = pizza-spleef-2 ] && [ ! -f "$SERVER_DIR/pizza-spleef-2/level.dat" ]; then
   WORLD_STAGING="$(mktemp -d "$SERVER_DIR/.world-import.XXXXXX")"
   trap 'rm -rf "$WORLD_STAGING"' EXIT
   unzip -q "$ROOT/infra/minecraft/worlds/pizza-spleef-2.zip" -d "$WORLD_STAGING"
@@ -129,7 +131,15 @@ echo "eula=true" > eula.txt
 # bukkit.yml del repo: desactiva el connection-throttle (los bots salen todos de la misma IP).
 cp "$ROOT/infra/minecraft/config/bukkit.yml" bukkit.yml
 
-# Mundo vacío (void). Solo aplica al crear un mundo nuevo (platanus): el mapa importado de
+# Datapack con las estructuras de Chunk Battle: se copia en cada arranque al mundo "arena"
+# (la versión del repo manda). El servidor lo habilita al cargar el mundo.
+if [ "$LEVEL" = arena ]; then
+  mkdir -p "$SERVER_DIR/arena/datapacks"
+  rm -rf "$SERVER_DIR/arena/datapacks/phack-chunkbattle"
+  cp -R "$ROOT/infra/minecraft/datapacks/phack-chunkbattle" "$SERVER_DIR/arena/datapacks/"
+fi
+
+# Mundo vacío (void). Solo aplica al crear un mundo nuevo (arena): el mapa importado de
 # la pizza trae sus ajustes en su level.dat.
 GENERATOR_SETTINGS='{"layers"\:[{"block"\:"minecraft\:air","height"\:1}],"biome"\:"minecraft\:the_void"}'
 
@@ -145,7 +155,7 @@ enable-rcon=true
 rcon.port=$RCON_PORT
 rcon.password=$RCON_PASSWORD
 broadcast-rcon-to-ops=false
-level-name=$ARENA_SCENARIO
+level-name=$LEVEL
 level-type=minecraft\:flat
 generator-settings=$GENERATOR_SETTINGS
 generate-structures=false
@@ -165,7 +175,7 @@ enable-command-block=false
 EOF
 
 echo "[minecraft] Paper $MC_VERSION con $("$JAVA" -version 2>&1 | head -n 1) (heap $MC_MEMORY)"
-echo "[minecraft] Escenario $ARENA_SCENARIO (mundo $SERVER_DIR/$ARENA_SCENARIO)"
+echo "[minecraft] Escenario por defecto $ARENA_SCENARIO (mundo $SERVER_DIR/$LEVEL)"
 echo "[minecraft] Juego en 127.0.0.1:$MC_PORT, RCON en 127.0.0.1:$RCON_PORT"
 
 # exec: las señales (Ctrl+C, SIGTERM) llegan directo a la JVM, que guarda el mundo y sale.

@@ -1,7 +1,41 @@
+import type { ArenaScenario } from "@phack/protocol";
 import { isBuildBlock } from "./items";
 import type { Vec3Like } from "./geometry";
 
 export type Bounds = { min: Vec3Like; max: Vec3Like };
+
+/** En las islas se puede construir y cavar un poco bajo el suelo nominal (el relieve baja ±2). */
+export const ISLAND_DIG_DEPTH = 4;
+
+/**
+ * Volumen donde se puede construir y romper: el círculo jugable inscrito, del piso al tope.
+ * En Chunk Battle, las dos islas y el hueco entre ellas (ahí va el puente), desde un poco
+ * bajo el suelo nominal: el puente se tiende a la altura del suelo.
+ */
+export function arenaBuildBounds(arena: ArenaScenario): Bounds {
+  const { center, radius, wallHeight } = arena;
+  if (arena.kind === "islands") {
+    const xs = arena.islands.flatMap((i) => [i.from.x, i.to.x]);
+    const zs = arena.islands.flatMap((i) => [i.from.z, i.to.z]);
+    return {
+      min: { x: Math.min(...xs), y: center.y - ISLAND_DIG_DEPTH, z: Math.min(...zs) },
+      max: { x: Math.max(...xs), y: center.y + wallHeight, z: Math.max(...zs) },
+    };
+  }
+  return {
+    min: { x: center.x - radius, y: center.y + 1, z: center.z - radius },
+    max: { x: center.x + radius, y: center.y + wallHeight, z: center.z + radius },
+  };
+}
+
+/** Lo que el agente ve del mundo: el volumen de construcción más un bloque alrededor. */
+export function arenaWorldBounds(arena: ArenaScenario): Bounds {
+  const b = arenaBuildBounds(arena);
+  return {
+    min: { x: b.min.x - 1, y: Math.min(arena.center.y, b.min.y - 1), z: b.min.z - 1 },
+    max: { x: b.max.x + 1, y: b.max.y + 1, z: b.max.z + 1 },
+  };
+}
 export type PlannedBlock = Vec3Like & { material: string };
 export const MAX_PLAN_BLOCKS = 512;
 

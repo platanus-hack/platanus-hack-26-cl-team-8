@@ -20,7 +20,7 @@ import {
   type TranscriptEntry,
 } from "@phack/protocol";
 import { clearPlacedBlocksCommands, teleportCommand, kitEffectCommands } from "./arena";
-import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
+import { ArenaUnavailableError, MatchManager, type MatchDeps, type MatchEnv } from "./match";
 import { MIN_SPEECH_MS, SAME_SPEAKER_GAP_MS, TURN_GAP_MS } from "./conversation";
 import { defaultPrompts } from "./store";
 import { manualClock } from "./test-clock";
@@ -56,6 +56,10 @@ function decision(ms: number, usage?: TokenUsage, response: DecisionReport["resp
 }
 
 type SetupOptions = {
+  /** ARENA_SCENARIO del servidor; "platanus" si falta. */
+  arenaScenario?: "platanus" | "chunk-battle" | "pizza-spleef-2";
+  /** Mapa guardado en los ajustes (MatchSettings.arena). */
+  arena?: "platanus" | "chunk-battle" | null;
   provider?: Provider;
   /** LLM_MODEL del servidor. */
   model?: string;
@@ -102,6 +106,7 @@ function serverReply(command: string): string {
 
 function setup(opts: SetupOptions = {}) {
   const env: MatchEnv = {
+    ARENA_SCENARIO: opts.arenaScenario ?? "platanus",
     LLM_PROVIDER: opts.provider ?? "vercel",
     LLM_MODEL: opts.model ?? "",
     VERCEL_API_KEY: "vck-test",
@@ -187,6 +192,7 @@ function setup(opts: SetupOptions = {}) {
         // El formato sale de las rondas: los tests de series de antes eran de 5.
         rounds: opts.mode === "rounds" ? LEGACY_SERIES_ROUNDS : 1,
         voice: opts.voice ?? false,
+        ...(opts.arena !== undefined ? { arena: opts.arena } : {}),
         ...opts.settings,
       }),
     },
@@ -963,7 +969,7 @@ describe("MatchManager: transcripción", () => {
     }
     // Lo que se anotó mientras se armaban los agentes va justo después, en orden.
     expect(entries[1]).toMatchObject({ type: "phase", phase: "preparing" });
-    expect(entries[2]).toMatchObject({ type: "log", text: "Preparando la pelea…" });
+    expect(entries[2]).toMatchObject({ type: "log", text: "Preparando la pelea en Arena Platanus…" });
 
     const types = entries.map((e) => e.type);
     expect(types.filter((type) => type === "start")).toHaveLength(1);
@@ -1820,5 +1826,114 @@ describe("MatchManager: benchmarks", () => {
     m.ev("blue").onDeath();
     await vi.waitFor(() => expect(m.history.append).toHaveBeenCalled());
     expect((await m.manager.judgeRecord(m.stored() as MatchRecord)).ok).toBe(false);
+  });
+});
+
+// ---------- Mapa por pelea ----------
+
+/** Servidor sano que además coloca las estructuras de Chunk Battle. */
+function islandsReply(command: string): string {
+  if (command.startsWith("place template ")) return `Loaded template "${command.split(" ")[2]}" at 0, 0, 0`;
+  return serverReply(command);
+}
+
+describe("MatchManager: mapa y semilla por pelea", () => {
+  it("sin nada elegido juega en ARENA_SCENARIO, sin semilla en Platanus", async () => {
+    const t = setup();
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state).toMatchObject({ arena: "platanus", seed: null });
+    expect(t.fighters.red?.arena?.id).toBe("platanus");
+    expect(t.fighters.red?.kit).toEqual(KITS.classic);
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.stored()).toMatchObject({ arena: "platanus", seed: null });
+  });
+
+  it("el mapa de los ajustes elige Chunk Battle: semilla sorteada, islas, kit para cruzar y registro", async () => {
+    const t = setup({ arena: "chunk-battle", rconReply: islandsReply });
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state.arena).toBe("chunk-battle");
+    expect(Number.isInteger(state.seed)).toBe(true);
+    // El luchador recibe la geometría del mapa de la pelea (no la lee de process.env).
+    expect(t.fighters.red?.arena?.kind).toBe("islands");
+    // El kit clásico no trae bloques ni pico: el mapa se los suma a los dos lados por igual.
+    for (const side of ["red", "blue"] as const) {
+      const items = t.fighters[side]?.kit.items.map((i) => i.item) ?? [];
+      expect(items).toEqual(expect.arrayContaining(["cobblestone", "iron_pickaxe"]));
+    }
+    expect(t.rconCommands.some((c) => c.startsWith("place template phack:chunk/"))).toBe(true);
+    expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.3 with minecraft:cobblestone 32");
+    const start = t.entries.map((e) => e.entry).find((e) => e.type === "start");
+    expect(start).toMatchObject({ arena: "chunk-battle", seed: state.seed });
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.stored()).toMatchObject({ arena: "chunk-battle", seed: state.seed });
+  });
+
+  it("en reposo, recién encendido, informa el mapa que se construye al arrancar (el de los ajustes)", () => {
+    // index.ts deja lista la arena de readyArena(); la cámara encuadra el `arena` del estado.
+    const t = setup({ arena: "chunk-battle" });
+    expect(t.manager.readyArena()).toBe("chunk-battle");
+    expect(t.manager.getState()).toMatchObject({ phase: "idle", arena: "chunk-battle", seed: null });
+    // Un mapa guardado que el servidor no tiene: el por defecto (como start()).
+    const pizza = setup({ arenaScenario: "pizza-spleef-2", arena: "chunk-battle" });
+    expect(pizza.manager.readyArena()).toBe("pizza-spleef-2");
+    expect(pizza.manager.getState().arena).toBe("pizza-spleef-2");
+  });
+
+  it("el cuerpo de inicio manda sobre los ajustes; un mapa que el servidor no tiene es un error", async () => {
+    const t = setup({ arena: "chunk-battle" });
+    current = t.manager;
+    t.manager.start({ arena: "platanus" });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    expect(t.manager.getState().arena).toBe("platanus");
+    await t.manager.stop();
+
+    const pizza = setup({ arenaScenario: "pizza-spleef-2" });
+    expect(pizza.manager.availableArenas()).toEqual(["pizza-spleef-2"]);
+    expect(() => pizza.manager.start({ arena: "chunk-battle" })).toThrow(ArenaUnavailableError);
+    expect(pizza.manager.getState().phase).toBe("idle");
+  });
+
+  it("un mapa de los ajustes que el servidor ya no tiene juega en el por defecto y avisa", async () => {
+    const t = setup({ arenaScenario: "pizza-spleef-2", arena: "chunk-battle", rconReply: (c) => (c.startsWith("execute if block") ? "Test passed" : serverReply(c)) });
+    await startRunning(t);
+    expect(t.manager.getState().arena).toBe("pizza-spleef-2");
+    expect(t.logs.some((l) => l.level === "warn" && l.text.includes("no está en este servidor"))).toBe(true);
+  });
+
+  it("runOnce (torneo): el mapa y la semilla pedidos deciden las islas", async () => {
+    const t = setup({ rconReply: islandsReply });
+    current = t.manager;
+    const running = t.manager.runOnce({
+      configs: {
+        red: { provider: "vercel", model: "a/x", prompt: "p" },
+        blue: { provider: "vercel", model: "b/y", prompt: "p" },
+      },
+      durationSeconds: 60,
+      arena: "chunk-battle",
+      seed: 77,
+    });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    expect(t.manager.getState()).toMatchObject({ arena: "chunk-battle", seed: 77 });
+    t.ev("red").onDeath();
+    const outcome = await running;
+    expect(outcome).toMatchObject({ arena: "chunk-battle", seed: 77 });
+  });
+
+  it("serie en Chunk Battle: cada ronda rehace las mismas islas (misma semilla)", async () => {
+    const t = setup({ arena: "chunk-battle", rconReply: islandsReply, settings: { rounds: 2 } });
+    await startRunning(t);
+    const seed = t.manager.getState().seed;
+    const firstBuild = t.rconCommands.filter((c) => c.startsWith("place template phack:chunk/"));
+    expect(firstBuild).toHaveLength(2);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.calls.red.some((c) => c.call === "resume")).toBe(true));
+    const builds = t.rconCommands.filter((c) => c.startsWith("place template phack:chunk/"));
+    expect(builds).toEqual([...firstBuild, ...firstBuild]);
+    expect(t.manager.getState().seed).toBe(seed);
+    expect(t.rconCommands).toContain("effect clear AgenteRojo minecraft:slow_falling");
   });
 });

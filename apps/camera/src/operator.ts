@@ -1,6 +1,6 @@
 import type { Bot } from "mineflayer";
 import { AGENT_USERNAMES, SIDES } from "@phack/protocol";
-import { activeArena } from "./arena";
+import { currentArena, startArenaTracking } from "./arena";
 import { connectBot, runRcon } from "./bot";
 import type { CameraConfig } from "./config";
 import { cameraPose, orbitPosition, pickAimTarget, pickShot, smoothToward, type Shot, type Vec } from "./director";
@@ -14,10 +14,14 @@ import { errorText, FatalError, log } from "./log";
  * ve exactamente lo que "ve" el bot. Mover la cámara = mover al bot.
  *
  * Hay dos cámaras y el bot salta de una a otra:
- *  - la que sigue ("follow"): parada en la `camera` del escenario activo, gira para mirar a los peleadores;
+ *  - la que sigue ("follow"): parada en la `camera` del mapa de la pelea, gira para mirar a los peleadores;
  *  - la general ("wide"): estática, alta, muestra toda la arena como en un partido.
  * Sin pelea se muestra la general; con pelea se alternan (CAMERA_FOLLOW_SECONDS /
  * CAMERA_WIDE_SECONDS).
+ *
+ * El mapa es por pelea (Platanus o Chunk Battle, en lugares distintos del mismo mundo):
+ * arena.ts sigue cuál es y, si cambia, las dos cámaras pasan a las del mapa nuevo (el bot
+ * queda lejos y se lo lleva con /tp).
  */
 
 /** Cada cuánto se recalcula la posición del bot. mineflayer la envía al servidor a 20 Hz. */
@@ -87,16 +91,24 @@ const toDegrees = (radians: number): number => (radians * 180) / Math.PI;
 
 /** Loop de vuelo: decide qué cámara está al aire y deja al bot en esa pose. */
 function startFlightLoop(config: CameraConfig): void {
-  const ARENA = activeArena();
-  const center: Vec = { x: ARENA.center.x, y: ARENA.center.y + AIM_HEIGHT, z: ARENA.center.z };
-  const followBase: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
-  // La general nunca cambia: se calcula una sola vez.
-  const widePose = cameraPose(
-    ARENA.cameraWide,
-    center,
-  );
-
+  let arenaId = "";
+  let center: Vec = { x: 0, y: 0, z: 0 };
+  let followBase: Vec = { x: 0, y: 0, z: 0 };
+  let widePose = cameraPose(followBase, center);
   let aim: Vec = { ...center };
+  /** Cámaras del mapa de la pelea; la general es fija por mapa: se calcula al cambiar. */
+  const useArena = (): void => {
+    const arena = currentArena();
+    if (arena.id === arenaId) return;
+    arenaId = arena.id;
+    center = { x: arena.center.x, y: arena.center.y + AIM_HEIGHT, z: arena.center.z };
+    followBase = { x: arena.camera.x, y: arena.camera.y, z: arena.camera.z };
+    widePose = cameraPose(arena.cameraWide, center);
+    // La mira salta al mapa nuevo (suavizarla cruzaría cientos de bloques de vacío).
+    aim = { ...center };
+  };
+  useArena();
+
   let fightStartedAt: number | null = null;
   let shot: Shot = "wide";
   const startedAt = performance.now();
@@ -107,6 +119,7 @@ function startFlightLoop(config: CameraConfig): void {
     const now = performance.now();
     const dt = Math.min(1, (now - lastTick) / 1000);
     lastTick = now;
+    useArena();
     const bot = currentBot;
     if (!bot?.entity) return;
 
@@ -287,6 +300,15 @@ export async function runOperator(config: CameraConfig): Promise<void> {
       `${config.wideSeconds} s de cámara general.`,
   );
   startFlightLoop(config);
+  startArenaTracking({
+    orchestratorUrl: config.orchestratorUrl,
+    rcon: (commands) => runRcon(config, commands),
+    // El loop de vuelo ve el cambio en el próximo tick y pide el /tp.
+    onChange: () => {
+      needsTeleport = true;
+    },
+    log,
+  });
   try {
     await runBotLoop(config);
   } catch (err) {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   API_ROUTES,
   DEFAULT_SETTINGS,
+  arenaOptions,
   buildBenchReport,
   syncMode,
   validateCustomKit,
@@ -14,14 +15,16 @@ import {
   type MatchRecord,
   type MatchState,
   type Provider,
+  type ArenaScenarioId,
   type ServerDefaults,
+  type StartMatchBody,
   type Side,
   type UpdatePromptBody,
   type MatchSettings,
 } from "@phack/protocol";
 import { FlagStore } from "./flags";
 import { Hub } from "./hub";
-import { MatchActiveError } from "./match";
+import { ArenaUnavailableError, MatchActiveError } from "./match";
 import { UnknownPresetError } from "./presets";
 import { applyModelPolicy, buildServer, parseRange, type ModelPolicy } from "./server";
 import { defaultPrompts } from "./store";
@@ -86,6 +89,8 @@ afterEach(async () => {
 
 type ServerOptions = {
   provider?: Provider;
+  /** ARENA_SCENARIO del servidor de prueba ("platanus" si falta). */
+  arenaScenario?: ArenaScenarioId;
   vercelKeyConfigured?: boolean;
   /** Estado de la pelea en vivo. */
   state?: MatchState;
@@ -103,16 +108,26 @@ let settings: MatchSettings = { ...DEFAULT_SETTINGS, comms: "none", timer: true,
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
 let presetCalls: { id: string; start: boolean }[] = [];
+/** Lo que recibió match.start (el cuerpo ya validado). */
+let starts: (StartMatchBody | undefined)[] = [];
 let archived = 0;
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
+  starts = [];
+  const arenas = arenaOptions(opts.arenaScenario ?? "platanus");
   settings = { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false };
   app = await buildServer({
     hub: new Hub(),
     match: {
       getState: () => structuredClone(opts.state ?? ({} as MatchState)),
-      start: () => ({}) as MatchState,
+      start: (body) => {
+        starts.push(body);
+        if (body?.arena && !arenas.some((a) => a.id === body.arena)) {
+          throw new ArenaUnavailableError(body.arena, arenas.map((a) => a.id));
+        }
+        return {} as MatchState;
+      },
       stop: async () => ({}) as MatchState,
     },
     prompts: {
@@ -125,7 +140,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     history: { latest: () => structuredClone(opts.history ?? []) },
     flags: opts.flags,
     transcripts: { read: async (id) => (id === ID ? RAW : null) },
-    defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
+    defaults: { provider: opts.provider ?? "mock", models: {}, arena: opts.arenaScenario ?? "platanus", arenas } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
     presets: {
@@ -399,6 +414,8 @@ function agentStatus(side: Side): AgentStatus {
 function matchRecord(id: string): MatchRecord {
   return {
     id,
+    arena: "platanus",
+    seed: null,
     startedAt: 1000,
     endedAt: 5000,
     durationMs: 4000,
@@ -413,6 +430,8 @@ function matchRecord(id: string): MatchRecord {
 function liveState(id: string): MatchState {
   return {
     id,
+    arena: "platanus",
+    seed: null,
     phase: "running",
     startedAt: 1000,
     endsAt: 61_000,
@@ -581,6 +600,53 @@ describe("parseRange", () => {
     expect(parseRange("bytes=0-1,4-5", 10)).toBeNull();
     expect(parseRange("bytes=10-", 10)).toBe("invalid");
     expect(parseRange("bytes=4-2", 10)).toBe("invalid");
+  });
+});
+
+describe("mapa de la pelea", () => {
+  const start = (s: FastifyInstance, payload?: unknown) =>
+    s.inject({ method: "POST", url: "/api/match/start", ...(payload !== undefined ? { payload: payload as Record<string, unknown> } : {}) });
+
+  it("POST /api/match/start acepta un mapa seleccionable; sin cuerpo, el de los ajustes", async () => {
+    const s = await server();
+    expect((await start(s)).statusCode).toBe(200);
+    expect((await start(s, { arena: "chunk-battle" })).statusCode).toBe(200);
+    expect(starts).toEqual([{}, { arena: "chunk-battle" }]);
+  });
+
+  it("400 con un mapa que no es seleccionable o que el servidor no tiene", async () => {
+    const s = await server();
+    // La pizza solo va por ARENA_SCENARIO; "duel" es un escenario de benchmark, no un mapa.
+    for (const arena of ["pizza-spleef-2", "duel", 3]) {
+      const res = await start(s, { arena });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain("platanus o chunk-battle");
+    }
+    const pizza = await server({ arenaScenario: "pizza-spleef-2" });
+    const res = await start(pizza, { arena: "chunk-battle" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain("no está disponible");
+  });
+
+  it("PUT /api/settings guarda el mapa (null = el por defecto) solo si el servidor lo tiene", async () => {
+    const s = await server();
+    const put = (payload: Record<string, unknown>) => s.inject({ method: "PUT", url: "/api/settings", payload });
+    expect((await put({ arena: "chunk-battle" })).json()).toMatchObject({ arena: "chunk-battle" });
+    expect((await put({ arena: null })).json()).toMatchObject({ arena: null });
+    expect((await put({ arena: "pizza-spleef-2" })).statusCode).toBe(400);
+    const pizza = await server({ arenaScenario: "pizza-spleef-2" });
+    expect((await pizza.inject({ method: "PUT", url: "/api/settings", payload: { arena: "platanus" } })).statusCode).toBe(400);
+  });
+
+  it("GET /api/defaults trae los mapas, con el por defecto primero", async () => {
+    const s = await server({ arenaScenario: "chunk-battle" });
+    expect((await s.inject({ method: "GET", url: "/api/defaults" })).json()).toMatchObject({
+      arena: "chunk-battle",
+      arenas: [
+        { id: "chunk-battle", name: "Chunk Battle" },
+        { id: "platanus", name: "Arena Platanus" },
+      ],
+    });
   });
 });
 

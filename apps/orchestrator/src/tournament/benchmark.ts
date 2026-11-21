@@ -6,6 +6,15 @@
 import { createHash } from "node:crypto";
 import { TOOL_DEFS } from "@phack/agent";
 import { ARENAS, BENCHMARK_PROMPT, type ArenaScenarioId, type BenchmarkVersion } from "@phack/protocol";
+import { loadChunkBattleMetadata } from "../chunkbattle";
+
+/**
+ * Generación del benchmark: se sube a mano cuando cambian las reglas de forma que el hash
+ * no alcanza a reflejar. v2 = mapa por partida (Platanus o Chunk Battle, en el mismo
+ * mundo), con la semilla de la partida decidiendo las islas y, en Chunk Battle, bloques y
+ * pico de más en el kit para cruzar el hueco con build/dig.
+ */
+export const BENCHMARK_GENERATION = "v2";
 
 /** Duración fija de las peleas del benchmark (s). */
 export const BENCHMARK_MATCH_SECONDS = 60;
@@ -21,7 +30,8 @@ export function sha256(text: string): string {
 
 /**
  * Arma la versión del benchmark con el código actual. `tools` se puede inyectar en tests.
- * El hash del prompt incluye la geometría del escenario (el prompt de sistema la usa).
+ * El hash del prompt incluye la geometría del escenario (el prompt de sistema la usa) y,
+ * en Chunk Battle, los metadatos de las islas (temas y spawns que sortea la semilla).
  */
 export function benchmarkVersion(
   scenario: string,
@@ -29,11 +39,12 @@ export function benchmarkVersion(
   tickMs: number,
   tools: unknown = TOOL_DEFS,
 ): BenchmarkVersion {
-  const arena = (ARENAS as Record<string, unknown>)[scenario as ArenaScenarioId] ?? null;
-  const promptHash = sha(JSON.stringify({ prompt: BENCHMARK_PROMPT, arena })).slice(0, 12);
+  const arena = (ARENAS as Record<string, (typeof ARENAS)[ArenaScenarioId] | undefined>)[scenario] ?? null;
+  const islands = arena?.kind === "islands" ? loadChunkBattleMetadata() : null;
+  const promptHash = sha(JSON.stringify({ prompt: BENCHMARK_PROMPT, arena, ...(islands ? { islands } : {}) })).slice(0, 12);
   const toolsHash = sha(JSON.stringify(tools)).slice(0, 12);
   const all = sha(JSON.stringify({ scenario, matchSeconds, tickMs, promptHash, toolsHash })).slice(0, 12);
-  return { id: `pvp-${scenario}-v1+${all}`, scenario, matchSeconds, tickMs, promptHash, toolsHash };
+  return { id: `pvp-${scenario}-${BENCHMARK_GENERATION}+${all}`, scenario, matchSeconds, tickMs, promptHash, toolsHash };
 }
 
 /** null si coinciden; si no, un texto que dice qué cambió. */

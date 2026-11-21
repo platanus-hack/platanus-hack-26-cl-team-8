@@ -48,7 +48,7 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
 
 | Servicio | Imagen / código | Qué hace |
 |---|---|---|
-| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mapa Pizza Spleef 2 sin mobs, modo offline, RCON activado. |
+| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mundo vacío `arena` (Platanus y Chunk Battle, con el datapack de las islas) sin mobs, modo offline, RCON activado. |
 | `orchestrator` | `apps/orchestrator` | Dueño de la pelea: prepara la arena por RCON, conecta a los dos agentes, lleva el estado, decide el ganador, guarda el historial y emite eventos por websocket. |
 | `camera` | `apps/camera` | Bot cámara. Alterna entre seguir la pelea y una toma general; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
 | `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
@@ -162,13 +162,25 @@ Variables de entorno: el orquestador lee el `.env` de la raíz al arrancar (`lib
 
 El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado por git).
 
-### Mapa compartido
+### Mapas
 
-Todas las peleas usan **Pizza Spleef 2**, incluido en `infra/minecraft/worlds/pizza-spleef-2.zip` (el archivo descargado `Pizza_Spleef_2.zip`, sin modificaciones). Docker y el arranque nativo importan el mismo ZIP una sola vez al mundo `pizza-spleef-2`. El antiguo mundo `world` se conserva; los reinicios no sobrescriben el mapa importado.
+Cada pelea elige su mapa: en la web, el selector **Mapa** junto a "Iniciar pelea" (es un ajuste más de la próxima pelea: se guarda al elegir, se bloquea mientras hay una pelea y el mapa en curso se ve bajo el reloj); por la API, `POST /api/match/start` con `{ "arena": "chunk-battle" }`; en el torneo, `--scenario` (o `--map`). `ARENA_SCENARIO` (`.env`) es solo el mapa por defecto. Todas las rondas de una serie se juegan en el mismo mapa y con la misma semilla.
 
-Se usa la pizza jugable centrada en `(8, 3, 8)`, de radio 25, con sus ingredientes y telarañas originales. Los agentes comienzan en `(-8, 4, 8)` y `(24, 4, 8)`; las cámaras y los límites de movimiento comparten estas coordenadas mediante `ARENA` en `packages/protocol`. El borde da al vacío. Los bloques de comandos del minijuego original permanecen desactivados: las peleas PvP las dirige el orquestador, que entre peleas restaura la plantilla mediana incluida en el mapa y limpia ítems, flechas y experiencia.
+| Mapa | Id | Cómo es |
+|---|---|---|
+| Arena Platanus (por defecto) | `platanus` | Piso negro de 57×45 con el isotipo de Platanus, muros de vidrio, abierta arriba. Centro `(0, 64, 0)`. |
+| Chunk Battle | `chunk-battle` | Dos islas flotantes de 16×16 (más cornisa: 20×20 caminables) separadas por al menos 6 bloques de vacío (los bordes son irregulares: en algunas filas el hueco es mayor), centro del conjunto `(1000, 64, 0)`. Cada agente parte en su isla. Sin muros: caer al vacío es KO. |
+| Pizza Spleef 2 | `pizza-spleef-2` | El mapa descargado `Pizza_Spleef_2.zip` (`infra/minecraft/worlds/`), en su propio mundo. Solo con `ARENA_SCENARIO=pizza-spleef-2`; no aparece en el selector. |
 
-Para aplicar este cambio a un stack Docker existente, ejecuta `docker compose up -d --build minecraft orchestrator camera`: cambia el mundo de Minecraft y actualiza a la vez los agentes y las cámaras. En modo nativo, reinicia `pnpm local` (requiere `unzip`, incluido en macOS).
+Platanus y Chunk Battle viven en el mismo mundo vacío `arena`, en lugares distintos, y el orquestador los construye por RCON antes de cada pelea: cambiar de mapa es instantáneo, sin reiniciar Minecraft.
+
+**De dónde salen las islas.** Las estructuras de Chunk Battle vienen del mapa "Chunk Battle" (Minecraft 1.20.4) que descargó el usuario: se copiaron solo los `.nbt` necesarios (10 islas temáticas y las 25 capas de mineral del núcleo, sin el spawner de mobs) al datapack `infra/minecraft/datapacks/phack-chunkbattle`, que Docker y `pnpm local` instalan en el mundo `arena`. Nada del mapa original se ejecuta, y tras colocar cada isla se retiran bloques de comandos, spawners, barreras y fluidos. La **semilla** de la pelea elige qué isla temática le toca a cada lado y las capas de su núcleo; las peleas de la web sortean una, y en el torneo la ida y la vuelta de una pareja usan las mismas islas con los lados cambiados.
+
+En Chunk Battle los agentes construyen y rompen con las mismas herramientas de siempre (`build`, `dig`): con `build` pueden tender un puente sobre el hueco, y `dig` también rompe el terreno de las islas. Nunca se rompen ni se colocan bloques administrativos o indestructibles (barrier, bedrock, bloques de comandos, structure/jigsaw, light, portales, reinforced deepslate, spawner). Si el kit elegido no trae bloques ni pico, el mapa le suma 32 de roca y un pico de hierro (a los dos lados por igual).
+
+La cámara se entera del mapa de la pelea en curso por el orquestador (`GET /api/state`, variable `CAMERA_ORCHESTRATOR_URL`; en Docker, `http://orchestrator:8787`) o, si este no tiene pelea (torneo por CLI), por dónde están los agentes, y salta a las tomas de ese mapa (en Chunk Battle encuadran las dos islas y el hueco).
+
+Para aplicar estos cambios a un stack Docker existente, ejecuta `docker compose up -d --build minecraft orchestrator camera` (el mundo nuevo `arena` se crea solo; el viejo `platanus` queda sin uso). En modo nativo, reinicia `pnpm local` (la pizza requiere `unzip`, incluido en macOS).
 
 ### Si algo falla
 
@@ -406,6 +418,7 @@ pnpm tournament plan
 
 # 2. Congelar el torneo (catálogo, modelos, proveedor, benchmark). Imprime el id.
 pnpm tournament create --name "Torneo 1h" --max-minutes 60 --max-usd 10 --concurrency 1 --max-candidates 8
+pnpm tournament create --name "Islas" --scenario chunk-battle   # mapa Chunk Battle (--map es lo mismo; por defecto, platanus)
 
 # 3. Correrlo (Minecraft levantado + VERCEL_API_KEY). Ctrl+C = pausa al terminar la partida en curso.
 pnpm tournament run <id>
@@ -418,6 +431,7 @@ pnpm tournament leaderboard <id>    # ranking oficial (solo liga) y matriz
 pnpm tournament list
 ```
 
+- **Mapa:** `--scenario platanus|chunk-battle` (o `--map`) en `plan` y `create` (por defecto `ARENA_SCENARIO`). Las partidas se juegan en ese mapa sin reiniciar Minecraft, y la semilla de cada partida del calendario llega a la pelea real (en Chunk Battle decide las islas). El mapa es parte de la versión del benchmark (`pvp-<mapa>-v2+…`): un torneo creado con otra versión no se reanuda.
 - **Ensayo sin Minecraft ni créditos:** `pnpm tournament create --simulate --name ensayo` y luego `pnpm tournament run <id>`. Usa agentes simulados (ratings ocultos por modelo, RNG con semilla) y el mismo calendario, límites y reporte.
 - **Sin red:** `--catalog apps/orchestrator/src/tournament/catalog.fixture.json` (ruta relativa a la raíz o absoluta) usa un catálogo local.
 - **Leaderboard web:** `pnpm dev` y abrir http://localhost:4321/arena (lee `/api/tournaments` del orquestador; con `?mock` muestra datos de ejemplo).

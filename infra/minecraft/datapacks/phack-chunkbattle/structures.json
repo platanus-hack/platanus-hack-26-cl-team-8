@@ -1,0 +1,327 @@
+{
+  "source": "Mapa \"Chunk Battle\" (Minecraft 1.20.4, DataVersion 3700) descargado por el usuario",
+  "size": [
+    22,
+    48,
+    22
+  ],
+  "core": {
+    "min": 3,
+    "max": 18,
+    "top": 31
+  },
+  "layers": [
+    {
+      "id": "phack:layer/1"
+    },
+    {
+      "id": "phack:layer/2"
+    },
+    {
+      "id": "phack:layer/3"
+    },
+    {
+      "id": "phack:layer/4"
+    },
+    {
+      "id": "phack:layer/5"
+    },
+    {
+      "id": "phack:layer/6"
+    },
+    {
+      "id": "phack:layer/7"
+    },
+    {
+      "id": "phack:layer/8"
+    },
+    {
+      "id": "phack:layer/9"
+    },
+    {
+      "id": "phack:layer/10"
+    },
+    {
+      "id": "phack:layer/11"
+    },
+    {
+      "id": "phack:layer/12"
+    },
+    {
+      "id": "phack:layer/13"
+    },
+    {
+      "id": "phack:layer/14"
+    },
+    {
+      "id": "phack:layer/15"
+    },
+    {
+      "id": "phack:layer/16"
+    },
+    {
+      "id": "phack:layer/17"
+    },
+    {
+      "id": "phack:layer/18"
+    },
+    {
+      "id": "phack:layer/19"
+    },
+    {
+      "id": "phack:layer/20"
+    },
+    {
+      "id": "phack:layer/21"
+    },
+    {
+      "id": "phack:layer/22"
+    },
+    {
+      "id": "phack:layer/23"
+    },
+    {
+      "id": "phack:layer/24"
+    },
+    {
+      "id": "phack:layer/25"
+    }
+  ],
+  "themes": [
+    {
+      "name": "chukvilege",
+      "id": "phack:chunk/chukvilege",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 32,
+        "openSky": true
+      },
+      "centerTopY": 32,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 41,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 32
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukcherry",
+      "id": "phack:chunk/chukcherry",
+      "spawn": {
+        "x": 10,
+        "z": 11,
+        "y": 31,
+        "openSky": true
+      },
+      "centerTopY": 39,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 42,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 31
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukforest",
+      "id": "phack:chunk/chukforest",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 31,
+        "openSky": true
+      },
+      "centerTopY": 31,
+      "occupied": {
+        "minX": 1,
+        "maxX": 21,
+        "minY": 0,
+        "maxY": 40,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 30
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukend",
+      "id": "phack:chunk/chukend",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 31,
+        "openSky": true
+      },
+      "centerTopY": 31,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 44,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 30,
+        "minecraft:light": 6
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukmars",
+      "id": "phack:chunk/chukmars",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 34,
+        "openSky": true
+      },
+      "centerTopY": 34,
+      "occupied": {
+        "minX": 2,
+        "maxX": 19,
+        "minY": 0,
+        "maxY": 42,
+        "minZ": 1,
+        "maxZ": 19
+      },
+      "banned": {
+        "minecraft:bedrock": 148
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukwildwest",
+      "id": "phack:chunk/chukwildwest",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 32,
+        "openSky": true
+      },
+      "centerTopY": 32,
+      "occupied": {
+        "minX": 2,
+        "maxX": 19,
+        "minY": 0,
+        "maxY": 45,
+        "minZ": 2,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 132
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukstadik",
+      "id": "phack:chunk/chukstadik",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 33,
+        "openSky": true
+      },
+      "centerTopY": 33,
+      "occupied": {
+        "minX": 2,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 39,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 30
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukgift",
+      "id": "phack:chunk/chukgift",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 33,
+        "openSky": true
+      },
+      "centerTopY": 33,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 38,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 31
+      },
+      "liquids": {}
+    },
+    {
+      "name": "chukad",
+      "id": "phack:chunk/chukad",
+      "spawn": {
+        "x": 10,
+        "z": 10,
+        "y": 33,
+        "openSky": true
+      },
+      "centerTopY": 33,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 41,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 32
+      },
+      "liquids": {
+        "minecraft:lava": 25
+      }
+    },
+    {
+      "name": "chuk_cyper",
+      "id": "phack:chunk/chuk_cyper",
+      "spawn": {
+        "x": 12,
+        "z": 10,
+        "y": 31,
+        "openSky": true
+      },
+      "centerTopY": 44,
+      "occupied": {
+        "minX": 1,
+        "maxX": 20,
+        "minY": 0,
+        "maxY": 44,
+        "minZ": 1,
+        "maxZ": 20
+      },
+      "banned": {
+        "minecraft:bedrock": 98,
+        "minecraft:reinforced_deepslate": 6,
+        "minecraft:command_block": 1
+      },
+      "liquids": {}
+    }
+  ]
+}

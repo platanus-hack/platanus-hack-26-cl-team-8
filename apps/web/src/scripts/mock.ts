@@ -35,6 +35,7 @@ import {
   MatchPhaseSchema,
   UpdatePromptBodySchema,
   UpdateSettingsBodySchema,
+  arenaOptions,
   kitOf,
   validateCustomKit,
   type AgentConfig,
@@ -134,6 +135,8 @@ const defaults: ServerDefaults = {
   matchDurationSeconds: MATCH_DURATION_MS / 1000,
   // La maqueta no tiene ElevenLabs: voice.ts habla con el sintetizador del navegador.
   voice: { available: true },
+  arena: "platanus",
+  arenas: arenaOptions("platanus"),
 };
 
 /** El precio viaja en dólares por token; aquí se escribe por millón, que es como se lee. */
@@ -304,6 +307,8 @@ function buildState(phase: MatchPhase): MatchState {
       // Como un servidor recién encendido: todavía no hubo ninguna pelea.
       id: "",
       phase,
+      arena: settings.arena ?? defaults.arena,
+      seed: null,
       startedAt: null,
       endsAt: null,
       countdownEndsAt: null,
@@ -319,6 +324,8 @@ function buildState(phase: MatchPhase): MatchState {
     return {
       id: "mock-match",
       phase,
+      arena: settings.arena ?? defaults.arena,
+      seed: null,
       startedAt: null,
       endsAt: null,
       countdownEndsAt,
@@ -335,6 +342,8 @@ function buildState(phase: MatchPhase): MatchState {
     return {
       id: "mock-match",
       phase,
+      arena: settings.arena ?? defaults.arena,
+      seed: null,
       startedAt: runningSince,
       endsAt: settings.timer ? runningSince + matchDurationMs() : null,
       countdownEndsAt: null,
@@ -351,6 +360,8 @@ function buildState(phase: MatchPhase): MatchState {
     return {
       id: "mock-match",
       phase,
+      arena: settings.arena ?? defaults.arena,
+      seed: null,
       startedAt: runningSince,
       endsAt: null,
       countdownEndsAt: null,
@@ -371,6 +382,8 @@ function buildState(phase: MatchPhase): MatchState {
   return {
     id: "mock-match",
     phase,
+    arena: settings.arena ?? defaults.arena,
+    seed: null,
     startedAt: now - 131_000,
     endsAt: now + 49_000,
     countdownEndsAt: null,
@@ -745,6 +758,8 @@ function pastMatch(
   const endedAt = Date.now() - minutesAgo * MINUTE;
   return {
     id,
+    arena: "platanus",
+    seed: null,
     startedAt: endedAt - seconds * 1000,
     endedAt,
     durationMs: seconds * 1000,

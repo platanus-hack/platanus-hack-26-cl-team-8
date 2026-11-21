@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { createFighter } from "@phack/agent";
 import { loadEnv } from "@phack/env";
 import { DEFAULT_MODELS, createLlmClient } from "@phack/llm";
-import { buildBenchReport, type ServerDefaults } from "@phack/protocol";
+import { arenaFor, arenaOptions, buildBenchReport, type ServerDefaults } from "@phack/protocol";
 import { applyWorldRules, buildArena } from "./arena";
 import { FlagStore, withFlagOutcomes } from "./flags";
 import { Hub } from "./hub";
@@ -75,6 +75,9 @@ async function main(): Promise<void> {
     models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
     matchDurationSeconds: env.MATCH_DURATION_SECONDS,
     voice: { available: speech.configured() },
+    // ARENA_SCENARIO es solo el mapa por defecto: cada pelea puede pedir otro del mismo mundo.
+    arena: env.ARENA_SCENARIO,
+    arenas: arenaOptions(env.ARENA_SCENARIO),
   };
 
   // Modelos permitidos: el catálogo se baja en segundo plano; mientras tanto vale la lista fija.
@@ -174,9 +177,14 @@ async function main(): Promise<void> {
     while (!shuttingDown) {
       try {
         await rcon.waitUntilReady();
-        await applyWorldRules(rcon);
-        // No reconstruir encima de una pelea que alguien ya inició.
-        if (!match.isActive()) await buildArena(rcon, sleep);
+        // Al arrancar se deja lista la arena del mapa elegido en los ajustes (o el por defecto).
+        // No tocar una pelea que alguien ya inició: aplica sus propias reglas (el punto de
+        // reaparición es el de SU mapa) y construye su arena.
+        if (!match.isActive()) {
+          const startArena = arenaFor(match.readyArena());
+          await applyWorldRules(rcon, startArena);
+          await buildArena(rcon, sleep, startArena);
+        }
         log("info", "Arena lista");
         return;
       } catch (err) {

@@ -57,8 +57,12 @@ elegido, `…/models/<id>/endpoints` (público, sin clave, sin gastar créditos)
 Al crear se congela todo en `tournament.json`: ids exactos, proveedor de inferencia,
 precios, catálogo (sha256 + `catalog.json` crudo), límites, regla de calibración y
 **versión del benchmark**. Un `run` posterior usa exactamente eso. Si el código cambió el
-prompt fijo, las tools del agente, la geometría del escenario, la duración o el tick, el
-hash ya no coincide y `run` se niega con un mensaje claro: hay que crear otro torneo.
+prompt fijo, las tools del agente, la geometría del escenario (en Chunk Battle también los
+metadatos de las islas), la duración o el tick, el hash ya no coincide y `run` se niega con
+un mensaje claro: hay que crear otro torneo. El id es `pvp-<escenario>-v2+<hash>`: `v2` marca
+el mapa por partida (Platanus o Chunk Battle en el mismo mundo, con la semilla de la
+partida decidiendo las islas) y, en Chunk Battle, los bloques y el pico que el mapa suma al
+kit para cruzar con `build`/`dig` (los torneos `v1` ya no se reanudan).
 
 Con el catálogo del 21-11-2026 y el plan por defecto entran las 8 prioritarias: GPT-6 Luna
 Fast, Claude Haiku 5.5, Qwen 3.8 Flash y MiMo V2.6 Flash con razonamiento apagado; Gemini
@@ -67,8 +71,15 @@ Fast, Claude Haiku 5.5, Qwen 3.8 Flash y MiMo V2.6 Flash con razonamiento apagad
 ## 2. Partidas
 
 - Cada partida tiene un id estable `stage:escenario:s<semilla>:<a>~<b>:<ida|vuelta>` (a < b
-  por key). La **ida** pone a A en rojo; la **vuelta**, en azul. Hoy la semilla solo
-  etiqueta réplicas (el estado inicial es el mismo).
+  por key). La **ida** pone a A en rojo; la **vuelta**, en azul.
+- **Mapa y semilla.** El escenario del torneo (`--scenario platanus|chunk-battle`, o `--map`,
+  en `plan` y `create`; por defecto `ARENA_SCENARIO`) y la semilla de cada `MatchSpec` llegan
+  a la pelea real (`MatchManager.runOnce({ arena, seed })`), que construye ese mapa por RCON sin
+  reiniciar Minecraft. En Platanus la semilla solo etiqueta réplicas (el estado inicial es el
+  mismo). En **Chunk Battle** decide las islas (tema de cada lado y capas de mineral del
+  núcleo): la ida y la vuelta comparten islas con los lados cambiados, así que la pareja
+  juega ambas posiciones del mismo terreno. `run` se niega si el servidor carga otro mundo
+  (p. ej. `ARENA_SCENARIO=pizza-spleef-2` con un torneo de Platanus).
 - Ambos lados usan `BENCHMARK_PROMPT`, el mismo tick y la misma duración (60 s), sin
   explicación del resultado. Cada partida crea agentes nuevos (sin memoria entre partidas).
 - **Latencia por decisión:** desde que el agente recibe el estado hasta que entrega una

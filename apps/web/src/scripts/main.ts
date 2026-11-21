@@ -1,6 +1,7 @@
 import { parseArenaEvent, type ArenaEvent, type MatchPhase, type MatchState } from "@phack/protocol";
 import { actionLine, describeAction } from "./actions";
 import { fetchDefaults, fetchMatches, fetchState } from "./api";
+import { initArenaPicker, setMatchArena } from "./arenapicker";
 import { initControls, setPhase } from "./controls";
 import { initSettingControls } from "./controls-enhance";
 import { initCountdown, updateCountdown } from "./countdown";
@@ -62,6 +63,7 @@ function applyState(state: MatchState): void {
   renderState(state);
   syncThoughts(state);
   setPhase(state.phase);
+  setMatchArena(state);
   setTranscriptMatch(state.id);
   syncHistory(state);
   updateCountdown(state);
@@ -287,6 +289,7 @@ function init(): void {
   initHistory();
   initSettingControls();
   initSettings();
+  initArenaPicker();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.
   initControls((state) => {

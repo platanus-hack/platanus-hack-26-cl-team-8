@@ -1,7 +1,7 @@
 import type { Bot } from "mineflayer";
 import { AGENT_USERNAMES, SIDES } from "@phack/protocol";
-import { activeArena } from "./arena";
-import { connectBot, isMisplaced, placeCamera } from "./bot";
+import { currentArena, startArenaTracking } from "./arena";
+import { connectBot, isMisplaced, placeCamera, runRcon } from "./bot";
 import { loadConfig, type CameraConfig } from "./config";
 import { framingFov, orbitPosition, pickAimTarget, smoothScalar, smoothToward, type Vec } from "./director";
 import { FfmpegStreamer } from "./ffmpeg";
@@ -78,10 +78,20 @@ function startRenderLoop(config: CameraConfig, stage: Stage, ffmpeg: FfmpegStrea
   const pixels = new Uint8Array(config.width * config.height * 4);
   const frame = Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength);
 
-  const ARENA = activeArena();
-  const center: Vec = { x: ARENA.center.x, y: ARENA.center.y, z: ARENA.center.z };
-  const basePosition: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
-  let aim: Vec = { x: center.x, y: center.y + AIM_HEIGHT, z: center.z };
+  // Mapa de la pelea: si cambia, la cámara y la mira pasan al mapa nuevo (ver arena.ts).
+  let arenaId = "";
+  let center: Vec = { x: 0, y: 0, z: 0 };
+  let basePosition: Vec = { x: 0, y: 0, z: 0 };
+  let aim: Vec = { x: 0, y: 0, z: 0 };
+  const useArena = (): void => {
+    const arena = currentArena();
+    if (arena.id === arenaId) return;
+    arenaId = arena.id;
+    center = { x: arena.center.x, y: arena.center.y, z: arena.center.z };
+    basePosition = { x: arena.camera.x, y: arena.camera.y, z: arena.camera.z };
+    aim = { x: center.x, y: center.y + AIM_HEIGHT, z: center.z };
+  };
+  useArena();
   let fov = ZOOM.idleFov;
   const framing = { ...ZOOM, aspect: config.width / config.height };
 
@@ -100,6 +110,7 @@ function startRenderLoop(config: CameraConfig, stage: Stage, ffmpeg: FfmpegStrea
     const elapsed = (now - startedAt) / 1000;
 
     try {
+      useArena();
       const bot = currentBot;
       const fighters: Vec[] = [];
       // Puntos que deben quedar dentro de la imagen: pies y tope (con marcador) de cada peleador.
@@ -170,9 +181,11 @@ function startRenderLoop(config: CameraConfig, stage: Stage, ffmpeg: FfmpegStrea
 async function keepPlaced(config: CameraConfig, bot: Bot, isOver: () => boolean, onPlaced: () => void): Promise<void> {
   let announced = false;
   let failures = 0;
+  let placedArena = "";
   while (!isOver() && !stopping) {
-    if (!announced || isMisplaced(bot)) {
+    if (!announced || placedArena !== currentArena().id || isMisplaced(bot)) {
       try {
+        placedArena = currentArena().id;
         await placeCamera(config);
         failures = 0;
         if (!announced) {
@@ -195,7 +208,10 @@ async function keepPlaced(config: CameraConfig, bot: Bot, isOver: () => boolean,
         continue;
       }
     }
-    await sleep(PLACEMENT_CHECK_MS);
+    // Se revisa seguido si cambió el mapa de la pelea, para reubicarse al tiro.
+    for (let waited = 0; waited < PLACEMENT_CHECK_MS && placedArena === currentArena().id && !isOver(); waited += 1_000) {
+      await sleep(1_000);
+    }
   }
 }
 
@@ -268,6 +284,13 @@ async function main(): Promise<void> {
   // El loop parte ya, pero solo empieza a enviar video cuando el bot entra por primera
   // vez al mundo; después sigue enviando (cielo vacío) aunque el bot se desconecte.
   startRenderLoop(config, stage, ffmpeg);
+  // keepPlaced ve el cambio de mapa y reubica al bot; al terminar recentra los chunks.
+  startArenaTracking({
+    orchestratorUrl: config.orchestratorUrl,
+    rcon: (commands) => runRcon(config, commands),
+    onChange: () => {},
+    log,
+  });
   await runBotLoop(config, stage);
 }
 

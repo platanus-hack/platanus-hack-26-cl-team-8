@@ -162,6 +162,7 @@ const stats = [
             --:--
           </div>
           <span class="phase" id="phase">Conectando…</span>
+          <span class="map-name" id="map-name" data-tip="Mapa de la pelea en curso (o de la última)." hidden></span>
           <!-- Modo por rondas: un cuadro por ronda, del color de quien la ganó (scoreboard.ts). -->
           <ol class="rounds" id="rounds" hidden></ol>
         </div>
@@ -207,6 +208,11 @@ const stats = [
 
       <!-- El botón de la pelea, abajo al centro: uno solo a la vez (iniciar o detener). -->
       <div class="controls">
+        <!-- Mapa de la próxima pelea (ajuste "arena"): arenapicker.ts lo llena con los del servidor. -->
+        <label class="map-picker" data-tip="Mapa de la próxima pelea. No se puede cambiar con una pelea en curso.">
+          <span class="map-picker__label">Mapa</span>
+          <select id="map-select" disabled></select>
+        </label>
         <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
         <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
       </div>

@@ -45,6 +45,14 @@ import { extractJsonObject, isRecord } from "./util";
  *   turno de cada cuatro. No hay modelo detrás: las frases son fijas, salen de listas según
  *   el número de turno (sin azar) y no dependen de lo que dijo el rival. Si la tool no
  *   declara "say", nunca lo envía.
+ * - Islas (Chunk Battle): si el system prompt describe "Dos islas flotantes" con sus
+ *   coordenadas (línea "- Coordenadas: la isla oeste ocupa x=A..B y la este x=C..D, las dos
+ *   de z=E..F; el suelo de ambas está alrededor de y=G."), con el rival en la otra isla y
+ *   bloques en el inventario, un turno de cada dos tiende un puente (build) sobre el hueco
+ *   a la altura del bloque que pisa, desde su lado hacia el rival (con el mapa "world" de
+ *   la observación, del borde real de su isla a la otra orilla: los bordes son irregulares); con el puente hecho, vuelve a la
+ *   política de siempre (approach lo cruza). Con el rival cerca y bloques en medio
+ *   ("blocksBetween"), a veces se abre paso con dig. Sin esa línea no cambia nada.
  * - No informa `usage`: no hay tokens reales que contar.
  * - "Turno" = el mayor entre la cantidad de mensajes "assistant" del historial y el número
  *   de llamadas previas a ESTE cliente; se usa para alternar acciones. El contador propio
@@ -126,7 +134,17 @@ export type MockObservation = {
   constructionStatus?: string;
   /** Modo "chat": mensajes del rival desde la decisión anterior ([] si no viene). */
   rivalMessages: string[];
+  /** Posición propia y del rival relativa a la propia (null si no vienen). */
+  position?: { x: number; y: number; z: number } | null;
+  opponentRelative?: { x: number; y: number; z: number } | null;
+  /** Bloques en la recta hasta el rival (0 si no viene). */
+  blocksBetween?: number;
+  /** Mapa de la observación ("world", cuboids-v1): dice si una celda es sólida. */
+  solidAt?: (x: number, y: number, z: number) => boolean;
 };
+
+/** Geometría de las islas que describe el system prompt (Chunk Battle). */
+export type MockIslands = { west: [number, number]; east: [number, number]; z: [number, number]; groundY: number };
 export type MockStyle = "melee" | "ranged";
 export type MockDecision = {
   preferences: MockToolName[];
@@ -173,6 +191,113 @@ export function readObservation(messages: ChatMessage[]): MockObservation {
     rivalMessages: Array.isArray(obj.rivalMessages)
       ? obj.rivalMessages.filter((m): m is string => typeof m === "string" && m.trim() !== "")
       : [],
+    // Solo si vienen: la política de siempre no los usa.
+    ...(readVec(obj.position) ? { position: readVec(obj.position) } : {}),
+    ...(readVec(obj.opponentRelative) ? { opponentRelative: readVec(obj.opponentRelative) } : {}),
+    ...((num(obj.blocksBetween) ?? 0) > 0 ? { blocksBetween: num(obj.blocksBetween)! } : {}),
+    ...(readWorld(obj.world) ? { solidAt: readWorld(obj.world)! } : {}),
+  };
+}
+
+/** Lee el mapa "cuboids-v1" de la observación: regiones [x,y,z,x1,y1,z1,material,editable]. */
+function readWorld(value: unknown): ((x: number, y: number, z: number) => boolean) | null {
+  if (!isRecord(value) || !Array.isArray(value.palette) || !Array.isArray(value.regions)) return null;
+  const solid = value.palette.map((m) => isRecord(m) && m.solid === true);
+  const boxes = value.regions.filter((r): r is number[] => Array.isArray(r) && r.length >= 7 && r.every((n) => typeof n === "number") && solid[r[6]!] === true);
+  return (x, y, z) => boxes.some(([x0, y0, z0, x1, y1, z1]) => x >= x0! && x <= x1! && y >= y0! && y <= y1! && z >= z0! && z <= z1!);
+}
+
+function readVec(value: unknown): { x: number; y: number; z: number } | null {
+  if (!isRecord(value)) return null;
+  const x = num(value.x), y = num(value.y), z = num(value.z);
+  return x === null || y === null || z === null ? null : { x, y, z };
+}
+
+const ISLANDS_LINE = /la isla oeste ocupa x=(-?\d+)\.\.(-?\d+) y la este x=(-?\d+)\.\.(-?\d+), las dos de z=(-?\d+)\.\.(-?\d+); el suelo de ambas está alrededor de y=(-?\d+)/;
+
+/** Islas que describe el system prompt; null si el mapa no es de islas. */
+export function readIslands(messages: ChatMessage[]): MockIslands | null {
+  for (const m of messages) {
+    if (m.role !== "system") continue;
+    const match = ISLANDS_LINE.exec(m.content);
+    if (!match) continue;
+    const [, a, b, c, d, e, f, g] = match.map(Number) as number[];
+    return { west: [a!, b!], east: [c!, d!], z: [e!, f!], groundY: g! };
+  }
+  return null;
+}
+
+/** Bloques de construcción que sabe usar (los mismos que acepta "build"). */
+function buildMaterial(inventory: Record<string, number>): string | null {
+  const names = Object.keys(inventory).filter((name) => name.endsWith("_planks") || name.endsWith("_wool") || ["cobblestone", "dirt", "obsidian"].includes(name));
+  return names.sort((a, b) => (inventory[b] ?? 0) - (inventory[a] ?? 0))[0] ?? null;
+}
+
+/** En qué isla cae una x: "west", "east" o "gap" (sobre el hueco o un puente). */
+function islandSide(islands: MockIslands, x: number): "west" | "east" | "gap" {
+  if (x < islands.west[1] + 1) return "west";
+  if (x >= islands.east[0]) return "east";
+  return "gap";
+}
+
+/** Sin mapa: las celdas del hueco nominal entre ambas islas, desde su lado. */
+function nominalGap(islands: MockIslands, mine: "west" | "east"): number[] {
+  const xs: number[] = [];
+  for (let x = islands.west[1] + 1; x < islands.east[0]; x += 1) xs.push(x);
+  return mine === "east" ? xs.reverse() : xs;
+}
+
+/** Más largo que esto no es un hueco entre islas: no tiende el puente. */
+const MAX_BRIDGE = 16;
+
+/**
+ * Con mapa: los bordes de las islas son irregulares. Desde el bloque que pisa avanza por su
+ * suelo hasta el borde y cubre el vacío hasta el primer bloque sólido de la otra orilla (a
+ * esa altura). null si no pisa suelo o no hay otra orilla al alcance.
+ */
+function bridgeCells(solidAt: (x: number, y: number, z: number) => boolean, fromX: number, y: number, z: number, dir: 1 | -1): number[] | null {
+  if (!solidAt(fromX, y, z)) return null;
+  let x = fromX;
+  while (solidAt(x + dir, y, z)) x += dir;
+  const cells: number[] = [];
+  for (x += dir; !solidAt(x, y, z); x += dir) {
+    if (cells.length >= MAX_BRIDGE) return null;
+    cells.push(x);
+  }
+  return cells;
+}
+
+/**
+ * Chunk Battle: cruzar al otro lado. Un turno de cada dos, con el rival en la otra isla y
+ * bloques en el inventario, tiende el puente sobre el hueco (las celdas de vacío entre
+ * ambas islas, a la altura del bloque que pisa, desde su lado). Con el rival cerca y bloques en
+ * medio, a veces se abre paso con dig. null = no toca.
+ */
+export function crossingDecision(obs: MockObservation, islands: MockIslands, turn: number): MockDecision | null {
+  const self = obs.position;
+  const rel = obs.opponentRelative;
+  if (!self || !rel || obs.distance === null) return null;
+  if (obs.distance <= MELEE_RANGE + 1 && obs.blocksBetween && obs.blocksBetween > 0 && turn % 2 === 1) {
+    return { preferences: ["dig"], args: { dig: { target: "between" } }, reason: `bloques entre el rival y yo: me abro paso` };
+  }
+  const mine = islandSide(islands, self.x);
+  const theirs = islandSide(islands, self.x + rel.x);
+  if (mine === "gap" || theirs === "gap" || mine === theirs) return null;
+  // Ya se construyó (o está en eso): approach cruza por el puente.
+  if (obs.constructionStatus === "complete" || obs.constructionStatus === "active") return null;
+  const material = buildMaterial(obs.inventory);
+  if (!material || turn % 2 !== 0) return null;
+  const z = Math.min(islands.z[1], Math.max(islands.z[0], Math.floor(self.z)));
+  // A la altura del bloque que pisa (el relieve de cada isla varía ±2 del suelo nominal):
+  // así la primera celda se apoya en el borde de su isla.
+  const y = Math.floor(self.y) - 1;
+  const xs = obs.solidAt ? bridgeCells(obs.solidAt, Math.floor(self.x), y, z, mine === "west" ? 1 : -1) : nominalGap(islands, mine);
+  if (!xs || xs.length === 0) return null;
+  const blocks = xs.map((x) => ({ x, y, z, material }));
+  return {
+    preferences: ["build"],
+    args: { build: { blocks } },
+    reason: `rival en la otra isla (a ${obs.distance.toFixed(1)}): tiendo un puente de ${blocks.length} bloques`,
   };
 }
 
@@ -408,7 +533,11 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
           toolCalls: [{ id: `mock_${turn}`, name: "surrender", args: { reason: "me ordenaron rendirme" } }],
         };
       }
-      const decision = decide(obs, readStyle(req.messages), turn);
+      const islands = readIslands(req.messages);
+      const crossing = islands && obs.currentAction !== "build" ? crossingDecision(obs, islands, turn) : null;
+      const decision = crossing
+        ? { ...crossing, preferences: [...crossing.preferences, ...decide(obs, readStyle(req.messages), turn).preferences] }
+        : decide(obs, readStyle(req.messages), turn);
       // Si ninguna preferida está disponible, se prueba cualquier tool conocida.
       const order: string[] = [...decision.preferences, ...MOCK_TOOL_NAMES];
       const chosenName = order.find((name) => byName.has(name));
@@ -419,7 +548,7 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
       // `tool.name` salió de `order`, así que es uno de los nombres conocidos.
       const name = tool.name as MockToolName;
       const args: Record<string, unknown> = { ...buildArgs(tool), ...decision.args?.[name] };
-      if (name === "build") Object.assign(args, mockBlueprint(req.messages));
+      if (name === "build" && !decision.args?.build) Object.assign(args, mockBlueprint(req.messages));
       if (hasSayProperty(tool)) {
         const say = mockSay(obs, name, turn);
         if (say !== null) args.say = say;

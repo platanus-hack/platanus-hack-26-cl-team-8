@@ -14,6 +14,7 @@ import { byId, setText } from "./dom";
 import { getDefaults, onDefaultsChange } from "./models";
 import { isSoundOn, onSoundChange, setVoiceHint } from "./sound";
 import { applyRemoteBenchSettings, initBenchSettings } from "./benchsettings";
+import { applyRemoteArena } from "./arenapicker";
 import { showToast } from "./toast";
 
 /**
@@ -140,6 +141,7 @@ function lockControls(locked: boolean): void {
 /** Ajustes que llegan del servidor (carga inicial o websocket). */
 export function applyRemoteSettings(settings: MatchSettings): void {
   applyRemoteBenchSettings(settings);
+  applyRemoteArena(settings);
   remote = settings;
   if (els) els.field.hidden = false;
   // Mientras se guarda, la respuesta propia es la que manda.

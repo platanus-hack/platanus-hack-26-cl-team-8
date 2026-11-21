@@ -30,6 +30,8 @@ function status(side: Side): AgentStatus {
 function record(id: string): MatchRecord {
   return {
     id,
+    arena: "platanus",
+    seed: null,
     startedAt: 1000,
     endedAt: 5000,
     durationMs: 4000,

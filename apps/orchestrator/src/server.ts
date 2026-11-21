@@ -11,7 +11,9 @@ import {
   ScenarioIdSchema,
   FlagBodySchema,
   MAX_PROMPT_LENGTH,
+  SELECTABLE_ARENA_SCENARIOS,
   SideSchema,
+  StartMatchBodySchema,
   TOURNAMENT_ROUTES,
   UpdatePromptBodySchema,
   UpdateSettingsBodySchema,
@@ -32,13 +34,14 @@ import {
   type Provider,
   type ServerDefaults,
   type Side,
+  type StartMatchBody,
   type UpdatePromptBody,
 } from "@phack/protocol";
 import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
 import type { JudgeOutcome } from "./judge";
 import { UnknownPresetError } from "./presets";
-import { MatchActiveError } from "./match";
+import { ArenaUnavailableError, MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
 import type { TournamentReader } from "./tournament";
 import { isSpeechId } from "./speech";
@@ -48,7 +51,8 @@ export type ServerDeps = {
   hub: Hub;
   match: {
     getState(): MatchState;
-    start(): MatchState;
+    /** Lanza MatchActiveError (409) o ArenaUnavailableError (400). */
+    start(opts?: StartMatchBody): MatchState;
     stop(): Promise<MatchState>;
     /** Hay una pelea (o una serie) en curso; opcional para los tests que no lo usan. */
     isActive?(): boolean;
@@ -289,7 +293,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
+              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
             ),
           );
       }
@@ -312,6 +316,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (b.seriesWin !== undefined) change.seriesWin = b.seriesWin;
       if (b.refillKit !== undefined) change.refillKit = b.refillKit;
       if (b.judge !== undefined) change.judge = b.judge;
+      if (b.arena !== undefined) {
+        // Solo los mapas que este servidor construye (ServerDefaults.arenas); null = el por defecto.
+        if (b.arena !== null && !deps.defaults.arenas.some((option) => option.id === b.arena)) {
+          return reply.code(400).send(errorBody(`El mapa "${b.arena}" no está disponible en este servidor`));
+        }
+        change.arena = b.arena;
+      }
       if (b.rules !== undefined) {
         // Las reglas van por lado: el lado que no viene conserva las suyas.
         const current = settings.get().rules;
@@ -323,7 +334,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     });
   }
 
-  app.post(API_ROUTES.matchStart, async (_req, reply) => {
+  app.post(API_ROUTES.matchStart, async (req, reply) => {
+    // Sin cuerpo = el mapa de los ajustes (o el por defecto del servidor).
+    const body = StartMatchBodySchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send(errorBody(`Mapa inválido: usa ${SELECTABLE_ARENA_SCENARIOS.join(" o ")}`));
+    }
     // El CLI del torneo usa el mismo servidor de Minecraft y los mismos bots.
     const lock = await deps.tournaments?.lock();
     if (lock) {
@@ -332,10 +348,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         .send(errorBody(`Hay un torneo corriendo ("${lock.id}"): la arena está ocupada hasta que termine o se pause`));
     }
     try {
-      return deps.match.start();
+      return deps.match.start(body.data);
     } catch (err) {
       if (err instanceof MatchActiveError) {
         return reply.code(409).send(errorBody("Ya hay una pelea en curso"));
+      }
+      if (err instanceof ArenaUnavailableError) {
+        return reply.code(400).send(errorBody(err.message));
       }
       throw err;
     }

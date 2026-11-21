@@ -40,6 +40,8 @@ function side(extra: Partial<SideOutcome> = {}): SideOutcome {
 function outcome(extra: Partial<MatchOutcome> = {}): MatchOutcome {
   return {
     id: "x",
+    arena: "platanus",
+    seed: 1,
     reachedRunning: true,
     record: null,
     result: { winner: "red", reason: "kill" },
@@ -139,6 +141,9 @@ describe("createMinecraftRunner", () => {
     const opts = calls[0]!;
     expect(opts.durationSeconds).toBe(60);
     expect(opts.explain).toBe(false);
+    // El escenario y la semilla del calendario deciden la arena de la pelea real.
+    expect(opts.arena).toBe(s.scenario);
+    expect(opts.seed).toBe(s.seed);
     expect(opts.configs.red).toEqual({
       provider: "vercel",
       model: REF_KEY,
@@ -148,5 +153,20 @@ describe("createMinecraftRunner", () => {
     expect(opts.configs.blue.prompt).toBe(BENCHMARK_PROMPT);
     expect(opts.configs.blue.gatewayRouting).toBeUndefined();
     expect(routingFor(other)).toBeUndefined();
+  });
+});
+
+describe("createMinecraftRunner: mapa por partida", () => {
+  it("pasa Chunk Battle y su semilla; un escenario desconocido falla sin pelear", async () => {
+    const calls: RunOnceOptions[] = [];
+    const runner = createMinecraftRunner({ runOnce: async (opts) => (calls.push(opts), outcome()) }, 60);
+    const models = { "a/x": fakeModel("a/x"), "b/y": fakeModel("b/y") };
+    const cb: MatchSpec = { ...spec, id: "league:chunk-battle:s9:a/x~b/y:ida", scenario: "chunk-battle", seed: 9 };
+    await runner.run(cb, models, new AbortController().signal);
+    expect(calls[0]).toMatchObject({ arena: "chunk-battle", seed: 9 });
+    await expect(runner.run({ ...spec, scenario: "lava" }, models, new AbortController().signal)).rejects.toThrow(
+      /Escenario desconocido/,
+    );
+    expect(calls).toHaveLength(1);
   });
 });

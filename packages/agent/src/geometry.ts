@@ -93,3 +93,57 @@ export function retreatTarget(input: RetreatInput): Vec3Like {
   };
   return distanceXZ(left, opponent) >= distanceXZ(right, opponent) ? left : right;
 }
+
+// ---------------------------------------------------------------------------
+// Zona de movimiento según el mapa
+// ---------------------------------------------------------------------------
+
+/** Isla rectangular en planta (Chunk Battle): esquinas inclusivas de su superficie. */
+export type IslandRect = { from: Vec3Like; to: Vec3Like };
+
+/** Lo que hace falta saber del mapa para moverse: centro, radio y, si hay, las islas. */
+export type MovementArena = { center: Vec3Like; radius: number; islands?: readonly IslandRect[] };
+
+function islandCenter(island: IslandRect): Vec3Like {
+  return {
+    x: (island.from.x + island.to.x + 1) / 2,
+    y: Math.max(island.from.y, island.to.y),
+    z: (island.from.z + island.to.z + 1) / 2,
+  };
+}
+
+function islandDistance(island: IslandRect, p: Vec3Like): number {
+  const minX = Math.min(island.from.x, island.to.x);
+  const maxX = Math.max(island.from.x, island.to.x) + 1;
+  const minZ = Math.min(island.from.z, island.to.z);
+  const maxZ = Math.max(island.from.z, island.to.z) + 1;
+  const dx = Math.max(0, minX - p.x, p.x - maxX);
+  const dz = Math.max(0, minZ - p.z, p.z - maxZ);
+  return Math.hypot(dx, dz);
+}
+
+/** Isla donde está (o la más cercana a) el punto; null si el mapa no tiene islas. */
+export function islandAt(arena: MovementArena, p: Vec3Like): IslandRect | null {
+  let best: IslandRect | null = null;
+  let bestDist = Infinity;
+  for (const island of arena.islands ?? []) {
+    const d = islandDistance(island, p);
+    if (d < bestDist) {
+      best = island;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Zona por la que el agente se mueve solo (retirarse, esquivar, ir al "centro", la perla):
+ * con islas, el círculo inscrito en la isla donde está (el centro del mapa cae en el vacío);
+ * sin islas, el círculo de la arena.
+ */
+export function movementZone(arena: MovementArena, p: Vec3Like): { center: Vec3Like; radius: number } {
+  const island = islandAt(arena, p);
+  if (!island) return { center: arena.center, radius: arena.radius };
+  const half = Math.min(Math.abs(island.to.x - island.from.x) + 1, Math.abs(island.to.z - island.from.z) + 1) / 2;
+  return { center: islandCenter(island), radius: Math.max(1, half) };
+}
