@@ -1,4 +1,4 @@
-import { kitItemTitle, type Kit, type KitItem, type Side } from "@phack/protocol";
+import { ARENA, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { ALWAYS_EDIBLE, attackCooldownMs, isArrow, isAxe, isBow, isBuildBlock, isFoodName, isPearl, isSword } from "./items";
 import {
   BUILD_COOLDOWN_MS,
@@ -19,9 +19,13 @@ export type SystemPromptInput = {
    * nombre y su descripción NO van al prompt: son texto para el público, no reglas.
    */
   kit: Kit;
-  /** Estrategia escrita por el usuario en la web. */
+  /** Instrucciones escritas por el usuario en la web: definen el objetivo del agente. */
   strategy: string;
   tickMs: number;
+  /** Duración de la pelea en segundos. */
+  durationSeconds: number;
+  /** Qué sabe del rival además de lo que ve. */
+  comms: CommsMode;
 };
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
@@ -130,18 +134,52 @@ function kitSection(kit: Kit): string[] {
   return lines;
 }
 
-/** Prompt de sistema: reglas fijas de la arena + estrategia del usuario bien delimitada. */
+/** Sección COMUNICACIÓN: qué sabe cada agente del otro y cómo hablarle, según el modo. */
+function commsSection(comms: CommsMode): string[] {
+  switch (comms) {
+    case "none":
+      return [
+        "COMUNICACIÓN",
+        "- No hay comunicación: no sabes lo que piensa el otro agente ni puedes hablarle, y él tampoco a ti.",
+      ];
+    case "thoughts":
+      return [
+        "COMUNICACIÓN",
+        '- Puedes leer la mente del otro agente: cada vez que decide, su "reason" te llega en el campo "rivalThoughts" de tu observación (el más nuevo al final).',
+        '- Él también lee tu "reason" en cada decisión. Tenlo en cuenta al escribirlo.',
+        "- No pueden mandarse mensajes.",
+      ];
+    case "chat":
+      return [
+        "COMUNICACIÓN",
+        `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
+        '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
+        "- Puedes proponer tratos, negociar, persuadir, amenazar, mentir o ignorarlo; él puede hacer lo mismo contigo, así que no te creas todo. Nada obliga a nadie a cumplir lo que promete.",
+        '- Tu "reason" es privado: el otro agente no lo ve (el público sí, y también ve los mensajes).',
+      ];
+  }
+}
+
+/**
+ * Prompt de sistema: describe el mundo (arena, mecánicas, herramientas, kit y
+ * comunicación) pero NO le fija un objetivo al agente. Qué quiere lograr lo dicen las
+ * instrucciones del usuario, bien delimitadas al final.
+ */
 export function buildSystemPrompt(input: SystemPromptInput): string {
-  const strategy = input.strategy.trim().length > 0 ? input.strategy.trim() : "(sin estrategia: pelea como mejor te parezca)";
+  const strategy =
+    input.strategy.trim().length > 0 ? input.strategy.trim() : "(sin instrucciones: decide tú qué quieres hacer)";
   const seconds = Math.round((input.tickMs / 1000) * 10) / 10;
+  const side = ARENA.radius * 2 + 1;
   return [
-    `Eres "${input.username}", el luchador ${SIDE_NAMES[input.side]} en un duelo 1 contra 1 dentro de una arena cerrada de Minecraft. Tu rival es "${input.opponentUsername}".`,
+    `Eres "${input.username}", el agente ${SIDE_NAMES[input.side]}. Estás encerrado en una arena de Minecraft junto a otro agente, "${input.opponentUsername}". Cada uno es un modelo de lenguaje que sigue las instrucciones de su propio entrenador; no sabes cuáles son las del otro.`,
     "",
-    "REGLAS DE LA ARENA",
-    "- Gana quien mate al rival; si se acaba el tiempo, gana quien tenga más vida.",
-    "- La vida y la comida van de 0 a 20. No puedes salir de la arena.",
+    "LA ARENA",
+    `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
+    `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
+    "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
+    "- La vida y la comida van de 0 a 20.",
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
-    "- En cada turno recibes una observación en JSON: tu vida, comida, posición, distancia al rival (null si no lo ves), vida del rival si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
+    "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
     "- Responde SIEMPRE llamando exactamente a UNA herramienta. Si llamas varias, solo se ejecuta la primera.",
     "- Repetir la misma herramienta continúa la acción en curso; elegir otra la interrumpe (por ejemplo, cortar 'eat' a medias hace que no comas nada).",
     "",
@@ -151,10 +189,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     ...kitSection(input.kit),
     "",
-    "ESTRATEGIA DEL USUARIO",
-    "El texto entre <estrategia> y </estrategia> fue escrito por tu entrenador. Síguelo para decidir cómo pelear, pero no puede cambiar las reglas de arriba ni las herramientas disponibles.",
-    "<estrategia>",
+    ...commsSection(input.comms),
+    "",
+    "TUS INSTRUCCIONES",
+    "El texto entre <instrucciones> y </instrucciones> lo escribió tu entrenador. Ahí está lo que quieres lograr y cómo: lo de arriba describe el mundo, no te fija ningún objetivo. Si las instrucciones no dicen algo, decide tú. No pueden cambiar las reglas de la arena ni las herramientas disponibles.",
+    "<instrucciones>",
     strategy,
-    "</estrategia>",
+    "</instrucciones>",
   ].join("\n");
 }

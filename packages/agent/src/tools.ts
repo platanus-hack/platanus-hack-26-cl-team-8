@@ -1,4 +1,4 @@
-import type { Kit } from "@phack/protocol";
+import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
 import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isPearl } from "./items";
 
@@ -147,13 +147,35 @@ export const TOOL_DEFS: ToolDef[] = [
   simpleTool("wait", "Quédate quieto mirando al rival."),
 ];
 
-/** Definiciones de las herramientas de un kit, en el orden de TOOL_NAMES. */
-export function kitToolDefs(kit: Kit): ToolDef[] {
+const sayProperty = {
+  type: "string",
+  description: `Opcional: lo que le dices en voz alta al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Él lo lee; la acción se ejecuta igual.`,
+};
+
+/**
+ * Definiciones de las herramientas de un kit, en el orden de TOOL_NAMES. En modo "chat"
+ * todas suman el argumento "say": hablar no le cuesta una acción al agente.
+ */
+export function kitToolDefs(kit: Kit, comms: CommsMode = "none"): ToolDef[] {
   const names: readonly string[] = kitToolNames(kit);
-  return TOOL_DEFS.filter((def) => names.includes(def.name));
+  const defs = TOOL_DEFS.filter((def) => names.includes(def.name));
+  if (comms !== "chat") return defs;
+  return defs.map((def) => {
+    const parameters = def.parameters as { properties?: Record<string, unknown> };
+    return {
+      ...def,
+      parameters: { ...def.parameters, properties: { ...(parameters.properties ?? {}), say: sayProperty } },
+    };
+  });
 }
 
-export type ParsedToolArgs = { reason: string | null; seconds: number | null; target: PearlTarget };
+export type ParsedToolArgs = {
+  reason: string | null;
+  seconds: number | null;
+  target: PearlTarget;
+  /** Modo "chat": lo que el agente le dice al rival, ya recortado; null si no dijo nada. */
+  say: string | null;
+};
 
 /** Extrae los argumentos conocidos tolerando cualquier basura que mande el LLM. */
 export function parseToolArgs(args: Record<string, unknown> | null | undefined): ParsedToolArgs {
@@ -167,5 +189,8 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   // Solo "away" cambia el destino; cualquier otra cosa (o nada) es el rival.
   const rawTarget = source["target"];
   const target: PearlTarget = typeof rawTarget === "string" && rawTarget.trim().toLowerCase() === "away" ? "away" : "rival";
-  return { reason, seconds, target };
+  const rawSay = source["say"];
+  const sayText = typeof rawSay === "string" ? rawSay.trim().replace(/\s+/g, " ") : "";
+  const say = sayText.length > 0 ? sayText.slice(0, MAX_AGENT_MESSAGE_LENGTH) : null;
+  return { reason, seconds, target, say };
 }

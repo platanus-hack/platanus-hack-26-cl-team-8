@@ -4,6 +4,7 @@ import type { LlmClient, LlmRequest, LlmResponse } from "@phack/llm";
 import {
   COUNTDOWN_SECONDS,
   type AgentConfig,
+  type CommsMode,
   type MatchRecord,
   type MatchState,
   type Provider,
@@ -29,6 +30,7 @@ type SetupOptions = {
   prompts?: Partial<Record<Side, Partial<AgentConfig>>>;
   /** Modelos de la lista de permitidos; si falta, todos pasan. */
   allowed?: string[];
+  comms?: CommsMode;
   /** Respuesta del servidor de Minecraft a cada comando; si falta, la de un servidor sano. */
   rconReply?: (command: string) => string;
   /** Si falta, las pausas no esperan. */
@@ -55,6 +57,8 @@ function setup(opts: SetupOptions = {}) {
   };
   const events: Partial<Record<Side, FighterEvents>> = {};
   const fighters: Partial<Record<Side, FighterOptions>> = {};
+  /** Lo que el orquestador le hizo llegar a cada agente con hear(). */
+  const heard: Record<Side, { kind: string; text: string }[]> = { red: [], blue: [] };
   const rconCommands: string[] = [];
   const logs: { level: string; text: string }[] = [];
   let stored: MatchRecord | null = null;
@@ -109,11 +113,19 @@ function setup(opts: SetupOptions = {}) {
     },
     hub,
     prompts: { get: prompts },
+    settings: { get: () => ({ comms: opts.comms ?? "none" }) },
     history,
     createFighter: (o: FighterOptions) => {
       events[o.side] = o.events;
       fighters[o.side] = o;
-      return { connect: async () => {}, start: () => {}, stop: async () => {} };
+      return {
+        connect: async () => {},
+        start: () => {},
+        stop: async () => {},
+        hear: (kind, text) => {
+          heard[o.side].push({ kind, text });
+        },
+      };
     },
     createLlmClient,
     models: { isAllowed: (id) => allowed === undefined || allowed.includes(id) },
@@ -136,6 +148,7 @@ function setup(opts: SetupOptions = {}) {
     createLlmClient,
     llmCalls,
     fighters,
+    heard,
     rconCommands,
     logs,
     flushed,
@@ -338,8 +351,8 @@ describe("MatchManager: kits", () => {
     const t = setup({ prompts: { red: { kit: "berserker" } } });
     await startRunning(t);
 
-    expect(t.fighters.red?.kit).toBe("berserker");
-    expect(t.fighters.blue?.kit).toBe("classic");
+    expect(t.fighters.red?.kit.id).toBe("berserker");
+    expect(t.fighters.blue?.kit.id).toBe("classic");
     expect(t.manager.getState().configs).toMatchObject({ red: { kit: "berserker" }, blue: { kit: "classic" } });
 
     expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.0 with minecraft:diamond_axe");
@@ -392,5 +405,107 @@ describe("MatchManager: kits", () => {
     await vi.waitFor(() =>
       expect(t.rconCommands.some((c) => c.endsWith("minecraft:air replace minecraft:oak_planks"))).toBe(true),
     );
+  });
+});
+
+describe("MatchManager: comunicación entre agentes", () => {
+  it("sin comunicación no le pasa nada al rival", async () => {
+    const t = setup({ comms: "none" });
+    await startRunning(t);
+    expect(t.fighters.red?.comms).toBe("none");
+    t.ev("red").onThought("voy por la espalda");
+    t.ev("red").onMessage("tregua?");
+    expect(t.heard.blue).toEqual([]);
+    expect(t.hub.broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "message" }));
+  });
+
+  it('en "thoughts" el rival recibe los razonamientos pero no hay mensajes', async () => {
+    const t = setup({ comms: "thoughts" });
+    await startRunning(t);
+    t.ev("red").onThought("voy por la espalda");
+    t.ev("blue").onMessage("hola");
+    expect(t.heard.blue).toEqual([{ kind: "thought", text: "voy por la espalda" }]);
+    expect(t.heard.red).toEqual([]);
+    expect(t.manager.getState().settings).toEqual({ comms: "thoughts" });
+  });
+
+  it('en "chat" los mensajes llegan al rival y al público; los razonamientos no', async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    t.ev("blue").onThought("le voy a mentir");
+    t.ev("blue").onMessage("no tengo flechas, en serio");
+    expect(t.heard.red).toEqual([{ kind: "message", text: "no tengo flechas, en serio" }]);
+    expect(t.hub.broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message", side: "blue", text: "no tengo flechas, en serio" }),
+    );
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.stored()?.settings).toEqual({ comms: "chat" });
+  });
+
+  it("pasa la duración de la pelea al agente", async () => {
+    const t = setup();
+    await startRunning(t);
+    expect(t.fighters.blue?.durationSeconds).toBe(600);
+  });
+});
+
+describe("MatchManager: kit personalizado", () => {
+  const defineKit = async (req: LlmRequest): Promise<LlmResponse> => {
+    if (req.tools[0]?.name === "define_kit") {
+      return {
+        text: "",
+        toolCalls: [
+          {
+            id: "1",
+            name: "define_kit",
+            args: {
+              items: [
+                { item: "diamond_sword", enchantments: [{ id: "sharpness", level: 2 }] },
+                { item: "golden_apple", count: 3 },
+                { item: "tnt", count: 5 },
+              ],
+            },
+          },
+        ],
+      };
+    }
+    return { text: "Explicación.", toolCalls: [] };
+  };
+
+  it("arma el kit con el LLM del lado y lo entrega por RCON", async () => {
+    const t = setup({
+      complete: defineKit,
+      prompts: { red: { kit: "custom", prompt: "Llevo espada de diamante con filo II y 3 manzanas doradas" } },
+    });
+    await startRunning(t);
+    const kit = t.fighters.red?.kit;
+    expect(kit?.id).toBe("custom");
+    expect(kit?.items.map((i) => [i.item, i.count])).toEqual([
+      ["diamond_sword", 1],
+      ["golden_apple", 3],
+    ]);
+    expect(t.manager.getState().configs.red.customKit?.items).toHaveLength(2);
+    expect(t.fighters.blue?.kit.id).toBe("classic");
+    expect(t.rconCommands).toContain(
+      'item replace entity AgenteRojo hotbar.0 with minecraft:diamond_sword{Enchantments:[{id:"minecraft:sharpness",lvl:2s}]}',
+    );
+    expect(t.logs.some((l) => l.level === "warn" && l.text.includes("tnt"))).toBe(true);
+  });
+
+  it("si el LLM no entrega inventario pelea con el kit por defecto y lo avisa", async () => {
+    const t = setup({ prompts: { blue: { kit: "custom", prompt: "solo sé valiente" } } });
+    await startRunning(t);
+    expect(t.fighters.blue?.kit.id).toBe("classic");
+    expect(t.manager.getState().configs.blue.kit).toBe("classic");
+    expect(t.manager.getState().configs.blue.customKit).toBeUndefined();
+    expect(t.logs.some((l) => l.level === "warn" && l.text.includes("kit personalizado"))).toBe(true);
+  });
+
+  it("con el LLM simulado no intenta armarlo", async () => {
+    const t = setup({ provider: "mock", prompts: { red: { kit: "custom", prompt: "arco y 64 flechas" } } });
+    await startRunning(t);
+    expect(t.fighters.red?.kit.id).toBe("classic");
+    expect(t.llmCalls).toHaveLength(0);
   });
 });

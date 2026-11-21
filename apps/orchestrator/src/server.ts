@@ -6,7 +6,9 @@ import {
   MAX_PROMPT_LENGTH,
   SideSchema,
   UpdatePromptBodySchema,
+  UpdateSettingsBodySchema,
   type AgentConfig,
+  type MatchSettings,
   type MatchRecord,
   type MatchState,
   type ModelsResponse,
@@ -30,6 +32,11 @@ export type ServerDeps = {
   prompts: {
     get(): PromptsResponse;
     update(side: Side, body: UpdatePromptBody): Promise<AgentConfig>;
+  };
+  /** Ajustes de la próxima pelea; opcional para los tests que no los usan. */
+  settings?: {
+    get(): MatchSettings;
+    update(change: Partial<MatchSettings>): Promise<MatchSettings>;
   };
   history: { latest(): MatchRecord[] };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
@@ -170,6 +177,23 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     deps.hub.broadcast({ type: "prompts", at: Date.now(), prompts: deps.prompts.get() });
     return config;
   });
+
+  const settings = deps.settings;
+  if (settings) {
+    app.get(API_ROUTES.settings, async () => settings.get());
+
+    app.put(API_ROUTES.settings, async (req, reply) => {
+      const body = UpdateSettingsBodySchema.safeParse(req.body);
+      if (!body.success) {
+        return reply
+          .code(400)
+          .send(errorBody("Cuerpo inválido: se espera un JSON { comms } con comms = none, thoughts o chat"));
+      }
+      const updated = await settings.update(body.data);
+      deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
+      return updated;
+    });
+  }
 
   app.post(API_ROUTES.matchStart, async (_req, reply) => {
     try {

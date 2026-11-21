@@ -30,7 +30,8 @@ export const ARENA = {
 // herramientas ofrecer y la web dibuja el inventario. Van antes de "Agentes" porque
 // AgentConfigSchema usa KitIdSchema.
 
-export const KIT_IDS = ["classic", "archer", "tank", "berserker", "ender", "builder"] as const;
+/** "custom" = el inventario lo describe el usuario dentro de su prompt (ver CUSTOM_KIT_ITEMS). */
+export const KIT_IDS = ["classic", "archer", "tank", "berserker", "ender", "builder", "custom"] as const;
 export const KitIdSchema = z.enum(KIT_IDS);
 export type KitId = z.infer<typeof KitIdSchema>;
 export const DEFAULT_KIT: KitId = "classic";
@@ -205,6 +206,16 @@ export const KITS: Record<KitId, Kit> = {
     ],
     effects: [],
   },
+  // Molde vacío: el kit real lo arma el orquestador al iniciar la pelea a partir del
+  // prompt (AgentConfig.customKit). Mientras no exista, se pelea con lo de aquí: nada.
+  custom: {
+    id: "custom",
+    name: "Personalizado",
+    description:
+      "Describe tu inventario dentro del prompt (p. ej. \"armadura de diamante, espada de netherita con Filo III, arco, 32 flechas y 3 manzanas doradas\"). Se arma al iniciar la pelea, sin límites.",
+    items: [],
+    effects: [],
+  },
 };
 
 export const KIT_LIST: readonly Kit[] = KIT_IDS.map((id) => KITS[id]);
@@ -212,6 +223,14 @@ export const KIT_LIST: readonly Kit[] = KIT_IDS.map((id) => KITS[id]);
 export const ENCHANTMENT_LABELS: Record<string, string> = {
   punch: "Empuje",
   feather_falling: "Caída de pluma",
+  sharpness: "Filo",
+  fire_aspect: "Aspecto ígneo",
+  power: "Poder",
+  flame: "Fuego",
+  infinity: "Infinidad",
+  protection: "Protección",
+  thorns: "Espinas",
+  unbreaking: "Irrompibilidad",
 };
 const ROMAN = ["", "I", "II", "III", "IV", "V"];
 
@@ -243,9 +262,241 @@ export function kitWindowSlot(slot: KitSlot): number {
 }
 
 /** Kit de una configuración; si falta o es desconocido, el kit por defecto. */
-export function kitOf(config: { kit?: KitId | undefined }): Kit {
+export function kitOf(config: { kit?: KitId | undefined; customKit?: Kit | undefined }): Kit {
+  if (config.kit === "custom" && config.customKit) return config.customKit;
   return KITS[config.kit ?? DEFAULT_KIT];
 }
+
+// ---------- Kit personalizado ----------
+//
+// Lista cerrada de lo que se puede pedir: son los ítems que el cuerpo del agente sabe
+// usar (armas, arco, comida, perlas, tablones y armadura). No hay presupuesto: el
+// usuario decide cuánto lleva. Lo que no esté aquí se ignora.
+
+type CatalogEntry = { label: string; /** Tamaño de un stack en Minecraft. */ stack: number };
+
+const TOOL_MATERIALS = {
+  wooden: "madera",
+  stone: "piedra",
+  iron: "hierro",
+  golden: "oro",
+  diamond: "diamante",
+  netherite: "netherita",
+} as const;
+const ARMOR_MATERIALS = {
+  leather: "cuero",
+  chainmail: "malla",
+  iron: "hierro",
+  golden: "oro",
+  diamond: "diamante",
+  netherite: "netherita",
+} as const;
+const ARMOR_PIECE_LABELS = ["Casco", "Peto", "Grebas", "Botas"] as const;
+
+function buildCatalog(): Record<string, CatalogEntry> {
+  const catalog: Record<string, CatalogEntry> = {};
+  for (const [id, name] of Object.entries(TOOL_MATERIALS)) {
+    catalog[`${id}_sword`] = { label: `Espada de ${name}`, stack: 1 };
+    catalog[`${id}_axe`] = { label: `Hacha de ${name}`, stack: 1 };
+  }
+  for (const [id, name] of Object.entries(ARMOR_MATERIALS)) {
+    ARMOR_PIECES.forEach((piece, i) => {
+      catalog[`${id}_${piece}`] = { label: `${ARMOR_PIECE_LABELS[i] as string} de ${name}`, stack: 1 };
+    });
+  }
+  Object.assign(catalog, {
+    bow: { label: "Arco", stack: 1 },
+    arrow: { label: "Flechas", stack: 64 },
+    ender_pearl: { label: "Perla de ender", stack: 16 },
+    oak_planks: { label: "Tablones de roble", stack: 64 },
+    cooked_beef: { label: "Filete", stack: 64 },
+    cooked_porkchop: { label: "Chuleta cocinada", stack: 64 },
+    cooked_chicken: { label: "Pollo asado", stack: 64 },
+    bread: { label: "Pan", stack: 64 },
+    baked_potato: { label: "Papa asada", stack: 64 },
+    apple: { label: "Manzana", stack: 64 },
+    golden_carrot: { label: "Zanahoria dorada", stack: 64 },
+    golden_apple: { label: "Manzana dorada", stack: 64 },
+    enchanted_golden_apple: { label: "Manzana dorada encantada", stack: 64 },
+  } satisfies Record<string, CatalogEntry>);
+  return catalog;
+}
+
+/** Ítems que se pueden pedir en un kit personalizado (id de Minecraft -> nombre y stack). */
+export const CUSTOM_KIT_ITEMS: Readonly<Record<string, CatalogEntry>> = buildCatalog();
+
+/** Encantamientos permitidos y el nivel máximo que acepta cada uno. */
+export const CUSTOM_KIT_ENCHANTMENTS: Readonly<Record<string, number>> = {
+  sharpness: 5,
+  fire_aspect: 2,
+  power: 5,
+  punch: 2,
+  flame: 1,
+  infinity: 1,
+  protection: 4,
+  feather_falling: 4,
+  thorns: 3,
+  unbreaking: 3,
+};
+
+/** Efectos permanentes permitidos: id -> nombre en español (el nivel va aparte). */
+export const CUSTOM_KIT_EFFECTS: Readonly<Record<string, string>> = {
+  speed: "Velocidad",
+  strength: "Fuerza",
+  resistance: "Resistencia",
+  regeneration: "Regeneración",
+  jump_boost: "Salto",
+  fire_resistance: "Resistencia al fuego",
+};
+/** Nivel máximo de un efecto (amplifier 4 = nivel V). */
+export const CUSTOM_KIT_MAX_AMPLIFIER = 4;
+
+/** Lo que se pide para un kit personalizado, antes de validar. */
+export type CustomKitRequest = {
+  items: { item: string; count?: number; enchantments?: { id: string; level?: number }[] }[];
+  effects?: { id: string; level?: number }[];
+};
+
+const ARMOR_SLOT_BY_PIECE: Record<string, KitSlot> = {
+  helmet: "armor.head",
+  chestplate: "armor.chest",
+  leggings: "armor.legs",
+  boots: "armor.feet",
+};
+
+function armorSlotOf(id: string): KitSlot | null {
+  const piece = id.slice(id.lastIndexOf("_") + 1);
+  return ARMOR_SLOT_BY_PIECE[piece] ?? null;
+}
+
+/** Convención de los kits fijos: arma en la 1, arco en la 2, comida en la 3, flechas en la 9. */
+function preferredHotbar(id: string): number {
+  if (/_(sword|axe)$/.test(id)) return 0;
+  if (id === "bow") return 1;
+  if (id === "arrow") return 8;
+  if (id === "ender_pearl" || id === "oak_planks") return 3;
+  return 2;
+}
+
+function intIn(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === "string" ? Number(value) : value;
+  if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/**
+ * Arma un kit personalizado a partir de lo pedido: descarta lo que no está en la lista,
+ * acomoda cada ítem en un slot (armadura puesta; arma en la hotbar 1, arco en la 2,
+ * comida en la 3, flechas en la 9, lo demás donde quepa) y parte las cantidades en stacks.
+ * `ignored` dice qué se descartó y por qué, para el registro.
+ */
+export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: string[] } {
+  const ignored: string[] = [];
+  const items: KitItem[] = [];
+  const used = new Set<KitSlot>();
+  const hotbarFree = (preferred: number): KitSlot | null => {
+    const order = [preferred, 3, 4, 5, 6, 7, 2, 1, 0, 8];
+    for (const i of order) {
+      const slot = `hotbar.${i}` as KitSlot;
+      if (!used.has(slot)) return slot;
+    }
+    for (let i = 0; i < 27; i += 1) {
+      const slot = `inventory.${i}` as KitSlot;
+      if (!used.has(slot)) return slot;
+    }
+    return null;
+  };
+
+  const sources = Array.isArray(request.items) ? request.items : [];
+  for (const raw of sources) {
+    const id = typeof raw?.item === "string" ? raw.item.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+    const entry = CUSTOM_KIT_ITEMS[id];
+    if (!entry) {
+      if (id) ignored.push(`${id}: no está en la lista de ítems permitidos`);
+      continue;
+    }
+    const enchantments: KitEnchantment[] = [];
+    for (const e of Array.isArray(raw.enchantments) ? raw.enchantments : []) {
+      const eid = typeof e?.id === "string" ? e.id.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+      const max = CUSTOM_KIT_ENCHANTMENTS[eid];
+      if (max === undefined) {
+        if (eid) ignored.push(`encantamiento ${eid}: no permitido`);
+        continue;
+      }
+      if (!enchantments.some((x) => x.id === eid)) enchantments.push({ id: eid, level: intIn(e.level, 1, max, 1) });
+    }
+
+    const armorSlot = /_(helmet|chestplate|leggings|boots)$/.test(id) ? armorSlotOf(id) : null;
+    if (armorSlot) {
+      if (used.has(armorSlot)) {
+        ignored.push(`${id}: ya hay otra pieza en ese lugar de la armadura`);
+        continue;
+      }
+      used.add(armorSlot);
+      items.push(enchantments.length ? { slot: armorSlot, item: id, count: 1, label: entry.label, enchantments } : { slot: armorSlot, item: id, count: 1, label: entry.label });
+      continue;
+    }
+
+    const preferred = preferredHotbar(id);
+    let remaining = intIn(raw.count, 1, 36 * 64, 1);
+    while (remaining > 0) {
+      const slot = hotbarFree(preferred);
+      if (!slot) {
+        ignored.push(`${id}: no cabe en el inventario`);
+        break;
+      }
+      const count = Math.min(remaining, entry.stack);
+      used.add(slot);
+      items.push(enchantments.length ? { slot, item: id, count, label: entry.label, enchantments } : { slot, item: id, count, label: entry.label });
+      remaining -= count;
+    }
+  }
+
+  const effects: KitEffect[] = [];
+  for (const e of Array.isArray(request.effects) ? request.effects : []) {
+    const eid = typeof e?.id === "string" ? e.id.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+    const label = CUSTOM_KIT_EFFECTS[eid];
+    if (!label) {
+      if (eid) ignored.push(`efecto ${eid}: no permitido`);
+      continue;
+    }
+    if (effects.some((x) => x.id === eid)) continue;
+    const amplifier = intIn(e.level, 1, CUSTOM_KIT_MAX_AMPLIFIER + 1, 1) - 1;
+    effects.push({ id: eid, amplifier, label: `${label} ${ROMAN[amplifier + 1] ?? amplifier + 1}` });
+  }
+
+  const base = KITS.custom;
+  return { kit: { id: "custom", name: base.name, description: base.description, items, effects }, ignored };
+}
+
+const KIT_SLOT_RE = /^(armor\.(head|chest|legs|feet)|weapon\.offhand|hotbar\.[0-8]|inventory\.([0-9]|1[0-9]|2[0-6]))$/;
+
+/** Kit completo (el personalizado ya armado) tal como viaja en el estado y el historial. */
+export const KitSchema = z.object({
+  id: KitIdSchema,
+  name: z.string().max(80),
+  description: z.string().max(600),
+  items: z
+    .array(
+      z.object({
+        slot: z.custom<KitSlot>((v) => typeof v === "string" && KIT_SLOT_RE.test(v)),
+        item: z.string().regex(/^[a-z0-9_]+$/).max(64),
+        count: z.number().int().min(1).max(64),
+        label: z.string().max(80),
+        enchantments: z
+          .array(z.object({ id: z.string().regex(/^[a-z_]+$/).max(40), level: z.number().int().min(1).max(10) }))
+          .max(12)
+          .readonly()
+          .optional(),
+      }),
+    )
+    .max(41)
+    .readonly(),
+  effects: z
+    .array(z.object({ id: z.string().regex(/^[a-z_]+$/).max(40), amplifier: z.number().int().min(0).max(9), label: z.string().max(80) }))
+    .max(12)
+    .readonly(),
+});
 
 // ---------- Agentes ----------
 
@@ -276,16 +527,60 @@ export const AgentConfigSchema = z.object({
    * servidor más antiguo que la web) o trae un id desconocido, vale DEFAULT_KIT (ver kitOf).
    */
   kit: KitIdSchema.optional().catch(undefined),
+  /**
+   * Solo con kit "custom": el kit que armó el orquestador al iniciar la pelea a partir del
+   * prompt. Lo escribe el servidor (en el estado y el historial), nunca la web.
+   */
+  customKit: KitSchema.optional().catch(undefined),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
-export const UpdatePromptBodySchema = AgentConfigSchema.omit({ side: true });
+export const UpdatePromptBodySchema = AgentConfigSchema.omit({ side: true, customKit: true });
 export type UpdatePromptBody = z.infer<typeof UpdatePromptBodySchema>;
 
 export const DEFAULT_PROMPTS: Record<Side, string> = {
   red: "Eres agresivo: acércate y ataca sin parar. Come solo si tu vida baja de 6.",
   blue: "Eres defensivo: mantén distancia, usa el arco, y ataca cuerpo a cuerpo solo si el rival tiene poca vida.",
 };
+
+// ---------- Comunicación entre agentes ----------
+
+/**
+ * Qué sabe cada agente del otro, además de lo que ve en el mundo:
+ * - "none": nada.
+ * - "thoughts": lee los razonamientos ("reason") del rival, pero no pueden hablarse.
+ * - "chat": pueden mandarse mensajes (para negociar, persuadir o engañar); los
+ *   razonamientos siguen siendo privados.
+ */
+export const COMMS_MODES = ["none", "thoughts", "chat"] as const;
+export const CommsModeSchema = z.enum(COMMS_MODES);
+export type CommsMode = z.infer<typeof CommsModeSchema>;
+export const DEFAULT_COMMS: CommsMode = "none";
+
+export const COMMS_LABELS: Record<CommsMode, { name: string; description: string }> = {
+  none: { name: "Sin comunicación", description: "Cada agente solo ve lo que pasa en la arena." },
+  thoughts: {
+    name: "Leen la mente",
+    description: "Cada agente lee lo que piensa el otro en cada decisión, pero no pueden hablarse.",
+  },
+  chat: {
+    name: "Pueden hablarse",
+    description: "Los agentes se mandan mensajes: pueden negociar, persuadir o engañar al rival.",
+  },
+};
+
+/** Largo máximo de un mensaje entre agentes (modo "chat"). */
+export const MAX_AGENT_MESSAGE_LENGTH = 240;
+
+/** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
+export const MatchSettingsSchema = z.object({
+  comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
+});
+export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
+export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS };
+
+export const UpdateSettingsBodySchema = z.object({ comms: CommsModeSchema });
+export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
 
 // ---------- Estado de la pelea ----------
 
@@ -350,6 +645,8 @@ export const MatchStateSchema = z.object({
   agents: z.object({ red: AgentStatusSchema, blue: AgentStatusSchema }),
   /** Prompts congelados con los que se está peleando (o se peleó). */
   configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
+  /** Ajustes congelados con los que se está peleando (o se peleó). */
+  settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
   result: MatchResultSchema.nullable(),
 });
 export type MatchState = z.infer<typeof MatchStateSchema>;
@@ -362,6 +659,8 @@ export const MatchRecordSchema = z.object({
   durationMs: z.number(),
   configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
   final: z.object({ red: AgentStatusSchema, blue: AgentStatusSchema }),
+  /** Falta en los registros de antes de que existieran los ajustes: valen los de por defecto. */
+  settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
   result: MatchResultSchema,
 });
 export type MatchRecord = z.infer<typeof MatchRecordSchema>;
@@ -377,7 +676,11 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
     at: z.number(),
     prompts: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
   }),
+  /** Ajustes pendientes para la PRÓXIMA pelea cambiaron. */
+  z.object({ type: z.literal("settings"), at: z.number(), settings: MatchSettingsSchema }),
   z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() }),
+  /** Modo "chat": `side` le dijo `text` al rival. */
+  z.object({ type: z.literal("message"), at: z.number(), side: SideSchema, text: z.string() }),
   z.object({
     type: z.literal("action"),
     at: z.number(),
@@ -408,6 +711,8 @@ export type ArenaEvent = z.infer<typeof ArenaEventSchema>;
 //   GET  /api/prompts                -> { red: AgentConfig, blue: AgentConfig }
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
+//   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
+//   PUT  /api/settings               body UpdateSettingsBody { comms } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
@@ -420,6 +725,7 @@ export const API_ROUTES = {
   state: "/api/state",
   prompts: "/api/prompts",
   prompt: (side: Side) => `/api/prompts/${side}`,
+  settings: "/api/settings",
   matchStart: "/api/match/start",
   matchStop: "/api/match/stop",
   matches: "/api/matches",

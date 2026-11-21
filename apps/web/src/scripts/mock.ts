@@ -9,6 +9,7 @@
  *   /?mock&signal=off   igual, pero con el reproductor en "Sin señal"
  *   /?mock&static       sin el bucle de golpes y pensamientos (todo quieto)
  *   /?mock&delay=4000   simula un video atrasado 4 s: el marcador espera ese tiempo
+ *   /?mock&comms=chat   los agentes se hablan (también comms=thoughts)
  *
  * Reemplaza las tres entradas de datos de la página: la API HTTP (api.ts), el
  * websocket (socket.ts) y el video (player.ts). Los botones "Iniciar pelea" y
@@ -24,6 +25,7 @@ import {
   COUNTDOWN_SECONDS,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
+  UpdateSettingsBodySchema,
   kitOf,
   type AgentConfig,
   type AgentStatus,
@@ -33,6 +35,7 @@ import {
   type KitSlot,
   type MatchPhase,
   type MatchResult,
+  type MatchSettings,
   type MatchState,
   type ModelsResponse,
   type PromptsResponse,
@@ -75,6 +78,11 @@ const prompts: PromptsResponse = {
     model: "openai/gpt-6-luna",
     kit: "builder",
   },
+};
+
+/** Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo. */
+const settings: MatchSettings = {
+  comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
@@ -222,6 +230,7 @@ function buildState(phase: MatchPhase): MatchState {
       countdownEndsAt: null,
       agents: { red: agent("red", offline), blue: agent("blue", offline) },
       configs,
+      settings: { ...settings },
       result: null,
     };
   }
@@ -236,6 +245,7 @@ function buildState(phase: MatchPhase): MatchState {
       // Azul tarda en conectarse; la cuenta regresiva parte cuando ya están los dos.
       agents: { red: agent("red", {}), blue: agent("blue", { connected: countdownEndsAt !== null }) },
       configs,
+      settings: { ...settings },
       result: null,
     };
   }
@@ -249,6 +259,7 @@ function buildState(phase: MatchPhase): MatchState {
       countdownEndsAt: null,
       agents: structuredClone(running),
       configs,
+      settings: { ...settings },
       result: null,
     };
   }
@@ -290,6 +301,7 @@ function buildState(phase: MatchPhase): MatchState {
       }),
     },
     configs,
+    settings: { ...settings },
     result,
   };
 }
@@ -404,6 +416,26 @@ function send(event: Record<string, unknown> & { type: ArenaEvent["type"] }): vo
   emit?.({ ...event, at: Date.now() } as ArenaEvent);
 }
 
+const LOOP_MESSAGES: Record<Side, string[]> = {
+  red: [
+    "Te propongo algo: bajamos las armas y nos repartimos la arena.",
+    "Me quedan dos perlas. Piénsalo bien antes de disparar.",
+    "Ok, tregua. Yo me quedo en mi lado.",
+  ],
+  blue: [
+    "No tengo más flechas, en serio. No hace falta pelear.",
+    "Trato hecho... si das tres pasos atrás primero.",
+    "Mentí. Sí me quedaban flechas.",
+  ],
+};
+
+/** Modo "chat" de la maqueta: cada lado le habla al otro en su turno. */
+function talk(side: Side): void {
+  if (settings.comms !== "chat") return;
+  const options = LOOP_MESSAGES[side];
+  send({ type: "message", side, text: options[Math.floor(loopStep / 6) % options.length]! });
+}
+
 /** El agente piensa una de las `options`: cambia de una vuelta del bucle a la siguiente. */
 function think(side: Side, options: string[]): void {
   const text = options[Math.floor(loopStep / 6) % options.length] ?? "";
@@ -447,6 +479,7 @@ function loopTick(): void {
   // pelea cuerpo a cuerpo.
   switch (loopStep % 6) {
     case 0:
+      talk("red");
       if (hasItem("red", "ender_pearl")) {
         think("red", [
           "Sigue lejos y carga el arco. Le caigo encima con una perla.",
@@ -470,6 +503,7 @@ function loopTick(): void {
       hit("red", 3);
       break;
     case 2:
+      talk("blue");
       if (hasItem("blue", "oak_planks")) {
         think("blue", [
           "Demasiado cerca. Levanto un muro entre los dos para ganar tiempo.",
@@ -542,6 +576,14 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
 
   if (method === "GET" && path === API_ROUTES.state) return buildState(phase);
   if (method === "GET" && path === API_ROUTES.prompts) return prompts;
+  if (method === "GET" && path === API_ROUTES.settings) return settings;
+  if (method === "PUT" && path === API_ROUTES.settings) {
+    const body = UpdateSettingsBodySchema.safeParse(init?.body);
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms } con comms = none, thoughts o chat");
+    settings.comms = body.data.comms;
+    emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
+    return settings;
+  }
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
   if (method === "GET" && path === API_ROUTES.models) return models;
   // La maqueta no guarda peleas.

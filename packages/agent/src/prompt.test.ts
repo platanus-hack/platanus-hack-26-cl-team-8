@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { KIT_LIST, kitItemTitle, KITS, type Kit } from "@phack/protocol";
+import { buildCustomKit, KIT_LIST, kitItemTitle, KITS, type CommsMode, type Kit } from "@phack/protocol";
 import { buildSystemPrompt } from "./prompt";
 import { kitToolNames, TOOL_NAMES } from "./tools";
 
-function promptFor(kit: Kit, strategy = "Pega fuerte y no retrocedas."): string {
+function promptFor(kit: Kit, strategy = "Pega fuerte y no retrocedas.", comms: CommsMode = "none"): string {
   return buildSystemPrompt({
     side: "red",
     username: "AgenteRojo",
@@ -11,6 +11,8 @@ function promptFor(kit: Kit, strategy = "Pega fuerte y no retrocedas."): string 
     kit,
     strategy,
     tickMs: 1500,
+    durationSeconds: 120,
+    comms,
   });
 }
 
@@ -34,16 +36,65 @@ describe("buildSystemPrompt", () => {
   it("presenta al luchador, a su rival y el ritmo de decisión", () => {
     const prompt = promptFor(KITS.classic);
     const first = prompt.split("\n")[0] ?? "";
-    expect(first).toContain('Eres "AgenteRojo", el luchador rojo');
-    expect(first).toContain('Tu rival es "AgenteAzul".');
+    expect(first).toContain('Eres "AgenteRojo", el agente rojo');
+    expect(first).toContain('junto a otro agente, "AgenteAzul"');
     expect(prompt).toContain("Decides aproximadamente cada 1.5 segundos");
+    expect(prompt).toContain("La partida dura 120 segundos");
   });
 
-  it("deja la estrategia del usuario al final, entre etiquetas en líneas propias", () => {
+  it("no le fija un objetivo: ni ganar, ni matar, ni sobrevivir", () => {
+    const prompt = promptFor(KITS.classic);
+    const world = prompt.slice(0, prompt.indexOf("TUS INSTRUCCIONES"));
+    expect(world).not.toMatch(/\bgana/i);
+    expect(world).not.toMatch(/\bmata/i);
+    expect(world).not.toMatch(/sobreviv/i);
+    expect(prompt).toContain("no te fija ningún objetivo");
+  });
+
+  it("deja las instrucciones del usuario al final, entre etiquetas en líneas propias", () => {
     const lines = promptFor(KITS.classic, "  Dispara de lejos.  ").split("\n");
-    expect(lines.slice(-3)).toEqual(["<estrategia>", "Dispara de lejos.", "</estrategia>"]);
+    expect(lines.slice(-3)).toEqual(["<instrucciones>", "Dispara de lejos.", "</instrucciones>"]);
     const empty = promptFor(KITS.classic, "   ").split("\n");
-    expect(empty.slice(-3)).toEqual(["<estrategia>", "(sin estrategia: pelea como mejor te parezca)", "</estrategia>"]);
+    expect(empty.slice(-3)).toEqual([
+      "<instrucciones>",
+      "(sin instrucciones: decide tú qué quieres hacer)",
+      "</instrucciones>",
+    ]);
+  });
+
+  it("explica la comunicación según el modo", () => {
+    const none = section(promptFor(KITS.classic, "x", "none"), "COMUNICACIÓN").join("\n");
+    expect(none).toContain("No hay comunicación");
+    expect(none).not.toContain("rivalThoughts");
+    expect(none).not.toContain('"say"');
+
+    const thoughts = section(promptFor(KITS.classic, "x", "thoughts"), "COMUNICACIÓN").join("\n");
+    expect(thoughts).toContain('"rivalThoughts"');
+    expect(thoughts).toContain('Él también lee tu "reason"');
+    expect(thoughts).toContain("No pueden mandarse mensajes");
+
+    const chat = section(promptFor(KITS.classic, "x", "chat"), "COMUNICACIÓN").join("\n");
+    expect(chat).toContain('"say"');
+    expect(chat).toContain('"rivalMessages"');
+    expect(chat).toContain("mentir");
+    expect(chat).toContain('Tu "reason" es privado');
+  });
+
+  it("con un kit personalizado describe lo que se pidió", () => {
+    const { kit } = buildCustomKit({
+      items: [
+        { item: "netherite_sword", enchantments: [{ id: "sharpness", level: 3 }] },
+        { item: "diamond_chestplate" },
+        { item: "golden_apple", count: 5 },
+      ],
+      effects: [{ id: "strength", level: 1 }],
+    });
+    const lines = section(promptFor(kit), "TU KIT").join("\n");
+    expect(lines).toContain("Armadura puesta: Peto de diamante.");
+    expect(lines).toContain("Espada de netherita (Filo III)");
+    expect(lines).toContain("Manzana dorada x5");
+    expect(lines).toContain("Efectos permanentes: Fuerza I");
+    expect(section(promptFor(kit), "HERRAMIENTAS").join("\n")).not.toContain("- shoot:");
   });
 
   it("lista en HERRAMIENTAS exactamente las herramientas del kit", () => {

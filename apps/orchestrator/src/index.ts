@@ -10,7 +10,7 @@ import { MatchManager } from "./match";
 import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
-import { MatchStore, PromptStore } from "./store";
+import { MatchStore, PromptStore, SettingsStore } from "./store";
 import { errorMessage, sleep, type LogFn } from "./util";
 
 const log: LogFn = (level, text) => {
@@ -32,7 +32,9 @@ async function main(): Promise<void> {
 
   const prompts = new PromptStore(dataDir, log);
   const history = new MatchStore(dataDir, log);
+  const settings = new SettingsStore(dataDir, log);
   await prompts.load();
+  await settings.load();
   await history.load();
 
   const rcon = new RconClient({
@@ -58,16 +60,21 @@ async function main(): Promise<void> {
     rcon,
     hub,
     prompts,
+    settings,
     history,
     createFighter,
     createLlmClient,
     models,
     log,
   });
-  hub.setProviders({ getState: () => match.getState(), getPrompts: () => prompts.get() });
+  hub.setProviders({
+    getState: () => match.getState(),
+    getPrompts: () => prompts.get(),
+    getSettings: () => settings.get(),
+  });
   hub.start();
 
-  const app = await buildServer({ hub, match, prompts, history, defaults, models });
+  const app = await buildServer({ hub, match, prompts, settings, history, defaults, models });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 

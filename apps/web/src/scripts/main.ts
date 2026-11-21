@@ -9,6 +9,7 @@ import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from ".
 import { setDefaults } from "./models";
 import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
+import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
 import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playStart } from "./sound";
@@ -78,6 +79,12 @@ function handleEvent(event: ArenaEvent): void {
       break;
     case "prompts":
       applyRemotePrompts(event.prompts);
+      break;
+    case "settings":
+      applyRemoteSettings(event.settings);
+      break;
+    case "message":
+      addFeed({ at: event.at, kind: "message", side: event.side, text: event.text });
       break;
     case "thought":
       pushThought(event.side, event.text, event.at);
@@ -151,8 +158,8 @@ function enqueue(event: ArenaEvent): void {
 function receiveEvent(event: ArenaEvent): void {
   noteServerTime(event.at);
 
-  // Los prompts pendientes no son parte de la imagen: se aplican al tiro.
-  if (event.type === "prompts") {
+  // Los prompts y ajustes pendientes no son parte de la imagen: se aplican al tiro.
+  if (event.type === "prompts" || event.type === "settings") {
     handleEvent(event);
     return;
   }
@@ -234,6 +241,7 @@ function init(): void {
   initCountdown(announceStart);
   initFeed();
   initPrompts();
+  initSettings();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.
   initControls((state) => {
@@ -259,7 +267,10 @@ function init(): void {
       renderConnection(status);
       if (status === "open" && previous !== "open") {
         // Tras (re)conectar pudo haber cambiado todo mientras no escuchábamos.
-        if (everOpened) void loadPrompts();
+        if (everOpened) {
+          void loadPrompts();
+          void loadSettings();
+        }
         everOpened = true;
       }
     },
@@ -268,6 +279,7 @@ function init(): void {
   // Carga inicial por HTTP: funciona aunque el websocket tarde o esté bloqueado.
   pollState();
   void loadPrompts();
+  void loadSettings();
   // Con esto se sabe qué modelo usa un agente que dejó "por defecto del servidor".
   fetchDefaults()
     .then(setDefaults)

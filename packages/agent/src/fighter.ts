@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA, DEFAULT_KIT, KITS, type Kit } from "@phack/protocol";
+import { ARENA } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
 import { clampToArena, distance3, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
@@ -51,6 +51,10 @@ type GoalKind = "none" | "follow" | "point" | "center";
 type HeldState = "held" | "pending" | "missing";
 
 const CONNECT_TIMEOUT_MS = 30_000;
+/** Máximo de razonamientos o mensajes del rival que se juntan entre dos decisiones. */
+const INBOX_MAX = 4;
+/** Largo máximo de cada uno al pasarlo a la observación. */
+const INBOX_TEXT_MAX = 300;
 const LLM_TIMEOUT_MS = 20_000;
 const BODY_TICK_MS = 100;
 const MELEE_REACH = 3.2;
@@ -202,6 +206,9 @@ class MineflayerFighter implements Fighter {
   private loopPromise: Promise<void> | null = null;
   private wakeSleep: (() => void) | null = null;
   private startedAt = Date.now();
+  /** Lo que llegó del rival y todavía no vio el LLM (se vacía al armar la observación). */
+  private rivalThoughts: string[] = [];
+  private rivalMessages: string[] = [];
 
   // Cuerpo (máquina de estados que corre cada BODY_TICK_MS)
   private bodyTimer: ReturnType<typeof setInterval> | null = null;
@@ -259,10 +266,9 @@ class MineflayerFighter implements Fighter {
   private buildReadyAt = 0;
 
   constructor(private readonly opts: FighterOptions) {
-    // Tolerante a un id que no exista (no debería llegar: el orquestador lo normaliza).
-    const kit: Kit = KITS[opts.kit] ?? KITS[DEFAULT_KIT];
+    const kit = opts.kit;
     this.toolNames = kitToolNames(kit);
-    this.toolDefs = kitToolDefs(kit);
+    this.toolDefs = kitToolDefs(kit, opts.comms);
     this.systemPrompt = buildSystemPrompt({
       side: opts.side,
       username: opts.username,
@@ -270,7 +276,22 @@ class MineflayerFighter implements Fighter {
       kit,
       strategy: opts.prompt,
       tickMs: opts.tickMs,
+      durationSeconds: opts.durationSeconds,
+      comms: opts.comms,
     });
+  }
+
+  hear(kind: "thought" | "message", text: string): void {
+    if (this.stopped) return;
+    // Cada modo solo deja pasar lo suyo (el orquestador ya filtra; esto es la segunda llave).
+    if (kind === "thought" && this.opts.comms !== "thoughts") return;
+    if (kind === "message" && this.opts.comms !== "chat") return;
+    const clean = text.trim().replace(/\s+/g, " ").slice(0, INBOX_TEXT_MAX);
+    if (clean.length === 0) return;
+    const box = kind === "thought" ? this.rivalThoughts : this.rivalMessages;
+    box.push(clean);
+    // Si el agente se demora en decidir, se queda con lo más nuevo.
+    if (box.length > INBOX_MAX) box.splice(0, box.length - INBOX_MAX);
   }
 
   // ------------------------------------------------------------------
@@ -693,6 +714,8 @@ class MineflayerFighter implements Fighter {
       const parsed = parseToolArgs(args);
       const thought = parsed.reason ?? text.trim();
       if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
+      const said = this.opts.comms === "chat" ? parsed.say : null;
+      if (said) this.safe(() => this.opts.events.onMessage(said));
 
       try {
         firstResult = this.executeTool(first.name, parsed);
@@ -733,6 +756,8 @@ class MineflayerFighter implements Fighter {
       lastActionResult: this.lastResult,
       pearlReadyAt: this.pearlReadyAt,
       buildReadyAt: this.buildReadyAt,
+      rivalThoughts: this.rivalThoughts.splice(0),
+      rivalMessages: this.rivalMessages.splice(0),
     });
   }
 

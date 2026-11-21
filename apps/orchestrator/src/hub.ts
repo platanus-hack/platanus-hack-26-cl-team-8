@@ -1,4 +1,4 @@
-import type { ArenaEvent, MatchState, PromptsResponse } from "@phack/protocol";
+import type { ArenaEvent, MatchSettings, MatchState, PromptsResponse } from "@phack/protocol";
 
 /**
  * Subconjunto estructural del WebSocket de "ws" que usa el hub
@@ -25,6 +25,8 @@ export type EventSink = {
 export type HubProviders = {
   getState(): MatchState;
   getPrompts(): PromptsResponse;
+  /** Ajustes pendientes; opcional para no romper a quien no los usa. */
+  getSettings?(): MatchSettings;
 };
 
 const WS_OPEN = 1;
@@ -79,6 +81,12 @@ export class Hub implements EventSink {
         socket,
         JSON.stringify({ type: "prompts", at, prompts: this.providers.getPrompts() } satisfies ArenaEvent),
       );
+      if (this.providers.getSettings) {
+        this.sendTo(
+          socket,
+          JSON.stringify({ type: "settings", at, settings: this.providers.getSettings() } satisfies ArenaEvent),
+        );
+      }
     }
   }
 

@@ -5,9 +5,14 @@ import type { ApiKeys, LlmClient } from "@phack/llm";
 import {
   AGENT_USERNAMES,
   COUNTDOWN_SECONDS,
+  DEFAULT_KIT,
+  KITS,
+  MAX_AGENT_MESSAGE_LENGTH,
   SIDES,
   kitOf,
   type AgentStatus,
+  type Kit,
+  type MatchSettings,
   type MatchRecord,
   type MatchResult,
   type MatchState,
@@ -16,6 +21,7 @@ import {
   type Side,
 } from "@phack/protocol";
 import { buildArena, clearPlacedBlocks, prepareFighter, runCountdown } from "./arena";
+import { extractCustomKit } from "./customkit";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
@@ -28,6 +34,8 @@ const STOP_TIMEOUT_MS = 10_000;
 const FINISHED_HOLD_MS = 5_000;
 /** Máximo que se espera al LLM que escribe el "por qué ganó"; después se usa la plantilla. */
 const EXPLAIN_TIMEOUT_MS = 15_000;
+/** Máximo que se espera al LLM que arma un kit personalizado; después se usa el kit por defecto. */
+const CUSTOM_KIT_TIMEOUT_MS = 20_000;
 
 export type MatchEnv = Pick<
   Env,
@@ -46,6 +54,8 @@ export type MatchDeps = {
   rcon: RconLike;
   hub: EventSink;
   prompts: { get(): PromptsResponse };
+  /** Ajustes pendientes de la próxima pelea (modo de comunicación). */
+  settings: { get(): MatchSettings };
   history: {
     append(record: MatchRecord): Promise<void>;
     /** Corrige una pelea ya guardada; false si ya no está. */
@@ -141,6 +151,7 @@ export class MatchManager {
       countdownEndsAt: null,
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       configs: deps.prompts.get(),
+      settings: deps.settings.get(),
       result: null,
     };
   }
@@ -183,6 +194,7 @@ export class MatchManager {
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
       configs: this.deps.prompts.get(),
+      settings: this.deps.settings.get(),
       result: null,
     };
     this.deps.hub.flushState();
@@ -216,28 +228,34 @@ export class MatchManager {
       this.log("info", "Preparando la pelea…");
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm("red"), blue: this.makeLlm("blue") };
+      // Los kits personalizados se arman en paralelo (cada uno con el LLM de su lado).
+      const [redKit, blueKit] = await Promise.all(SIDES.map((side) => this.resolveKit(side, llms[side])));
+      this.assertNotEnded(ctx);
+      const kits: Record<Side, Kit> = { red: redKit as Kit, blue: blueKit as Kit };
       for (const side of SIDES) {
         // Se anota el proveedor, el modelo y el kit que de verdad se usan (resueltos los
         // valores por defecto): es lo que muestran la web y el historial.
-        const kit = kitOf(this.state.configs[side]).id;
-        this.state.configs[side] = {
-          ...this.state.configs[side],
-          provider: llms[side].provider,
-          model: llms[side].model,
-          kit,
-        };
+        const kit = kits[side];
+        const config = { ...this.state.configs[side], provider: llms[side].provider, model: llms[side].model, kit: kit.id };
+        if (kit.id === "custom") config.customKit = kit;
+        else delete config.customKit;
+        this.state.configs[side] = config;
         ctx.fighters[side] = this.deps.createFighter({
           side,
           username: AGENT_USERNAMES[side],
           opponentUsername: AGENT_USERNAMES[otherSide(side)],
-          prompt: this.state.configs[side].prompt,
+          prompt: config.prompt,
           kit,
+          comms: this.state.settings.comms,
+          durationSeconds: env.MATCH_DURATION_SECONDS,
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,
           events: this.makeEvents(ctx, side),
         });
       }
+      // El kit ya resuelto (también el personalizado) llega a la web con el próximo estado.
+      this.deps.hub.markStateDirty();
       this.assertNotEnded(ctx);
 
       await buildArena(rcon, this.sleep);
@@ -297,6 +315,40 @@ export class MatchManager {
       if (ctx.ended || err instanceof CancelledError) return;
       this.log("error", `No se pudo completar la pelea: ${errorMessage(err)}`);
       await this.finish(ctx, { winner: null, reason: "error" });
+    }
+  }
+
+  /**
+   * Kit con el que pelea un lado. Si eligió "custom", un LLM arma el inventario a partir
+   * de su prompt; si no se puede (LLM simulado, falla, demora o el prompt no pide nada
+   * válido), pelea con el kit por defecto y se avisa en el registro. Nunca lanza.
+   */
+  private async resolveKit(side: Side, llm: LlmClient): Promise<Kit> {
+    const config = this.state.configs[side];
+    if (config.kit !== "custom") return kitOf(config);
+    const fallback = KITS[DEFAULT_KIT];
+    const fail = (reason: string): Kit => {
+      this.log("warn", `[${SIDE_LABEL[side]}] No se pudo armar el kit personalizado (${reason}): pelea con el kit ${fallback.name}`);
+      return fallback;
+    };
+    if (llm.provider === "mock") return fail("el LLM simulado no sabe leer el inventario del prompt");
+    this.log("info", `[${SIDE_LABEL[side]}] Armando el kit personalizado a partir del prompt…`);
+    const abort = new AbortController();
+    try {
+      const outcome = await withTimeout(
+        extractCustomKit(llm, config.prompt, abort.signal),
+        CUSTOM_KIT_TIMEOUT_MS,
+        "el LLM no respondió a tiempo",
+      );
+      if (!outcome.ok) return fail(outcome.reason);
+      if (outcome.ignored.length > 0) {
+        this.log("warn", `[${SIDE_LABEL[side]}] Del kit personalizado se descartó: ${truncate(outcome.ignored.join("; "), 400)}`);
+      }
+      return outcome.kit;
+    } catch (err) {
+      return fail(errorMessage(err));
+    } finally {
+      abort.abort();
     }
   }
 
@@ -367,6 +419,14 @@ export class MatchManager {
         ctx.thoughtPending[side] = true;
         hub.broadcast({ type: "thought", at: Date.now(), side, text: truncate(text, 2000) });
         hub.markStateDirty();
+        // Modo "leen la mente": el rival recibe este razonamiento en su próxima observación.
+        if (this.state.settings.comms === "thoughts") ctx.fighters[otherSide(side)]?.hear("thought", text);
+      },
+      onMessage: (text) => {
+        if (!live() || this.state.settings.comms !== "chat") return;
+        const message = truncate(text, MAX_AGENT_MESSAGE_LENGTH);
+        hub.broadcast({ type: "message", at: Date.now(), side, text: message });
+        ctx.fighters[otherSide(side)]?.hear("message", message);
       },
       onAction: (tool, args, result) => {
         if (!live()) return;
@@ -456,6 +516,7 @@ export class MatchManager {
         durationMs: endedAt - startedAt,
         configs: structuredClone(this.state.configs),
         final: structuredClone(this.state.agents),
+        settings: structuredClone(this.state.settings),
         result,
       };
 

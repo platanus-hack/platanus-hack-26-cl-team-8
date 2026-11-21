@@ -64,17 +64,17 @@ describe("buildTurnMessages", () => {
 
 describe("parseToolArgs", () => {
   it("extrae reason y seconds válidos", () => {
-    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toEqual({ reason: "porque sí", seconds: 3, target: "rival" });
-    expect(parseToolArgs({ seconds: "2" })).toEqual({ reason: null, seconds: 2, target: "rival" });
+    expect(parseToolArgs({ reason: "  porque sí ", seconds: 3 })).toEqual({ reason: "porque sí", seconds: 3, target: "rival", say: null });
+    expect(parseToolArgs({ seconds: "2" })).toEqual({ reason: null, seconds: 2, target: "rival", say: null });
   });
 
   it("tolera argumentos basura", () => {
-    expect(parseToolArgs({ reason: 5, seconds: -1 })).toEqual({ reason: null, seconds: null, target: "rival" });
-    expect(parseToolArgs(undefined)).toEqual({ reason: null, seconds: null, target: "rival" });
-    expect(parseToolArgs({ seconds: 999 })).toEqual({ reason: null, seconds: 60, target: "rival" });
+    expect(parseToolArgs({ reason: 5, seconds: -1 })).toEqual({ reason: null, seconds: null, target: "rival", say: null });
+    expect(parseToolArgs(undefined)).toEqual({ reason: null, seconds: null, target: "rival", say: null });
+    expect(parseToolArgs({ seconds: 999 })).toEqual({ reason: null, seconds: 60, target: "rival", say: null });
   });
 
   it("extrae el destino de la perla", () => {
-    expect(parseToolArgs({ reason: "me escapo", target: "away" })).toEqual({ reason: "me escapo", seconds: null, target: "away" });
+    expect(parseToolArgs({ reason: "me escapo", target: "away" })).toEqual({ reason: "me escapo", seconds: null, target: "away", say: null });
   });
 });
