@@ -11,7 +11,7 @@ import { setDefaults } from "./models";
 import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
-import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult, showRound } from "./scoreboard";
+import { shownSettings, applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult, showRound } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } from "./sound";
 import { initThoughts, markFallen, pushAction, pushMessage, pushThought, syncThoughts } from "./thoughts";
@@ -132,7 +132,7 @@ function handleEvent(event: ArenaEvent): void {
       // En un K.O. ya sonó la caída; en los demás finales de ronda suena la campana.
       if (event.result.reason !== "kill") playEnd();
       showRound(event.result, event.series);
-      addFeed({ at: event.at, kind: "system", text: `${roundTitle(event.result)}. ${roundDetail(event.result, event.series)}` });
+      addFeed({ at: event.at, kind: "system", text: `${roundTitle(event.result)}. ${roundDetail(event.result, event.series, shownSettings())}` });
       break;
     case "match_end":
       stopSpeech();

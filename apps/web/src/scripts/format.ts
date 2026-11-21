@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS, seriesTally, type MatchSettings } from "@phack/protocol";
 import type { MatchPhase, MatchResult, MatchState, RoundReason, RoundResult, Series, Side, WinReason } from "@phack/protocol";
 
 export const SIDE_LABEL: Record<Side, string> = { red: "Rojo", blue: "Azul" };
@@ -31,9 +32,15 @@ export function roundTitle(result: RoundResult): string {
 }
 
 /** Cómo terminó la ronda y cómo queda la serie, en una frase. */
-export function roundDetail(result: RoundResult, series: Pick<Series, "wins">): string {
+export function roundDetail(
+  result: RoundResult,
+  series: Pick<Series, "wins" | "points">,
+  settings: Pick<MatchSettings, "seriesWin" | "scenario"> = DEFAULT_SETTINGS,
+): string {
   const how = result.winner ? `Gana ${ROUND_REASON[result.reason]}.` : "Se acabó el tiempo con la misma vida.";
-  return `${how} Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}.`;
+  // Si la serie se decide por puntos, el marcador que importa es ese.
+  const t = seriesTally(series, settings);
+  return `${how} Serie: Rojo ${t.red}, Azul ${t.blue}${t.unit === "puntos" ? " en puntos" : ""}.`;
 }
 
 export const REASON_LABEL: Record<WinReason, string> = {

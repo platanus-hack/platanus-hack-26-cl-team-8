@@ -199,15 +199,17 @@ describe("modo chat: argumento say", () => {
     expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(MAX_AGENT_MESSAGE_LENGTH);
   });
 
-  it("la descripción de say pide brevedad y explica la pausa", () => {
+  it("la descripción de say pide brevedad y explica los turnos para hablar", () => {
     const [def] = kitToolDefs(KITS.classic, "chat");
     const say = (def?.parameters as { properties: Record<string, { description: string }> }).properties["say"];
     expect(say?.description).toContain(String(MAX_AGENT_MESSAGE_LENGTH));
     expect(say?.description).toContain("tal cual");
     expect(say?.description).toContain("normalmente una frase");
     expect(say?.description).toContain("Puedes actuar en silencio");
-    expect(say?.description).toContain("tampoco es obligatorio hablar");
-    expect(say?.description).toContain("sayCooldown");
+    expect(say?.description).toContain("se pronuncia por turnos");
+    expect(say?.description).toContain("reemplaza al que esperaba");
+    expect(say?.description).not.toContain("sayCooldown");
+    expect(say?.description).not.toContain("pausa");
   });
 });
 

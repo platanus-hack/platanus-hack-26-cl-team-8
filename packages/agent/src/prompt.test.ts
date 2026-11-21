@@ -113,9 +113,11 @@ describe("buildSystemPrompt", () => {
     expect(chat).toContain("normalmente basta una frase corta");
     expect(chat).toContain("Puedes actuar en silencio");
     expect(chat).toContain("no por haber llegado otro turno");
-    expect(chat).toContain("no que debas hacerlo");
-    expect(chat).toContain("tiempo para leer al otro");
-    expect(chat).toContain('"sayCooldown"');
+    expect(chat).toContain(
+      "- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.",
+    );
+    expect(chat).not.toContain("sayCooldown");
+    expect(chat).not.toContain("no se entregan");
   });
 
   it("en modo chat describe la mecánica sin aconsejar qué decir ni si creerle", () => {
@@ -461,5 +463,48 @@ describe("buildSystemPrompt: modo por rondas", () => {
     };
     expect(await pick(null)).toBe("approach");
     expect(await pick({ maxRounds: MAX_ROUNDS })).toBe("approach");
+  });
+});
+
+describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: KITS.classic,
+    strategy: "Gana la serie.",
+    tickMs: 1500,
+    durationSeconds: 60,
+    comms: "chat" as const,
+  };
+
+  it("un escenario con puntos dice cómo se reparten y que gana el total", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, scenario: "dilemma" } });
+    expect(prompt).toContain("una serie de hasta 4 rondas");
+    expect(prompt).toContain("Si ninguno ataca: 3 puntos cada uno");
+    expect(prompt).toContain("Gana la serie quien sume más puntos");
+    expect(prompt).toContain('"myPoints" y "rivalPoints"');
+    expect(prompt).not.toContain("Gana quien haya ganado más rondas");
+  });
+
+  it("configurable: un escenario por rondas ganadas y el kit que se repone", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 3, scenario: "dilemma", byPoints: false, refillKit: true } });
+    expect(prompt).toContain("Gana quien haya ganado más rondas");
+    expect(prompt).toContain("pero la serie la gana quien gane más rondas");
+    expect(prompt).toContain("el kit entero de nuevo");
+    expect(prompt).not.toContain("El inventario no se repone");
+  });
+
+  it("con horizonte desconocido no dice cuántas rondas hay", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, horizon: "unknown" } });
+    expect(prompt).toContain("cuyo número no conoces");
+    expect(prompt).not.toContain("hasta 4 rondas");
+  });
+
+  it("las reglas del entrenador van después de sus instrucciones", () => {
+    const prompt = buildSystemPrompt({ ...base, rules: ["no_lava", "no_first_strike"] });
+    expect(prompt).toContain("Nunca uses la herramienta lava.");
+    expect(prompt.indexOf("Nunca uses la herramienta lava.")).toBeGreaterThan(prompt.indexOf("</instrucciones>"));
+    expect(buildSystemPrompt(base)).not.toContain("tu entrenador te exige");
   });
 });

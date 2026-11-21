@@ -1,4 +1,19 @@
-import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, MAX_HEALTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
+import {
+  ARENA,
+  CUSTOM_KIT_POTIONS,
+  MAX_AGENT_MESSAGE_LENGTH,
+  MAX_HEALTH,
+  RULE_LABELS,
+  SCENARIOS,
+  kitItemTitle,
+  type CommsMode,
+  type Horizon,
+  type Kit,
+  type KitItem,
+  type RuleId,
+  type ScenarioId,
+  type Side,
+} from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
@@ -45,9 +60,24 @@ export type SystemPromptInput = {
   durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
-  /** Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null = una sola pelea. */
-  rounds?: { maxRounds: number } | null;
+  /**
+   * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null =
+   * una sola pelea. Benchmarks: `scenario` cambia cómo se reparten los puntos y `horizon`
+   * "unknown" oculta cuántas rondas hay.
+   */
+  rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
+  /** Reglas que le impone su entrenador. */
+  rules?: readonly RuleId[];
 };
+
+/** Reglas del entrenador, obligatorias además de sus instrucciones. */
+function rulesSection(rules: readonly RuleId[] | undefined): string[] {
+  if (!rules || rules.length === 0) return [];
+  return [
+    "Además, tu entrenador te exige cumplir SIEMPRE estas reglas, aunque vayas perdiendo:",
+    ...rules.map((rule) => `- ${RULE_LABELS[rule].prompt}`),
+  ];
+}
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
 
@@ -272,7 +302,7 @@ function commsSection(comms: CommsMode): string[] {
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
         '- Habla como en una conversación: normalmente basta una frase corta; usa una segunda si la idea lo necesita. No cuentes palabras ni fuerces frases telegráficas. Reacciona a lo que acaba de pasar o a lo que dijo el otro, sin narrar cada acción.',
         '- Puedes actuar en silencio. Habla cuando tengas algo que decir, no por haber llegado otro turno: no hace falta contestar cada mensaje, llenar los silencios ni terminar siempre con una pregunta. Si no te responde, dale espacio en vez de insistir con lo mismo.',
-        '- La pausa para hablar varía según el largo de los mensajes, el tiempo para leer al otro y cuántas veces hablaste sin respuesta. Si aparece "sayCooldown", son los segundos que faltan: omite "say" mientras tanto. Que desaparezca solo significa que puedes hablar, no que debas hacerlo. Los mensajes enviados durante esa pausa no se entregan ni se guardan para después; la acción sí se ejecuta.',
+        '- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.',
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
         `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
         "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
@@ -292,12 +322,35 @@ function endingLines(input: SystemPromptInput): string[] {
   }
   const timeout =
     input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos: ahí la gana quien tenga más vida`;
-  return [
-    `- La partida es una serie de hasta ${input.rounds.maxRounds} rondas. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`,
-    "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas.",
-    "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".',
-  ];
+  const scenario = input.rounds.scenario ?? "duel";
+  const known = input.rounds.horizon !== "unknown";
+  const length = known
+    ? `una serie de hasta ${input.rounds.maxRounds} rondas`
+    : "una serie de rondas cuyo número no conoces: puede terminar después de cualquier ronda";
+  const lines = [`- La partida es ${length}. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`];
+  const byPoints = input.rounds.byPoints ?? scenario !== "duel";
+  if (!byPoints) {
+    lines.push(
+      known
+        ? "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas."
+        : "- Gana la serie quien haya ganado más rondas cuando termine.",
+    );
+    if (scenario !== "duel") lines.push(`- Cada ronda también reparte puntos (${SCENARIOS[scenario].scoring}), pero la serie la gana quien gane más rondas.`);
+  } else {
+    lines.push(
+      `- Cada ronda reparte puntos: ${SCENARIOS[scenario].scoring}`,
+      `- Se juegan todas las rondas${known ? "" : " que haya"}. Gana la serie quien sume más puntos: lo que cuenta es el total, no ganar cada ronda.`,
+    );
+  }
+  lines.push(
+    input.rounds.refillKit
+      ? "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa y el kit entero de nuevo."
+      : "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
+    !byPoints
+      ? '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".'
+      : '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost", "roundsDrawn", "myPoints" y "rivalPoints" (los puntos de cada uno). Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
+  );
+  return lines;
 }
 
 /**
@@ -354,5 +407,6 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "<instrucciones>",
     strategy,
     "</instrucciones>",
+    ...rulesSection(input.rules),
   ].join("\n");
 }

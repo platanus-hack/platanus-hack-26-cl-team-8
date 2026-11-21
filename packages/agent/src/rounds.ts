@@ -12,29 +12,43 @@ export type SeriesView = {
   lost: number;
   drawn: number;
   maxRounds: number;
+  /** Benchmarks: puntos sumados según el escenario (los propios y los del otro). */
+  points?: { mine: number; rival: number };
+  /** Benchmarks, horizonte "unknown": el agente no sabe cuántas rondas hay. */
+  hideMax?: boolean;
 };
 
 /** Campos de la serie que van en la observación (solo en el modo por rondas). */
 export type SeriesObservation = {
   /** Ronda en juego, desde 1. */
   round: number;
-  maxRounds: number;
+  /** Falta con el horizonte desconocido. */
+  maxRounds?: number;
   /** Rondas que ganó este agente. */
   roundsWon: number;
   /** Rondas que ganó el otro agente. */
   roundsLost: number;
   /** Rondas empatadas (se acabó el tiempo con la misma vida). */
   roundsDrawn: number;
+  /** Benchmarks: puntos propios y del otro agente. */
+  myPoints?: number;
+  rivalPoints?: number;
 };
 
 export function seriesObservation(series: SeriesView): SeriesObservation {
-  return {
+  // El orden de las claves es el de antes: round, maxRounds, roundsWon…
+  const out: SeriesObservation = {
     round: series.round,
-    maxRounds: series.maxRounds,
+    ...(series.hideMax ? {} : { maxRounds: series.maxRounds }),
     roundsWon: series.won,
     roundsLost: series.lost,
     roundsDrawn: series.drawn,
   };
+  if (series.points) {
+    out.myPoints = series.points.mine;
+    out.rivalPoints = series.points.rival;
+  }
+  return out;
 }
 
 /** Lo que se vacía al pausar: la cola de acciones (ver ActionPlan). */

@@ -1,4 +1,16 @@
-import { seriesLeader, type MatchResult, type RoundResult, type Series, type Side } from "@phack/protocol";
+import {
+  DEFAULT_SETTINGS,
+  seriesLeader,
+  seriesTally,
+  type MatchResult,
+  type MatchSettings,
+  type RoundResult,
+  type Series,
+  type Side,
+} from "@phack/protocol";
+
+/** Lo que hace falta de los ajustes para saber si la serie se decide por puntos. */
+type TallySettings = Pick<MatchSettings, "seriesWin" | "scenario">;
 
 /** Lógica pura para decidir el resultado de una pelea. */
 
@@ -40,6 +52,13 @@ export function seriesResult(series: Pick<Series, "wins">): MatchResult {
   return leader ? { winner: leader, reason: "rounds" } : { winner: null, reason: "draw" };
 }
 
+/** Benchmarks: en un escenario con puntos gana la serie quien sumó más; con los mismos, empate. */
+export function pointsResult(series: Pick<Series, "points">): MatchResult {
+  const { red, blue } = series.points;
+  if (red === blue) return { winner: null, reason: "draw" };
+  return { winner: red > blue ? "red" : "blue", reason: "rounds" };
+}
+
 /**
  * Cómo terminó una ronda, contado a uno de los agentes ("la ganaste", "la perdiste").
  * Le llega al reanudar, como resultado de su última acción.
@@ -59,8 +78,13 @@ export function roundNote(result: RoundResult, side: Side): string {
 }
 
 /** Línea del registro al terminar una ronda, con cómo va la serie. */
-export function describeRound(result: RoundResult, series: Pick<Series, "wins">): string {
-  const score = `Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}`;
+export function describeRound(
+  result: RoundResult,
+  series: Pick<Series, "wins" | "points">,
+  settings: TallySettings = DEFAULT_SETTINGS,
+): string {
+  const t = seriesTally(series, settings);
+  const score = `Serie: Rojo ${t.red}, Azul ${t.blue}${t.unit === "puntos" ? " (puntos)" : ""}`;
   if (result.winner === null) return `Ronda ${result.round}: empate, se acabó el tiempo con la misma vida. ${score}`;
   const how =
     result.reason === "kill"
@@ -72,7 +96,12 @@ export function describeRound(result: RoundResult, series: Pick<Series, "wins">)
 }
 
 /** `series`: en el modo por rondas, para contar el marcador final. */
-export function describeResult(result: MatchResult, series: Pick<Series, "wins"> | null = null): string {
+export function describeResult(
+  result: MatchResult,
+  series: Pick<Series, "wins" | "points"> | null = null,
+  settings: TallySettings = DEFAULT_SETTINGS,
+): string {
+  const t = series ? seriesTally(series, settings) : null;
   switch (result.reason) {
     case "kill":
       return result.winner ? `Ganó ${SIDE_LABEL[result.winner]} por KO` : "Pelea terminada por KO";
@@ -81,10 +110,10 @@ export function describeResult(result: MatchResult, series: Pick<Series, "wins">
         ? `Se acabó el tiempo: ganó ${SIDE_LABEL[result.winner]} por tener más vida`
         : "Se acabó el tiempo";
     case "draw":
-      return series ? `La serie terminó empatada: ${series.wins.red} a ${series.wins.blue} en rondas` : "Se acabó el tiempo: empate";
+      return t ? `La serie terminó empatada: ${t.red} a ${t.blue} en ${t.unit}` : "Se acabó el tiempo: empate";
     case "rounds": {
       if (!result.winner) return "Terminó la serie";
-      const score = series ? ` ${series.wins[result.winner]} a ${series.wins[otherSide(result.winner)]}` : "";
+      const score = t ? ` ${t[result.winner]} a ${t[otherSide(result.winner)]}${t.unit === "puntos" ? " en puntos" : ""}` : "";
       return `Ganó ${SIDE_LABEL[result.winner]} la serie${score}`;
     }
     case "stopped":

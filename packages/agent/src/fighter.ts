@@ -2,7 +2,8 @@ import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
 import { ARENA, MAX_HEALTH } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
-import { ChatPacing, CommsInbox, type InboxSnapshot } from "./comms";
+import { CommsInbox, type InboxSnapshot } from "./comms";
+import { HearWake } from "./wake";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
 import { clampToArena, distance3, distanceXZ, retreatTarget, round1, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
@@ -297,7 +298,8 @@ class MineflayerFighter implements Fighter {
   private loopPromise: Promise<void> | null = null;
   private wakeSleep: (() => void) | null = null;
   private startedAt = Date.now();
-  private readonly chatPacing = new ChatPacing();
+  /** Un mensaje del rival adelanta la próxima decisión (ver HearWake). */
+  private readonly hearWake = new HearWake();
   /**
    * Lo que llegó del rival y la conversación. Una línea sale de la bandeja recién cuando
    * responde el LLM que la vio: si la llamada falla, va de nuevo en la próxima observación.
@@ -399,7 +401,17 @@ class MineflayerFighter implements Fighter {
     const kit = opts.kit;
     this.toolNames = kitToolNames(kit);
     const rounds = opts.rounds ?? null;
-    this.series = rounds ? { round: 1, won: 0, lost: 0, drawn: 0, maxRounds: rounds.maxRounds } : null;
+    this.series = rounds
+      ? {
+          round: 1,
+          won: 0,
+          lost: 0,
+          drawn: 0,
+          maxRounds: rounds.maxRounds,
+          ...(rounds.horizon === "unknown" ? { hideMax: true } : {}),
+          ...(rounds.byPoints ? { points: { mine: 0, rival: 0 } } : {}),
+        }
+      : null;
     this.toolDefs = kitToolDefs(kit, opts.comms, rounds !== null);
     this.systemPrompt = buildSystemPrompt({
       side: opts.side,
@@ -411,6 +423,7 @@ class MineflayerFighter implements Fighter {
       durationSeconds: opts.durationSeconds,
       comms: opts.comms,
       rounds,
+      rules: opts.rules,
     });
   }
 
@@ -420,8 +433,9 @@ class MineflayerFighter implements Fighter {
     if (kind === "thought" && this.opts.comms !== "thoughts") return;
     if (kind === "message" && this.opts.comms !== "chat") return;
     // Solo limpieza técnica (ver cleanMessage): llega tal cual lo escribió el rival.
-    if (this.inbox.hear(kind, text) && kind === "message") {
-      this.chatPacing.heard(text, Date.now());
+    // Un mensaje se contesta pensando de inmediato; un razonamiento espera la próxima decisión.
+    if (this.inbox.hear(kind, text) && kind === "message" && this.hearWake.heard() && this.wakeSleep) {
+      this.wakeSleep();
     }
   }
 
@@ -854,12 +868,16 @@ class MineflayerFighter implements Fighter {
   private async runLoop(): Promise<void> {
     while (!this.stopped) {
       const tickStart = Date.now();
+      this.hearWake.beginDecision();
       try {
         await this.decide();
       } catch (err) {
         this.log("error", `Error en la decisión: ${errorText(err)}`);
       }
+      // Llegó un mensaje mientras el LLM pensaba: esa decisión no lo vio, así que sigue otra ya.
+      const again = this.hearWake.endDecision();
       if (this.stopped) break;
+      if (again) continue;
       const remaining = Math.max(50, this.opts.tickMs - (Date.now() - tickStart));
       await this.sleep(remaining);
     }
@@ -969,10 +987,9 @@ class MineflayerFighter implements Fighter {
     const parsed = parseToolArgs(step.args);
     const thought = parsed.reason ?? fallbackThought;
     if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
+    // El orquestador decide cuándo se pronuncia (por turnos); aquí siempre se entrega.
     const said = this.opts.comms === "chat" ? parsed.say : null;
-    const canSay = Date.now() >= this.chatPacing.readyAt;
-    if (said && canSay) {
-      this.chatPacing.said(said, Date.now());
+    if (said) {
       this.inbox.said(said);
       this.safe(() => this.opts.events.onMessage(said));
     }
@@ -995,7 +1012,6 @@ class MineflayerFighter implements Fighter {
     }
     // Si el cuerpo quedó en esa acción, empezó (o continúa); si no, no se pudo usar.
     const started = this.mode === step.name;
-    if (said && !canSay) result += "; mensaje no enviado: espera a que termine sayCooldown";
     this.safe(() => this.opts.events.onAction(step.name, step.args, result));
     return { result, started };
   }
@@ -1063,7 +1079,6 @@ class MineflayerFighter implements Fighter {
       rivalMessages: heard.rivalMessages,
       // La conversación solo existe en modo "chat".
       conversation: this.opts.comms === "chat" ? heard.conversation : [],
-      sayReadyAt: this.opts.comms === "chat" ? this.chatPacing.readyAt : undefined,
       series: this.series,
     });
   }

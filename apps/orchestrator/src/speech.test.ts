@@ -7,6 +7,7 @@ import {
   clampSpeed,
   cutAtWord,
   isSpeechId,
+  mp3Kbps,
   type SpeechConfig,
   type SpeechDeps,
   type SpeechFetch,
@@ -192,6 +193,38 @@ describe("SpeechService: solicitud a ElevenLabs", () => {
     const t = await setup({ config: { maxChars: 12 } });
     await t.service.get(t.service.request("red", "no tengo flechas, en serio") ?? "");
     expect(t.tts()[0]?.body?.text).toBe("no tengo");
+  });
+});
+
+describe("SpeechService: duración real del audio", () => {
+  it("lee los kbps de los formatos mp3 de ElevenLabs y nada más", () => {
+    expect(mp3Kbps("mp3_44100_64")).toBe(64);
+    expect(mp3Kbps(" mp3_22050_32 ")).toBe(32);
+    expect(mp3Kbps("mp3_44100_128")).toBe(128);
+    for (const format of ["pcm_16000", "opus_48000_64", "ulaw_8000", "mp3_44100", "mp3_44100_0", ""]) {
+      expect(mp3Kbps(format)).toBeNull();
+    }
+  });
+
+  it("calcula los ms por el tamaño y el bitrate, esperando a que el audio esté listo", async () => {
+    // 21 600 bytes a 64 kbps = 2,7 s.
+    const t = await setup({ tts: () => audio("x".repeat(21_600)) });
+    const id = t.service.request("red", "una frase de prueba") ?? "";
+    expect(await t.service.durationMs(id)).toBe(2700);
+    // Ya listo, responde igual.
+    expect(await t.service.durationMs(id)).toBe(2700);
+    const fast = await setup({ config: { outputFormat: "mp3_44100_128" }, tts: () => audio("x".repeat(21_600)) });
+    expect(await fast.service.durationMs(fast.service.request("blue", "otra") ?? "")).toBe(1350);
+  });
+
+  it("null si el audio falló, si el id no existe o si el formato no es mp3 con bitrate", async () => {
+    const failed = await setup({ tts: () => failure(500) });
+    expect(await failed.service.durationMs(failed.service.request("red", "hola") ?? "")).toBeNull();
+    expect(await failed.service.durationMs("00000000-0000-4000-8000-000000000000")).toBeNull();
+    const pcm = await setup({ config: { outputFormat: "pcm_16000" } });
+    const id = pcm.service.request("red", "hola") ?? "";
+    expect(id).not.toBe("");
+    expect(await pcm.service.durationMs(id)).toBeNull();
   });
 });
 

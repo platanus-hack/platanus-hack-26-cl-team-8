@@ -15,6 +15,15 @@ import {
   MODE_LABELS,
   TIMER_LABELS,
   VOICE_LABELS,
+  DEFAULT_SCENARIO,
+  HORIZONS,
+  MAX_ROUNDS,
+  RULE_IDS,
+  RULE_LABELS,
+  SCENARIOS,
+  SCENARIO_IDS,
+  SERIES_WINS,
+  SERIES_WIN_LABELS,
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
@@ -280,6 +289,63 @@ const stats = [
           </div>
         </div>
 
+        <!-- Benchmarks: escenario y reglas de la serie (scripts/benchsettings.ts). Ver /bench. -->
+        <div class="match-settings bench-settings" id="bench-settings">
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Escenario</span>
+              <select id="scenario" aria-describedby="scenario-description">
+                {SCENARIO_IDS.map((id) => <option value={id} selected={id === DEFAULT_SCENARIO}>{SCENARIOS[id].name}</option>)}
+              </select>
+            </label>
+            <p class="comms__description" id="scenario-description">{SCENARIOS[DEFAULT_SCENARIO].description}</p>
+            <p class="comms__description comms__hint" id="scenario-hint" hidden></p>
+          </div>
+          <div class="comms" id="series-options">
+            <div class="rounds">
+              <label class="field">
+                <span class="field__label">Rondas</span>
+                <input id="rounds" type="number" min="2" max={MAX_ROUNDS} step="1" value={MAX_ROUNDS} inputmode="numeric" aria-describedby="series-description" />
+              </label>
+              <label class="field">
+                <span class="field__label">Horizonte</span>
+                <select id="horizon" aria-describedby="series-description">
+                  {HORIZONS.map((h) => <option value={h}>{h === "known" ? "Conocido" : "Desconocido"}</option>)}
+                </select>
+              </label>
+              <label class="field">
+                <span class="field__label">Gana la serie</span>
+                <select id="series-win" aria-describedby="series-description">
+                  {SERIES_WINS.map((w) => <option value={w}>{SERIES_WIN_LABELS[w].name}</option>)}
+                </select>
+              </label>
+            </div>
+            <label class="rules__item">
+              <input type="checkbox" id="refill-kit" />
+              Reponer el kit antes de cada ronda
+            </label>
+            <p class="comms__description" id="series-description"></p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Juez</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="judge" aria-describedby="judge-description" />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="judge-state">Apagado</span>
+              </span>
+            </label>
+            <p class="comms__description" id="judge-description">
+              Al terminar la partida, un LLM lee la transcripción y califica a cada agente (necesita un LLM real).
+            </p>
+          </div>
+          <div class="comms">
+            <span class="field__label">Espejo</span>
+            <button type="button" class="btn btn--small" id="btn-mirror">Copiar Rojo en Azul</button>
+            <p class="comms__description">Mismo prompt, modelo y kit en los dos lados: línea base para ver cuánto varía un modelo.</p>
+          </div>
+        </div>
+
         <div class="editors">
           {
             sides.map((side) => (
@@ -302,6 +368,19 @@ const stats = [
                   <p class="kit__description" id={`kit-description-${side.id}`}>{KITS[DEFAULT_KIT].description}</p>
                   <div class="inv" id={`inv-${side.id}`} role="group" aria-label="Inventario del kit" />
                 </div>
+
+                <!-- Reglas del entrenador: se guardan al marcarlas, como los ajustes (scripts/benchsettings.ts). -->
+                <fieldset class="rules" id={`rules-${side.id}`} data-side={side.id}>
+                  <legend class="field__label">Reglas (se cuentan las veces que las rompe)</legend>
+                  {
+                    RULE_IDS.map((rule) => (
+                      <label class="rules__item">
+                        <input type="checkbox" value={rule} data-rule={rule} />
+                        {RULE_LABELS[rule].name}
+                      </label>
+                    ))
+                  }
+                </fieldset>
 
                 <div class="editor__options">
                   <!-- Selector de modelo: lo arma scripts/modelpicker.ts con la lista de modelos permitidos. -->
