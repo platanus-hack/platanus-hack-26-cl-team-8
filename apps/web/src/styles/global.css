@@ -104,8 +104,8 @@ textarea {
 /*
  * Ayuda al pasar el mouse: cualquier elemento con `data-tip` muestra ese texto en una
  * cajita, casi al instante (el `title` nativo tarda y no se puede estilar). Sale hacia
- * abajo; en los subtítulos, que están al pie del video, hacia arriba. En el lado azul y
- * en el borde derecho se alinea a la derecha para no salirse de la pantalla.
+ * abajo; en las columnas de pensamientos, que llegan al pie del video, hacia arriba. En
+ * el lado azul y en el borde derecho se alinea a la derecha para no salirse de la pantalla.
  */
 [data-tip] {
   position: relative;
@@ -144,14 +144,14 @@ textarea {
 }
 
 .hud__side--blue [data-tip]::after,
-.mind--blue [data-tip]::after,
+.thoughts__col--blue [data-tip]::after,
 .sound[data-tip]::after,
 .conn[data-tip]::after {
   left: auto;
   right: 0;
 }
 
-.minds [data-tip]::after {
+.thoughts [data-tip]::after {
   top: auto;
   bottom: calc(100% + 8px);
 }
@@ -217,7 +217,8 @@ textarea {
 /*
  * Velos arriba y abajo: oscurecen el video solo donde hay texto encima, para que se
  * lea sobre cualquier imagen (el cielo de Minecraft es muy claro). El centro queda limpio.
- * Capas del escenario: video 0, velos 1, resultado 2, marcador y subtítulos 3.
+ * Capas del escenario: video 0, velos 1, resultado y cuenta regresiva 2, marcador,
+ * pensamientos y botón de la pelea 3.
  */
 .stage::before,
 .stage::after {
@@ -481,7 +482,8 @@ textarea {
   width: 0;
   height: 100%;
   background: var(--side);
-  transition: width 0.25s ease-out;
+  /* Corta: la barra baja junto con el golpe que se ve, sin quedarse atrás de la imagen. */
+  transition: width 0.15s ease-out;
 }
 
 /* Azul es el espejo de Rojo: se llena desde la derecha hacia el centro. */
@@ -568,8 +570,9 @@ textarea {
   pointer-events: none;
 }
 
-/* Con el resultado en pantalla, el aviso de "Sin señal" no compite por el centro. */
-.stage:has(.winner:not([hidden])) .player__nosignal > * {
+/* Con el resultado o la cuenta regresiva en pantalla, el aviso de "Sin señal" no compite por el centro. */
+.stage:has(.winner:not([hidden])) .player__nosignal > *,
+.stage:has(.countdown:not([hidden])) .player__nosignal > * {
   visibility: hidden;
 }
 
@@ -600,88 +603,381 @@ textarea {
   line-height: 1.4;
 }
 
-/* ---------- Pensamientos (subtítulos) y control de la pelea ---------- */
+/* ---------- Cuenta regresiva ---------- */
 
-.minds {
+/*
+ * "3", "2", "1" y "¡Pelea!" al centro del video antes de cada pelea, en la capa del
+ * resultado (nunca están los dos a la vez). Es solo visual: para lectores de pantalla,
+ * la fase bajo el reloj ya dice "Cuenta regresiva".
+ */
+.countdown {
   position: absolute;
-  inset: auto var(--gutter) 32px var(--gutter);
-  z-index: 3;
+  inset: 0;
+  z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: end;
-  gap: 40px;
+  place-content: center;
+  font: 400 clamp(96px, 18vw, 192px) / 1 var(--pixel);
+  text-align: center;
+  text-shadow:
+    0 6px 0 rgba(0, 0, 0, 0.6),
+    0 0 40px rgba(6, 7, 9, 0.55);
+  pointer-events: none;
 }
 
-.mind {
-  grid-row: 1;
-  max-width: 46ch;
-  padding-left: 16px;
+/* "¡Pelea!" es una palabra entera: va más chica para caber en pantallas angostas. */
+.countdown[data-step="go"] {
+  font-size: clamp(48px, 11vw, 144px);
+}
+
+/* Cada paso es un elemento nuevo (countdown.ts), así el salto se repite con cada número. */
+.countdown__step {
+  display: block;
+  animation: count-pop 0.3s ease-out;
+}
+
+@keyframes count-pop {
+  from {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Pensamientos en vivo ---------- */
+
+/*
+ * Una columna por agente a cada lado del video (Rojo a la izquierda, Azul a la derecha),
+ * desde debajo del marcador hasta el pie. Cada columna es la pila de los últimos
+ * pensamientos de su agente, el más nuevo abajo; las arma scripts/thoughts.ts. El video
+ * sigue siendo el protagonista: las columnas no atrapan el mouse (solo la ficha de cada
+ * acción, para mostrar su ayuda) y cada pensamiento trae su propio velo, que se va
+ * perdiendo hacia el centro de la imagen.
+ */
+.thoughts {
+  position: absolute;
+  /* Arriba, justo bajo las estadísticas del marcador; abajo, a la altura del botón. */
+  inset: 176px var(--gutter) 32px var(--gutter);
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+  transition: opacity 0.4s ease-out;
+}
+
+.thoughts__col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: clamp(220px, 24vw, 340px);
+  min-width: 0;
+  /*
+   * Si la pila no cabe, se corta por arriba, donde está lo más viejo. A los lados no se
+   * corta nada: por ahí se abre la ayuda de las fichas.
+   */
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
+.thoughts__list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * Un pensamiento con la ficha de su acción. El puesto se cuenta desde el más nuevo con
+ * :nth-last-child: el último es el que se está leyendo y los anteriores se achican y se
+ * apagan (--dim) hasta irse. thoughts.ts solo agrega al final y quita los que sobran.
+ */
+.thought {
+  --dim: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 6px;
+  max-height: 240px;
+  padding: 6px 14px 7px 12px;
   border-left: 3px solid var(--side);
-  transition: opacity 0.25s ease-out;
+  background: linear-gradient(to right, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
+  font-size: 17px;
+  opacity: var(--dim);
+  transition:
+    opacity 0.3s ease-out,
+    font-size 0.25s ease-out,
+    max-height 0.3s ease-out,
+    padding 0.3s ease-out,
+    visibility 0.3s;
+  animation: thought-in 0.22s ease-out;
 }
 
-/* Sin novedades hace un rato: el subtítulo se va y deja ver el video. */
-.mind.is-stale {
-  opacity: 0;
-  transition-duration: 1.2s;
+@keyframes thought-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
 }
 
-.mind--red {
-  grid-column: 1;
-}
-
-/* Azul es el espejo: pegado a la derecha, con su regla al lado derecho. */
-.mind--blue {
-  grid-column: 3;
-  justify-self: end;
-  padding: 0 16px 0 0;
+/* Azul es el espejo: su regla va al lado derecho y el velo se pierde hacia la izquierda. */
+.thoughts__col--blue .thought {
+  justify-items: end;
+  padding: 6px 12px 7px 14px;
   border-left: 0;
   border-right: 3px solid var(--side);
+  background: linear-gradient(to left, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
   text-align: right;
 }
 
-.mind__thought {
+.thought:nth-last-child(2) {
+  --dim: 0.82;
+  font-size: 15px;
+}
+
+.thought:nth-last-child(3) {
+  --dim: 0.66;
+  font-size: 14px;
+}
+
+.thought:nth-last-child(4) {
+  --dim: 0.5;
+  font-size: 13px;
+}
+
+.thought:nth-last-child(n + 5) {
+  --dim: 0.36;
+  font-size: 13px;
+}
+
+/* El que ya no cabe entre los visibles se apaga y deja de ocupar lugar. */
+.thought:nth-last-child(n + 6) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Con el mouse sobre la ficha, ese pensamiento recupera su brillo: la ayuda no sale apagada. */
+.thought:has(.thought__chip:hover) {
+  opacity: 1;
+}
+
+/* El más nuevo se lee completo (hasta 5 líneas); los anteriores quedan en una o dos. */
+.thought__text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 5;
+  min-width: 0;
   overflow: hidden;
-  font-size: 19px;
   font-weight: 500;
   line-height: 1.35;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  overflow-wrap: anywhere;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
-/* Última acción: ícono + frase; la llamada a la herramienta tal cual va en el tooltip. */
-.mind__action {
+.thought:nth-last-child(2) .thought__text {
+  -webkit-line-clamp: 2;
+}
+
+.thought:nth-last-child(n + 3) .thought__text {
+  -webkit-line-clamp: 1;
+}
+
+/*
+ * Mientras un pensamiento se escribe letra a letra, lo que falta ya está en la página
+ * pero invisible: el pensamiento ocupa su alto final desde el principio.
+ */
+.thought__rest {
+  visibility: hidden;
+}
+
+/*
+ * Ficha de la acción que vino con el pensamiento: ícono de la herramienta + frase corta,
+ * como un casillero del juego. La llamada tal cual y su resultado van en la ayuda.
+ */
+.thought__chip {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
-  margin-top: 8px;
-  font-size: 15px;
-  line-height: 1.4;
-  color: rgba(237, 236, 232, 0.88);
+  gap: 7px;
+  max-width: 100%;
+  padding: 2px 9px 2px 4px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(237, 236, 232, 0.24);
+  font-size: 13px;
+  line-height: 1.3;
+  pointer-events: auto;
+  cursor: default;
 }
 
-.mind--blue .mind__action {
-  justify-content: flex-end;
+.thoughts__col--blue .thought__chip {
+  flex-direction: row-reverse;
+  padding: 2px 4px 2px 9px;
 }
 
-/* Ícono de la herramienta: lo dibuja scoreboard.ts. Sin herramienta reconocida no ocupa lugar. */
-.mind__icon {
+.thought__chip .pixel-icon {
+  flex: none;
+}
+
+.thought__label {
+  min-width: 0;
+}
+
+/*
+ * "Pensando": tres cuadros que laten al pie de la columna mientras el agente pelea y
+ * lleva un rato sin decir nada. Su lugar está siempre reservado, así la pila no salta
+ * cuando aparecen o se van.
+ */
+.thoughts__thinking {
   display: flex;
+  flex: none;
+  align-self: flex-start;
+  gap: 4px;
+  margin-top: 10px;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
 }
 
-.mind__icon:empty {
-  display: none;
+.thoughts__col--blue .thoughts__thinking {
+  align-self: flex-end;
 }
 
-.mind__result {
-  color: rgba(237, 236, 232, 0.62);
+.thoughts__thinking.is-on {
+  opacity: 1;
 }
 
-.mind__result:empty {
-  display: none;
+.thoughts__thinking i {
+  width: 6px;
+  height: 6px;
+  background: var(--side);
+  opacity: 0.6;
+}
+
+.thoughts__thinking.is-on i {
+  animation: thinking 1.2s ease-in-out infinite;
+}
+
+.thoughts__thinking i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thoughts__thinking i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* Con el resultado en pantalla el centro es del cartel: las columnas se apagan. */
+.stage:has(.winner:not([hidden])) .thoughts {
+  opacity: 0;
+}
+
+.stage:has(.winner:not([hidden])) .thought__chip {
+  pointer-events: none;
+}
+
+/* Durante la cuenta regresiva las columnas no suben de la mitad: el centro es de los números. */
+.stage:has(.countdown:not([hidden])) .thoughts {
+  top: calc(50% + clamp(60px, 10vw, 110px));
+}
+
+/*
+ * Cuántos pensamientos se ven depende del alto de la ventana: la pila tiene que caber
+ * entre el marcador y el pie aunque todos vengan largos.
+ */
+@media (min-width: 700px) and (max-height: 759px) {
+  .thought:nth-last-child(n + 5) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (min-width: 700px) and (max-height: 689px) {
+  .thought:nth-last-child(n + 4) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (min-width: 700px) and (max-height: 619px) {
+  .thought:nth-last-child(n + 3) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* En ventanas altas sobra lugar: los anteriores muestran una línea más. */
+@media (min-width: 700px) and (min-height: 900px) {
+  .thought:nth-last-child(2) .thought__text {
+    -webkit-line-clamp: 3;
+  }
+
+  .thought:nth-last-child(n + 3) .thought__text {
+    -webkit-line-clamp: 2;
+  }
+}
+
+/*
+ * Pantallas angostas: las columnas no caben a los lados del botón, así que terminan
+ * sobre él y se reparten el ancho. Solo se ven los dos pensamientos más nuevos de cada
+ * lado, en letra más chica.
+ */
+@media (max-width: 699px) {
+  .thoughts {
+    bottom: 90px;
+  }
+
+  .thoughts__col {
+    width: calc(50% - 5px);
+  }
+
+  .thoughts__col .thought {
+    gap: 4px;
+    padding: 5px 8px 6px;
+    font-size: 13px;
+  }
+
+  .thoughts__col .thought:nth-last-child(2) {
+    font-size: 12px;
+  }
+
+  .thoughts__col .thought:nth-last-child(n + 3) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .thought__chip {
+    gap: 5px;
+    font-size: 11.5px;
+  }
 }
 
 /* Estadísticas bajo la barra de vida: ícono de píxeles + número, como el HUD del juego. */
@@ -734,10 +1030,14 @@ textarea {
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
 }
 
+/* Botón de la pelea: abajo al centro del video, entre las dos columnas de pensamientos. */
 .controls {
-  grid-column: 2;
-  grid-row: 1;
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  z-index: 3;
   width: 190px;
+  transform: translateX(-50%);
 }
 
 /* Un solo botón a la vez: iniciar cuando no hay pelea, detener cuando la hay. */

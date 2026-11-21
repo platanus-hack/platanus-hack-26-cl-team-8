@@ -19,13 +19,19 @@ import { extractJsonObject, isRecord } from "./util";
  *     currentAction:   string         herramienta que el cuerpo está ejecutando
  *     pearlCooldown:   number         segundos de recarga de la perla (falta = lista)
  *     buildCooldown:   number         segundos de recarga del muro (falta = listo)
+ *     absorption:      number         corazones amarillos de la manzana dorada (falta = 0)
  *   Campos ausentes o inválidos se tratan como null (la vida y la comida propias como 20,
- *   las recargas como 0 y el inventario como vacío).
+ *   las recargas y los corazones amarillos como 0 y el inventario como vacío).
  * - Argumentos: se envían solo los "required" del JSON Schema de la tool, con un valor
  *   por defecto (default, primer enum, minimum o 1 para números, "" para strings). La
  *   excepción es "pearl", que lleva el "target" que eligió la política ("rival" | "away").
  * - Herramientas de kit: solo se eligen si el inventario de la observación trae el ítem
  *   (perlas de ender, tablones) y no hay recarga pendiente. Con el kit clásico no cambia nada.
+ *   Para ellas una manzana dorada solo cuenta como comida si no quedan corazones amarillos:
+ *   no se acumulan, así que comer otra antes de perderlos la desperdicia.
+ * - Tras una perla "away" el agente empieza a comer solo (si tiene hambre y comida). La
+ *   política de siempre elige "eat" con poca vida y el rival lejos, que es como queda
+ *   después de escapar, así que repite la acción en curso y no la corta.
  * - Estilo: si la estrategia del usuario contiene "defensiv", "mantén distancia",
  *   "usa el arco", "francotirador" o "arquer", pelea a distancia; si no, cuerpo a cuerpo.
  *   La estrategia es el texto entre <estrategia> y </estrategia> de los mensajes "system"
@@ -59,7 +65,10 @@ const PEARL_RIVAL_HEALTH = 8;
 const PEARL_RIVAL_DISTANCE = 8;
 /** Bajo esta vida se levanta un muro para cubrirse (y se come detrás). */
 const BUILD_HEALTH = 12;
-/** El muro se levanta con el rival a esta distancia: ni encima ni al otro lado de la arena. */
+/**
+ * El muro se levanta con el rival a esta distancia: ni encima ni al otro lado de la arena.
+ * El mínimo queda sobre el del agente, que rechaza "build" con el rival a menos de 4.5.
+ */
 const BUILD_MIN_DISTANCE = 5;
 const BUILD_MAX_DISTANCE = 10;
 
@@ -86,6 +95,8 @@ export type MockObservation = {
   /** Segundos de recarga pendientes; 0 = se puede usar. */
   pearlCooldown: number;
   buildCooldown: number;
+  /** Corazones amarillos (vida extra de la manzana dorada); 0 = no tiene. */
+  absorption: number;
   /** Cantidad de cada ítem, por nombre de Minecraft ({} si no viene). */
   inventory: Record<string, number>;
   /** Herramienta que el cuerpo está ejecutando (null si no viene). */
@@ -130,6 +141,7 @@ export function readObservation(messages: ChatMessage[]): MockObservation {
     food: num(obj.food) ?? 20,
     pearlCooldown: Math.max(0, num(obj.pearlCooldown) ?? 0),
     buildCooldown: Math.max(0, num(obj.buildCooldown) ?? 0),
+    absorption: Math.max(0, num(obj.absorption) ?? 0),
     inventory: readInventory(obj.inventory),
     currentAction: typeof obj.currentAction === "string" ? obj.currentAction : null,
   };
@@ -192,8 +204,10 @@ function kitDecision(obs: MockObservation): MockDecision | null {
   const count = (name: string): number => obs.inventory[name] ?? 0;
 
   const losing = opponentHealth === null || opponentHealth > health;
-  // El filete solo se puede comer con la barra de comida bajo 20; la manzana dorada, siempre.
-  const canEat = count("golden_apple") > 0 || (obs.food < 20 && count("cooked_beef") > 0);
+  // El filete solo se puede comer con la barra de comida bajo 20; la manzana dorada, siempre,
+  // pero sus corazones amarillos no se acumulan: mientras queden no vale la pena otra.
+  const appleWorthIt = count("golden_apple") > 0 && obs.absorption === 0;
+  const canEat = appleWorthIt || (obs.food < 20 && count("cooked_beef") > 0);
   const canPearl = count("ender_pearl") > 0 && obs.pearlCooldown === 0 && health > PEARL_MIN_HEALTH;
 
   if (canPearl && canEat && losing && health <= PEARL_ESCAPE_HEALTH && distance <= MELEE_RANGE + 2) {

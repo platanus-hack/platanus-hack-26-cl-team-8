@@ -121,7 +121,7 @@ export type VelocitySample = { x: number; y: number; z: number; at: number };
  * Sobre esta velocidad (bloques/s) el salto entre dos muestras no es movimiento sino un
  * teletransporte (una perla de ender): nadie corre a más de unos 8 b/s.
  */
-const MAX_TRACKED_SPEED = 20;
+export const MAX_TRACKED_SPEED = 15;
 
 /**
  * Estima la velocidad (bloques/s) a partir de dos muestras de posición y la

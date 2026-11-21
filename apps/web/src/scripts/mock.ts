@@ -13,13 +13,15 @@
  * Reemplaza las tres entradas de datos de la página: la API HTTP (api.ts), el
  * websocket (socket.ts) y el video (player.ts). Los botones "Iniciar pelea" y
  * "Detener" cambian de fase localmente, para recorrer todos los estados de la
- * interfaz. Nada se guarda: al recargar vuelve al estado inicial.
+ * interfaz; al iniciar, la pelea pasa por la preparación y la cuenta regresiva como
+ * en el servidor. Nada se guarda: al recargar vuelve al estado inicial.
  *
  * Este módulo se carga con import() dinámico, así que no pesa en el sitio real.
  */
 import {
   AGENT_USERNAMES,
   API_ROUTES,
+  COUNTDOWN_SECONDS,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
   kitOf,
@@ -41,6 +43,8 @@ import {
 const MATCH_DURATION_MS = 180_000;
 /** Cuánto lleva la pelea "en curso" al abrir la página. */
 const ELAPSED_MS = 72_000;
+/** Cuánto "tarda" en prepararse la arena antes de que parta la cuenta regresiva. */
+const PREPARE_MS = 1500;
 
 const params = new URLSearchParams(window.location.search);
 
@@ -196,6 +200,8 @@ function freshRunning(): typeof RUNNING_START {
 let running = freshRunning();
 /** Cuándo "empezó" la pelea en curso; se reinicia cuando el reloj está por llegar a cero. */
 let runningSince = Date.now() - ELAPSED_MS;
+/** Hora en que termina la cuenta regresiva; solo tiene valor al final de "preparing". */
+let countdownEndsAt: number | null = null;
 
 const EXPLANATION =
   "Rojo ganó porque su prompt lo mantuvo pegado al rival: Azul nunca consiguió la distancia que su estrategia de arco necesitaba.";
@@ -213,6 +219,7 @@ function buildState(phase: MatchPhase): MatchState {
       phase,
       startedAt: null,
       endsAt: null,
+      countdownEndsAt: null,
       agents: { red: agent("red", offline), blue: agent("blue", offline) },
       configs,
       result: null,
@@ -225,7 +232,9 @@ function buildState(phase: MatchPhase): MatchState {
       phase,
       startedAt: null,
       endsAt: null,
-      agents: { red: agent("red", {}), blue: agent("blue", { connected: false }) },
+      countdownEndsAt,
+      // Azul tarda en conectarse; la cuenta regresiva parte cuando ya están los dos.
+      agents: { red: agent("red", {}), blue: agent("blue", { connected: countdownEndsAt !== null }) },
       configs,
       result: null,
     };
@@ -237,6 +246,7 @@ function buildState(phase: MatchPhase): MatchState {
       phase,
       startedAt: runningSince,
       endsAt: runningSince + MATCH_DURATION_MS,
+      countdownEndsAt: null,
       agents: structuredClone(running),
       configs,
       result: null,
@@ -251,6 +261,7 @@ function buildState(phase: MatchPhase): MatchState {
     phase,
     startedAt: now - 131_000,
     endsAt: now + 49_000,
+    countdownEndsAt: null,
     agents: {
       red: agent("red", {
         health: 4.5,
@@ -339,11 +350,19 @@ function broadcastState(): MatchState {
   return state;
 }
 
+/** Los dos peleadores están listos: se avisa cuándo termina la cuenta y, a esa hora, parte la pelea. */
+function startCountdown(): void {
+  countdownEndsAt = Date.now() + COUNTDOWN_SECONDS * 1000;
+  broadcastState();
+  phaseTimer = window.setTimeout(() => setPhase("running"), COUNTDOWN_SECONDS * 1000);
+}
+
 function setPhase(next: MatchPhase): MatchState {
   window.clearTimeout(phaseTimer);
   phase = next;
-  // Como el servidor real: tras preparar, la pelea empieza sola.
-  if (next === "preparing") phaseTimer = window.setTimeout(() => setPhase("running"), 2500);
+  countdownEndsAt = null;
+  // Como el servidor real: tras preparar viene la cuenta regresiva y la pelea empieza sola.
+  if (next === "preparing") phaseTimer = window.setTimeout(startCountdown, PREPARE_MS);
   if (next === "running") {
     running = freshRunning();
     runningSince = Date.now() - ELAPSED_MS;
@@ -366,23 +385,17 @@ function scheduleExplanation(): void {
 
 // ---------- Pelea en bucle ----------
 //
-// Mientras la fase es "running", la maqueta sigue emitiendo pensamientos, acciones y
-// golpes, para ver vivos los subtítulos, los números de daño y las barras de vida.
+// Mientras la fase es "running", la maqueta sigue emitiendo decisiones (un pensamiento y
+// su acción, uno tras otro, como el agente real) y golpes, para ver vivas las columnas de
+// pensamientos, los números de daño y las barras de vida.
 
 const LOOP_MS = 2400;
 
-const LOOP_THOUGHTS: Record<Side, string[]> = {
-  red: [
-    "Sigue retrocediendo. Corro en diagonal para cortarle el paso.",
-    "Lo tengo a 2 bloques. Golpeo ahora, antes de que cargue el arco.",
-    "Me queda poca vida pero mi prompt dice no retroceder: sigo atacando.",
-  ],
-  blue: [
-    "Demasiado cerca. Giro a la izquierda y abro distancia.",
-    "A 8 bloques, tiro limpio. Cargo el arco al máximo.",
-    "Su vida baja más rápido que la mía: mantengo la distancia y sigo disparando.",
-  ],
-};
+/**
+ * Azul lo piensa dos veces seguidas en una de cada dos vueltas: así se ve qué hace la
+ * columna cuando un agente repite el mismo pensamiento.
+ */
+const KEEP_SHOOTING = "Su vida baja más rápido que la mía: mantengo la distancia y sigo disparando.";
 
 let loopTimer: number | undefined;
 let loopStep = 0;
@@ -391,9 +404,9 @@ function send(event: Record<string, unknown> & { type: ArenaEvent["type"] }): vo
   emit?.({ ...event, at: Date.now() } as ArenaEvent);
 }
 
-function think(side: Side): void {
-  const options = LOOP_THOUGHTS[side];
-  const text = options[Math.floor(loopStep / 6) % options.length]!;
+/** El agente piensa una de las `options`: cambia de una vuelta del bucle a la siguiente. */
+function think(side: Side, options: string[]): void {
+  const text = options[Math.floor(loopStep / 6) % options.length] ?? "";
   running[side].lastThought = text;
   running[side].decisions += 1;
   send({ type: "thought", side, text });
@@ -429,36 +442,63 @@ function loopTick(): void {
   // Antes de que el reloj llegue a cero, la pelea "empieza" de nuevo.
   if (runningSince + MATCH_DURATION_MS - Date.now() < 6000) runningSince = Date.now();
 
-  // Cada paso usa lo que el kit de ese lado permite: la perla y el muro solo salen si
-  // el kit los trae, y quien no tiene arco pelea cuerpo a cuerpo.
+  // Cada paso es una decisión: un pensamiento y su acción. Usa lo que el kit de ese lado
+  // permite: la perla y el muro solo salen si el kit los trae, y quien no tiene arco
+  // pelea cuerpo a cuerpo.
   switch (loopStep % 6) {
     case 0:
-      think("red");
       if (hasItem("red", "ender_pearl")) {
+        think("red", [
+          "Sigue lejos y carga el arco. Le caigo encima con una perla.",
+          "Volvió a abrir distancia: otra perla y quedo a su lado.",
+        ]);
         act("red", "pearl", { target: "rival", reason: "caerle encima" }, "perla lanzada: aterrizó a 2.4 bloques de AgenteAzul");
       } else {
+        think("red", [
+          "Sigue retrocediendo. Corro en diagonal para cortarle el paso.",
+          "Se me escapa por la izquierda: acorto la distancia.",
+        ]);
         act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
       }
       break;
     case 1:
+      think("red", [
+        "Lo tengo a 2 bloques. Golpeo ahora, antes de que cargue el arco.",
+        "Me queda poca vida pero mi prompt dice no retroceder: sigo atacando.",
+      ]);
       act("red", "attack", { reason: "está a mi alcance", seconds: 2 }, "golpe conectado (3 de daño)");
       hit("red", 3);
       break;
     case 2:
-      think("blue");
       if (hasItem("blue", "oak_planks")) {
+        think("blue", [
+          "Demasiado cerca. Levanto un muro entre los dos para ganar tiempo.",
+          "Viene de frente otra vez: un muro y vuelvo a disparar.",
+        ]);
         act("blue", "build", { reason: "frenar su carga" }, "muro levantado entre los dos (6 bloques)");
       } else {
+        think("blue", [
+          "Demasiado cerca. Giro a la izquierda y abro distancia.",
+          "No puedo dejar que me alcance: me alejo.",
+        ]);
         act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
       }
       break;
     case 3:
-      if (hasItem("blue", "bow")) act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
-      else act("blue", "attack", { reason: "está a mi alcance" }, "golpe conectado (2.5 de daño)");
+      if (hasItem("blue", "bow")) {
+        think("blue", ["A 8 bloques, tiro limpio. Cargo el arco al máximo.", KEEP_SHOOTING]);
+        act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
+      } else {
+        think("blue", ["Sin arco me toca pelear de cerca: golpeo cuando entre."]);
+        act("blue", "attack", { reason: "está a mi alcance" }, "golpe conectado (2.5 de daño)");
+      }
       hit("blue", 2.5);
       break;
     case 4:
-      think("red");
+      think("red", [
+        "Me bajó la vida. Aprovecho que se aleja para comer.",
+        "Como ahora, antes de volver a la carga.",
+      ]);
       act(
         "red",
         "eat",
@@ -468,8 +508,10 @@ function loopTick(): void {
       break;
     default:
       if (hasItem("blue", "bow")) {
+        think("blue", ["Sigue viniendo. Otro disparo antes de que me alcance.", KEEP_SHOOTING]);
         act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
       } else {
+        think("blue", ["Lo presiono de cerca antes de que alcance a comer."]);
         act("blue", "approach", { reason: "sigo presionando" }, "avanzando hacia AgenteRojo (4.0 bloques)");
       }
       break;
@@ -550,7 +592,8 @@ export function connectMockSocket(handlers: SocketHandlers): void {
   for (const seed of feedFor(phase)) {
     handlers.onMessage(JSON.stringify({ ...seed.event, at: now - seed.ago }));
   }
-  // El estado va al final y con la hora actual: la página sincroniza su reloj con el último evento.
+  // El estado va al final y con la hora actual: con él la página estima el reloj del
+  // servidor (los eventos de arriba traen horas pasadas y no cuentan para eso).
   broadcastState();
   syncLoop();
   scheduleExplanation();
@@ -641,7 +684,7 @@ export function startMockVideo(video: HTMLVideoElement): boolean {
       ctx.restore();
     }
 
-    // Marca de agua al centro: arriba y abajo de la imagen van el marcador y los subtítulos.
+    // Marca de agua al centro: arriba va el marcador y a los lados, los pensamientos.
     const label = "Transmisión de prueba (maqueta)";
     ctx.font = "600 20px system-ui, sans-serif";
     ctx.textBaseline = "middle";

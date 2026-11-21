@@ -1,4 +1,4 @@
-import type { MatchPhase, MatchResult, Side, WinReason } from "@phack/protocol";
+import type { MatchPhase, MatchResult, MatchState, Side, WinReason } from "@phack/protocol";
 
 export const SIDE_LABEL: Record<Side, string> = { red: "Rojo", blue: "Azul" };
 
@@ -8,6 +8,12 @@ export const PHASE_LABEL: Record<MatchPhase, string> = {
   running: "En combate",
   finished: "Pelea finalizada",
 };
+
+/** Texto de la fase; con la cuenta regresiva en marcha (al final de "preparing") se dice eso. */
+export function phaseLabel(state: Pick<MatchState, "phase" | "countdownEndsAt">): string {
+  if (state.phase === "preparing" && state.countdownEndsAt !== null) return "Cuenta regresiva";
+  return PHASE_LABEL[state.phase];
+}
 
 export const REASON_LABEL: Record<WinReason, string> = {
   kill: "K.O.",

@@ -1,6 +1,14 @@
 import { kitItemTitle, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { ALWAYS_EDIBLE, attackCooldownMs, isArrow, isAxe, isBow, isBuildBlock, isFoodName, isPearl, isSword } from "./items";
-import { BUILD_COOLDOWN_MS, kitToolNames, PEARL_COOLDOWN_MS, PEARL_MIN_HEALTH, WALL_BLOCKS, type ToolName } from "./tools";
+import {
+  BUILD_COOLDOWN_MS,
+  BUILD_MIN_DISTANCE,
+  kitToolNames,
+  PEARL_COOLDOWN_MS,
+  PEARL_MIN_HEALTH,
+  WALL_BLOCKS,
+  type ToolName,
+} from "./tools";
 
 export type SystemPromptInput = {
   side: Side;
@@ -76,7 +84,9 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       if (foods.length === 0) return null;
       const parts = foods.map((food) => {
         const title = kitItemTitle(food);
-        if (food.item === "golden_apple") return `${title} (se puede comer siempre; da 4 de vida extra y regeneración)`;
+        if (food.item === "golden_apple") {
+          return `${title} (se puede comer siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras la observación traiga "absorption", que es lo que te queda de ellos)`;
+        }
         if (ALWAYS_EDIBLE.has(food.item)) return `${title} (se puede comer siempre)`;
         return `${title} (solo se puede comer con la comida bajo 20; la vida vuelve de a poco, no al instante)`;
       });
@@ -85,12 +95,12 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
     case "pearl": {
       const pearls = find(isPearl);
       if (!pearls) return null;
-      return `- pearl: ${kitItemTitle(pearls)}; cada una te quita unos 2.5 de vida al caer y no se puede lanzar con ${PEARL_MIN_HEALTH} de vida o menos. Entre una y otra hay ${PEARL_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "pearlCooldown" con los segundos que faltan.`;
+      return `- pearl: ${kitItemTitle(pearls)}; cada una te quita unos 2.5 de vida al caer y no se puede lanzar con ${PEARL_MIN_HEALTH} de vida o menos. Con target "away", al caer empiezas a comer solo si tienes comida y tu comida está bajo 20. Entre una y otra hay ${PEARL_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "pearlCooldown" con los segundos que faltan.`;
     }
     case "build": {
       const blocks = find(isBuildBlock);
       if (!blocks) return null;
-      return `- build: ${kitItemTitle(blocks)}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo. Entre un muro y otro hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+      return `- build: ${kitItemTitle(blocks)}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo. Solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Entre un muro y otro hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
     }
     default:
       return null;

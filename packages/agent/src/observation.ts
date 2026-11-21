@@ -11,6 +11,8 @@ export type ObservationInput = {
     food: number;
     heldItem: string | null;
     inventory: { name: string; count: number }[];
+    /** Vida extra en corazones amarillos (ausente o 0 = no tiene). */
+    absorption?: number;
   };
   /** null si el rival no está a la vista. */
   opponent: { position: Vec3Like; health: number | null } | null;
@@ -47,6 +49,11 @@ export type Observation = {
   pearlCooldown?: number;
   /** Segundos que faltan para poder construir otro muro. Solo aparece mientras hay recarga. */
   buildCooldown?: number;
+  /**
+   * Vida extra en corazones amarillos (la da la manzana dorada y no cuenta en `health`).
+   * Solo aparece mientras queda alguna: comer otra manzana no la suma, solo la renueva.
+   */
+  absorption?: number;
 };
 
 function roundVec(v: Vec3Like): Vec3Like {
@@ -96,5 +103,11 @@ export function buildObservation(input: ObservationInput): Observation {
   // el historial y conviene que sea corta.
   if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
   if (buildCooldown > 0) observation.buildCooldown = buildCooldown;
+  // Igual con los corazones amarillos: solo los tiene quien acaba de comer una manzana dorada.
+  const absorption = self.absorption;
+  if (absorption !== undefined && Number.isFinite(absorption) && absorption > 0) {
+    // Nunca 0 mientras quede algo, para que "aparece el campo" siempre signifique "tienes".
+    observation.absorption = Math.max(0.1, round1(absorption));
+  }
   return observation;
 }

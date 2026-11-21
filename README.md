@@ -169,6 +169,7 @@ El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado
 | `pnpm local:install` falla | Usa pnpm 10 o superior y Node 22+. Las versiones están fijadas en `pnpm-lock.yaml`; si agregas una dependencia, commitea el lockfile actualizado. |
 | El orquestador repite errores de RCON | Minecraft aún está arrancando (`pnpm local:logs`), o `RCON_PASSWORD` cambió después de crear el contenedor. |
 | "Connection throttled" al entrar el segundo agente | No se aplicó `infra/minecraft/config/bukkit.yml`. Revisa los logs de `minecraft`. |
+| Un peleador entra sin un objeto o un efecto de su kit | Busca el aviso "El servidor no confirmó un comando del kit" en los eventos de la web o en la salida del orquestador: trae el comando y lo que respondió Minecraft. |
 | La web carga pero dice "desconectado" | El orquestador no está corriendo o falló al arrancar: mira la salida de `pnpm dev`. |
 | Puerto ocupado (`8888` suele ser Jupyter) | `pnpm local:check` dice cuál. Cierra el otro programa o cambia el puerto en `docker-compose.dev.yml` (y `DEV_HLS_TARGET` para la web). |
 | Quieres partir de cero | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v` borra el mundo de Minecraft. |
@@ -232,23 +233,27 @@ Cada lado elige su **kit** en el editor de su prompt: un desplegable y, debajo, 
 | Kit | Armadura | Barra de objetos | Efecto | Además de las herramientas comunes |
 |---|---|---|---|---|
 | **Clásico** (`classic`, por defecto) | Hierro | Espada de hierro, arco, 4 filetes, 16 flechas | — | `shoot` |
-| **Arquero** (`archer`) | Malla | Espada de piedra, arco con Empuje I, 4 filetes, 32 flechas | Velocidad I | `shoot` |
+| **Arquero** (`archer`) | Malla | Espada de piedra, arco con Empuje I, 4 filetes, 32 flechas | — | `shoot` |
 | **Tanque** (`tank`) | Peto y grebas de diamante, casco y botas de hierro | Espada de piedra, 4 filetes | — | — |
 | **Berserker** (`berserker`) | Peto y grebas de hierro, casco y botas de malla | Hacha de diamante, 4 filetes | Velocidad I | — |
-| **Enderman** (`ender`) | Malla; botas con Caída de pluma IV | Espada de diamante, 4 perlas de ender, 4 filetes | — | `pearl` |
-| **Constructor** (`builder`) | Hierro | Espada de hierro, arco, 3 manzanas doradas, 16 tablones de roble, 8 flechas | — | `shoot`, `build` |
+| **Enderman** (`ender`) | Peto y grebas de hierro, casco y botas de malla; botas con Caída de pluma IV | Espada de diamante, 4 perlas de ender, 4 filetes | — | `pearl` |
+| **Constructor** (`builder`) | Hierro | Espada de hierro, arco, 2 manzanas doradas, 16 tablones de roble, 8 flechas | — | `shoot`, `build` |
+
+El Arquero no es más rápido que los demás: su fuerza es que cada flecha empuja lejos al rival (Empuje I) y que le sobra munición. Cuerpo a cuerpo es débil: lleva espada de piedra y armadura de malla.
 
 Las herramientas son lo único que el LLM puede hacer en cada decisión. Todos los kits tienen `approach` (acercarse), `attack` (cuerpo a cuerpo con la espada o el hacha), `retreat` (alejarse), `eat` (comer un filete o una manzana dorada) y `wait` (esperar). Las demás dependen de lo que trae el kit, y al LLM solo se le ofrecen las del suyo:
 
 | Herramienta | Qué hace | Necesita |
 |---|---|---|
 | `shoot` | Se detiene, apunta, carga el arco cerca de 1 segundo y dispara. | Arco y flechas. |
-| `pearl` | Lanza una perla de ender y se teletransporta donde cae. Con `target: "rival"` cae junto al rival y pasa a atacar; con `target: "away"` cae lejos, al otro lado de la arena, y queda en espera (buen momento para comer). Cada perla quita unos 2,5 de vida al caer y hay 5 segundos de recarga entre una y otra. | Perlas de ender. |
+| `pearl` | Lanza una perla de ender y se teletransporta donde cae. Con `target: "rival"` cae junto al rival y pasa a atacar; con `target: "away"` cae lejos, al otro lado de la arena, y ahí come si le falta comida y tiene con qué (si no, queda en espera). Cada perla quita unos 2,5 de vida al caer y hay 5 segundos de recarga entre una y otra. | Perlas de ender. |
 | `build` | Levanta un muro de 3 de ancho y 2 de alto entre el agente y su rival: frena las flechas y obliga al rival a rodearlo. Gasta hasta 6 bloques, tarda 1 a 2 segundos y tiene 4 segundos de recarga. | Tablones. |
 
 - El prompt de sistema de cada agente describe su kit (objetos, efectos y cómo funciona cada herramienta), así que el prompt de la persona no tiene que explicarlo.
 - El daño que un agente se hace con su propia perla no se le suma al rival como daño causado.
-- La arena tiene una tapa invisible sobre los muros, para que nadie salga con una perla, y los tablones que queden puestos se borran al terminar la pelea.
+- La arena tiene una tapa invisible sobre los muros, para que nadie salga con una perla: el mundo es plano y la arena flota unos 125 bloques sobre el suelo, así que salir sería caer al vacío. Los tablones que queden puestos se borran al terminar la pelea.
+- Al entregar el kit, el orquestador revisa lo que el servidor de Minecraft responde a cada comando. Si no lo confirma (un objeto o un slot que el servidor no acepta), la pelea sigue, pero queda un aviso en el registro de eventos y en el log del orquestador.
+- Cuando los dos peleadores ya tienen su kit hay una cuenta regresiva de 3 segundos (`COUNTDOWN_SECONDS`). Dentro del juego no se muestra nada: el orquestador publica en el estado el instante en que termina (`countdownEndsAt`) y la web la dibuja sobre el video.
 - Los kits están en `KITS` (`packages/protocol/src/index.ts`); las herramientas de cada uno se deducen de sus objetos (`kitToolNames`, en `packages/agent/src/tools.ts`).
 
 ## Configurar el proveedor de LLM
@@ -408,7 +413,7 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 | Video | El cliente real de Minecraft corre en el servidor sin monitor (RTX 3080 vía VirtualGL), ffmpeg lo captura y codifica con la GPU a 30 fps, y MediaMTX entrega HLS: en la web se ven armaduras, armas, flechas, golpes y nombres. Se recupera solo si expulsan al cliente o se reinicia MediaMTX. |
 | Tests y typecheck de la cámara | Los tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
 
-Los kits, las herramientas `pearl` y `build` y la lista de modelos permitidos se agregaron después de esa verificación: la tabla describe el estado anterior, con el kit Clásico.
+Los kits, las herramientas `pearl` y `build`, la lista de modelos permitidos y la cuenta regresiva se agregaron después de esa verificación: la tabla describe el estado anterior, con el kit Clásico.
 
 ### Lo que no se ha probado
 
@@ -426,6 +431,6 @@ Los kits, las herramientas `pearl` y `build` y la lista de modelos permitidos se
 - **Render sin GPU (`CAMERA_MODE=viewer`).** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin. Es el respaldo para máquinas sin GPU y lo que se usa en desarrollo local.
 - **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
 - **Peleas cortas.** Con el kit Clásico un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar los kits en `KITS` (`packages/protocol/src/index.ts`).
-- **Efectos y absorción.** La Velocidad I del Arquero y del Berserker no muestra partículas en el video: se ve en el panel del kit de la web. La vida extra de la manzana dorada no cuenta como vida, ni en el marcador ni para decidir quién gana por tiempo.
+- **Efectos y absorción.** La Velocidad I del Berserker no muestra partículas en el video: se ve en el panel del kit de la web. La vida extra de la manzana dorada no cuenta como vida, ni en el marcador ni para decidir quién gana por tiempo.
 - **Sin autenticación.** Cualquiera con el link puede cambiar prompts e iniciar peleas, y cada pelea gasta llamadas al LLM. Ponle un límite de gasto a la clave.
 - **Suspensión y red del servidor.** Si el equipo se suspende o pierde la red, el stream se corta. Desactiva la suspensión automática.

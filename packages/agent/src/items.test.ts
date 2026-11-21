@@ -23,24 +23,39 @@ describe("clasificación de ítems", () => {
 });
 
 describe("attackCooldownMs", () => {
-  it("las espadas recargan en 625 ms sea cual sea el material", () => {
-    expect(attackCooldownMs("iron_sword")).toBe(625);
-    expect(attackCooldownMs("stone_sword")).toBe(625);
-    expect(attackCooldownMs("diamond_sword")).toBe(625);
+  it("las espadas recargan en 650 ms sea cual sea el material", () => {
+    expect(attackCooldownMs("iron_sword")).toBe(650);
+    expect(attackCooldownMs("stone_sword")).toBe(650);
+    expect(attackCooldownMs("diamond_sword")).toBe(650);
   });
 
   it("las hachas son más lentas, según el material", () => {
-    expect(attackCooldownMs("diamond_axe")).toBe(1000);
-    expect(attackCooldownMs("golden_axe")).toBe(1000);
-    expect(attackCooldownMs("netherite_axe")).toBe(1000);
-    expect(attackCooldownMs("iron_axe")).toBe(1111);
-    expect(attackCooldownMs("stone_axe")).toBe(1250);
-    expect(attackCooldownMs("wooden_axe")).toBe(1250);
+    expect(attackCooldownMs("diamond_axe")).toBe(1050);
+    expect(attackCooldownMs("golden_axe")).toBe(1050);
+    expect(attackCooldownMs("netherite_axe")).toBe(1050);
+    expect(attackCooldownMs("iron_axe")).toBe(1150);
+    expect(attackCooldownMs("stone_axe")).toBe(1300);
+    expect(attackCooldownMs("wooden_axe")).toBe(1300);
   });
 
-  it("la mano vacía o un ítem que no es arma recargan en 250 ms", () => {
-    expect(attackCooldownMs("")).toBe(250);
-    expect(attackCooldownMs("bow")).toBe(250);
-    expect(attackCooldownMs("cooked_beef")).toBe(250);
+  it("la mano vacía o un ítem que no es arma recargan en 300 ms", () => {
+    expect(attackCooldownMs("")).toBe(300);
+    expect(attackCooldownMs("bow")).toBe(300);
+    expect(attackCooldownMs("cooked_beef")).toBe(300);
+  });
+
+  it("deja un margen de hasta un tick de servidor sobre la recarga exacta del juego", () => {
+    // Recarga exacta = 1000 / velocidad de ataque del arma en 1.20.4.
+    const exact: Record<string, number> = {
+      iron_sword: 1000 / 1.6,
+      diamond_axe: 1000 / 1,
+      iron_axe: 1000 / 0.9,
+      stone_axe: 1000 / 0.8,
+      "": 1000 / 4,
+    };
+    for (const [item, ms] of Object.entries(exact)) {
+      expect(attackCooldownMs(item) - ms).toBeGreaterThanOrEqual(25);
+      expect(attackCooldownMs(item) - ms).toBeLessThanOrEqual(50);
+    }
   });
 });

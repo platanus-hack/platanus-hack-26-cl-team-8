@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FighterEvents, FighterOptions } from "@phack/agent";
 import type { LlmClient, LlmRequest, LlmResponse } from "@phack/llm";
-import type { AgentConfig, MatchRecord, Provider, Side } from "@phack/protocol";
+import {
+  COUNTDOWN_SECONDS,
+  type AgentConfig,
+  type MatchRecord,
+  type MatchState,
+  type Provider,
+  type Side,
+} from "@phack/protocol";
 import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
 import { defaultPrompts } from "./store";
+import type { SleepFn } from "./util";
 
 /**
  * Pelea completa con dobles: RCON, sueño y luchadores falsos (sin Minecraft ni LLM reales).
@@ -21,7 +29,18 @@ type SetupOptions = {
   prompts?: Partial<Record<Side, Partial<AgentConfig>>>;
   /** Modelos de la lista de permitidos; si falta, todos pasan. */
   allowed?: string[];
+  /** Respuesta del servidor de Minecraft a cada comando; si falta, la de un servidor sano. */
+  rconReply?: (command: string) => string;
+  /** Si falta, las pausas no esperan. */
+  sleep?: SleepFn;
 };
+
+/** Lo que responde un servidor 1.20.4 de verdad: prepareFighter revisa la respuesta de los comandos del kit. */
+function serverReply(command: string): string {
+  if (command.startsWith("item replace entity ")) return "Replaced a slot on Agente with [Objeto]";
+  if (command.startsWith("effect give ")) return "Applied effect Efecto to Agente";
+  return "";
+}
 
 function setup(opts: SetupOptions = {}) {
   const env: MatchEnv = {
@@ -52,7 +71,15 @@ function setup(opts: SetupOptions = {}) {
       return true;
     }),
   };
-  const hub = { broadcast: vi.fn(), markStateDirty: vi.fn(), flushState: vi.fn() };
+  /** El estado de cada envío inmediato, en orden (lo que el hub real mandaría a la web). */
+  const flushed: MatchState[] = [];
+  const hub = {
+    broadcast: vi.fn(),
+    markStateDirty: vi.fn(),
+    flushState: vi.fn(() => {
+      flushed.push(manager.getState());
+    }),
+  };
   const createLlmClient = vi.fn(
     (o: { provider: Provider; model?: string }): LlmClient => ({
       provider: o.provider,
@@ -71,12 +98,13 @@ function setup(opts: SetupOptions = {}) {
     };
   };
   const allowed = opts.allowed;
+  const rconReply = opts.rconReply ?? serverReply;
   const deps: MatchDeps = {
     env,
     rcon: {
       send: async (command) => {
         rconCommands.push(command);
-        return "";
+        return rconReply(command);
       },
     },
     hub,
@@ -92,9 +120,9 @@ function setup(opts: SetupOptions = {}) {
     log: (level, text) => {
       logs.push({ level, text });
     },
-    sleep: async () => {},
+    sleep: opts.sleep ?? (async () => {}),
   };
-  const manager = new MatchManager(deps);
+  const manager: MatchManager = new MatchManager(deps);
   const ev = (side: Side): FighterEvents => {
     const e = events[side];
     if (!e) throw new Error(`sin eventos para ${side}`);
@@ -110,6 +138,7 @@ function setup(opts: SetupOptions = {}) {
     fighters,
     rconCommands,
     logs,
+    flushed,
     stored: () => stored,
   };
 }
@@ -208,6 +237,63 @@ describe("MatchManager: por qué ganó", () => {
   });
 });
 
+describe("MatchManager: cuenta regresiva", () => {
+  it("anuncia cuándo termina la cuenta regresiva y la borra en el mismo estado que pasa a pelear", async () => {
+    const t = setup();
+    const before = Date.now();
+    await startRunning(t);
+    const after = Date.now();
+
+    // Tres envíos inmediatos: al iniciar, al empezar la cuenta regresiva y al empezar la pelea.
+    expect(t.flushed.map((s) => s.phase)).toEqual(["preparing", "preparing", "running"]);
+    const [preparing, countdown, running] = t.flushed;
+    expect(preparing?.countdownEndsAt).toBeNull();
+    expect(countdown?.countdownEndsAt).toBeGreaterThanOrEqual(before + COUNTDOWN_SECONDS * 1000);
+    expect(countdown?.countdownEndsAt).toBeLessThanOrEqual(after + COUNTDOWN_SECONDS * 1000);
+    expect(countdown).toMatchObject({ startedAt: null, endsAt: null, result: null });
+    expect(running?.countdownEndsAt).toBeNull();
+    expect(running?.startedAt).not.toBeNull();
+    expect(t.manager.getState().countdownEndsAt).toBeNull();
+  });
+
+  it("empieza cuando los dos peleadores ya tienen su kit, y al detenerla ahí queda en null", async () => {
+    // Las pausas de la preparación no esperan; las de la cuenta regresiva quedan detenidas.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let manager: MatchManager | null = null;
+    const t = setup({
+      sleep: async () => {
+        if (manager !== null && manager.getState().countdownEndsAt !== null) await gate;
+      },
+    });
+    manager = t.manager;
+    current = t.manager;
+
+    t.manager.start();
+    await vi.waitFor(() => expect(t.manager.getState().countdownEndsAt).not.toBeNull());
+    expect(t.manager.getState().phase).toBe("preparing");
+    for (const username of ["AgenteRojo", "AgenteAzul"]) {
+      expect(t.rconCommands).toContain(`item replace entity ${username} hotbar.0 with minecraft:iron_sword`);
+    }
+
+    await t.manager.stop();
+    expect(t.manager.getState()).toMatchObject({
+      phase: "finished",
+      countdownEndsAt: null,
+      result: { winner: null, reason: "stopped" },
+    });
+
+    // Aunque la pausa termine después, la pelea cancelada no llega a empezar.
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.manager.getState()).toMatchObject({ phase: "finished", startedAt: null, countdownEndsAt: null });
+    expect(t.flushed.every((s) => s.phase === "preparing" || s.countdownEndsAt === null)).toBe(true);
+    expect(t.history.append).not.toHaveBeenCalled();
+  });
+});
+
 describe("MatchManager: lista de modelos permitidos", () => {
   it("un modelo guardado que no está permitido se cambia por el del servidor, con aviso", async () => {
     const t = setup({
@@ -249,20 +335,38 @@ describe("MatchManager: lista de modelos permitidos", () => {
 
 describe("MatchManager: kits", () => {
   it("cada lado pelea con su kit: llega al agente, a los comandos de RCON y al estado", async () => {
-    const t = setup({ prompts: { red: { kit: "archer" } } });
+    const t = setup({ prompts: { red: { kit: "berserker" } } });
     await startRunning(t);
 
-    expect(t.fighters.red?.kit).toBe("archer");
+    expect(t.fighters.red?.kit).toBe("berserker");
     expect(t.fighters.blue?.kit).toBe("classic");
-    expect(t.manager.getState().configs).toMatchObject({ red: { kit: "archer" }, blue: { kit: "classic" } });
+    expect(t.manager.getState().configs).toMatchObject({ red: { kit: "berserker" }, blue: { kit: "classic" } });
 
-    expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.8 with minecraft:arrow 32");
+    expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.0 with minecraft:diamond_axe");
+    expect(t.rconCommands).toContain("item replace entity AgenteAzul hotbar.0 with minecraft:iron_sword");
     expect(t.rconCommands).toContain("item replace entity AgenteAzul hotbar.8 with minecraft:arrow 16");
-    // El efecto permanente del arquero va después de `effect clear`, y solo para él.
+    expect(t.rconCommands.some((c) => c.startsWith("item replace entity AgenteRojo hotbar.8 "))).toBe(false);
+    // El efecto permanente del berserker va después de `effect clear`, y solo para él.
     const speed = "effect give AgenteRojo minecraft:speed infinite 0 true";
     expect(t.rconCommands.indexOf(speed)).toBeGreaterThan(t.rconCommands.indexOf("effect clear AgenteRojo"));
     expect(t.rconCommands.indexOf("effect clear AgenteRojo")).toBeGreaterThanOrEqual(0);
     expect(t.rconCommands.some((c) => c.startsWith("effect give AgenteAzul minecraft:speed"))).toBe(false);
+    // El servidor confirmó todos los comandos: no hay avisos.
+    expect(t.logs.some((l) => l.level === "warn")).toBe(false);
+  });
+
+  it("si el servidor no confirma un comando del kit, avisa (también a la web) y la pelea sigue", async () => {
+    const rejected = "item replace entity AgenteAzul hotbar.1 with minecraft:bow";
+    const t = setup({
+      rconReply: (command) => (command === rejected ? "Unknown item 'minecraft:bow'" : serverReply(command)),
+    });
+    await startRunning(t);
+
+    const warnings = t.logs.filter((l) => l.level === "warn");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.text).toContain(rejected);
+    expect(warnings[0]?.text).toContain("Unknown item 'minecraft:bow'");
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "log", level: "warn" }));
   });
 
   it("el daño que un peleador se hace solo no se le acredita al rival, pero sí se informa", async () => {

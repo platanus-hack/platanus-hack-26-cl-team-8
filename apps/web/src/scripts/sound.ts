@@ -1,6 +1,6 @@
 /**
  * Sonidos de la pelea, sintetizados con Web Audio (no hay archivos de audio):
- * golpe, caída, inicio y fin. Parte en silencio: el navegador solo deja sonar después
+ * golpe, caída, cuenta regresiva, inicio y fin. Parte en silencio: el navegador solo deja sonar después
  * de un gesto del usuario, que es el clic en el botón de sonido.
  */
 import { byId } from "./dom";
@@ -54,6 +54,11 @@ export function playKnockout(): void {
   [440, 330, 247, 147].forEach((frequency, index) => {
     tone("square", frequency, frequency * 0.94, 0.16, 0.14, index * 0.14);
   });
+}
+
+/** Cuenta regresiva: un "bip" corto por cada número. */
+export function playCount(): void {
+  tone("square", 440, 440, 0.09, 0.1);
 }
 
 /** Empieza la pelea: dos notas que suben. */

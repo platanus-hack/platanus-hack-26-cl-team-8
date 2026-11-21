@@ -20,6 +20,7 @@ function seen(partial: Partial<MockObservation>): MockObservation {
     food: 20,
     pearlCooldown: 0,
     buildCooldown: 0,
+    absorption: 0,
     inventory: {},
     currentAction: null,
     ...partial,
@@ -148,7 +149,7 @@ describe("proveedor mock", () => {
 
 describe("mock con las herramientas de kit", () => {
   const pearls = { ender_pearl: 4, cooked_beef: 4, diamond_sword: 1 };
-  const blocks = { oak_planks: 16, golden_apple: 3, iron_sword: 1, bow: 1, arrow: 8 };
+  const blocks = { oak_planks: 16, golden_apple: 2, iron_sword: 1, bow: 1, arrow: 8 };
 
   it("cae junto al rival con una perla si está lejos y tiene vida de sobra", async () => {
     const tool = await call(observation({ distance: 12, health: 20, opponentHealth: 20, inventory: pearls }), ENDER_TOOLS);
@@ -171,6 +172,9 @@ describe("mock con las herramientas de kit", () => {
     expect(tool?.args).toEqual({ target: "away" });
     // Después de escapar (la perla quita vida y deja lejos) le toca comer.
     expect(await pick(observation({ ...hurt, distance: 12, health: 4.4, pearlCooldown: 4 }), ENDER_TOOLS)).toBe("eat");
+    // El agente ya empezó a comer solo al caer: repetir "eat" continúa esa comida, no la corta.
+    const eating = { ...hurt, distance: 12, health: 4.4, pearlCooldown: 4, currentAction: "eat" };
+    expect(await pick(observation(eating), ENDER_TOOLS)).toBe("eat");
   });
 
   it("no escapa si no podría comer, si va ganando o si la caída lo dejaría sin vida", async () => {
@@ -194,6 +198,18 @@ describe("mock con las herramientas de kit", () => {
     // Sin nada que comer vuelve a la pelea de siempre.
     const noFood = { ...behind, inventory: { oak_planks: 10, iron_sword: 1 } };
     expect(await pick(observation(noFood), BUILDER_TOOLS)).toBe("approach");
+  });
+
+  it("no come otra manzana dorada mientras le quedan corazones amarillos", async () => {
+    const behind = { distance: 7, health: 10, opponentHealth: 15, buildCooldown: 2.5, inventory: blocks };
+    // Recién comió una: los corazones amarillos no se acumulan, así que guarda la otra.
+    expect(await pick(observation({ ...behind, absorption: 4 }), BUILDER_TOOLS)).toBe("approach");
+    expect(await pick(observation({ ...behind, absorption: 0.5 }), BUILDER_TOOLS)).toBe("approach");
+    // Cuando se los quitan a golpes, la segunda manzana vuelve a servir.
+    expect(await pick(observation({ ...behind, absorption: 0 }), BUILDER_TOOLS)).toBe("eat");
+    // Un filete no da corazones amarillos: con hambre se come igual aunque queden.
+    const steak = { ...behind, absorption: 4, food: 15, inventory: { ...blocks, cooked_beef: 2 } };
+    expect(await pick(observation(steak), BUILDER_TOOLS)).toBe("eat");
   });
 
   it("no construye con vida de sobra, con el rival encima, muy lejos o sin bloques", async () => {
@@ -256,6 +272,7 @@ describe("piezas de la política mock", () => {
           opponentHealth: 11,
           food: 17,
           pearlCooldown: 2.4,
+          absorption: 3.5,
           inventory: { ender_pearl: 3, cooked_beef: 4, raro: "x", gastado: 0 },
           currentAction: "attack",
         }),
@@ -268,6 +285,7 @@ describe("piezas de la política mock", () => {
       food: 17,
       pearlCooldown: 2.4,
       buildCooldown: 0,
+      absorption: 3.5,
       inventory: { ender_pearl: 3, cooked_beef: 4 },
       currentAction: "attack",
     });
