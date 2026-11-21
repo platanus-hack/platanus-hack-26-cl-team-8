@@ -29,7 +29,7 @@ export type Side = z.infer<typeof SideSchema>;
 
 export const AGENT_USERNAMES: Record<Side, string> = { red: "AgenteRojo", blue: "AgenteAzul" };
 
-export const ProviderSchema = z.enum(["mock", "openai", "anthropic", "openrouter"]);
+export const ProviderSchema = z.enum(["mock", "vercel", "openai", "anthropic", "openrouter"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const MAX_PROMPT_LENGTH = 4000;

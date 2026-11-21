@@ -61,7 +61,7 @@ export function toAnthropicPayload(messages: ChatMessage[]): AnthropicPayload {
         blocks.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
       }
       push("assistant", blocks);
-    } else {
+    } else if (m.role === "tool") {
       push("user", [{ type: "tool_result", tool_use_id: m.toolCallId, content: m.content }]);
     }
   }

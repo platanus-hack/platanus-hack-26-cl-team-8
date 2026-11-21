@@ -7,7 +7,7 @@ Este documento describe el diseño según los contratos del repo: `packages/prot
 | Pieza | Responsabilidad | No hace |
 |---|---|---|
 | `packages/protocol` | Tipos y esquemas zod compartidos: `ARENA`, `Side`, `AgentConfig`, `MatchState`, `MatchRecord`, `ArenaEvent`, `API_ROUTES`. Sin dependencias de Node: también se importa en el navegador. | Lógica. |
-| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `mock`, `openai`, `anthropic`, `openrouter`. | Saber de Minecraft. |
+| `packages/llm` | `createLlmClient({ provider, model, apiKeys })` devuelve un `LlmClient` con un único método `complete({ messages, tools, signal })`. Proveedores: `mock`, `vercel` (AI Gateway, vía el SDK `ai`), `openai`, `anthropic`, `openrouter`. | Saber de Minecraft. |
 | `packages/agent` | `createFighter(opts)` devuelve un `Fighter` (`connect`, `start`, `stop`): un bot de mineflayer con el ciclo percibir → LLM → actuar. Informa lo que pasa a través de `FighterEvents`. | Teletransportarse, darse el kit o cambiar su modo de juego: eso lo hace el orquestador por RCON. |
 | `apps/orchestrator` | Único dueño del estado. API HTTP + websocket, ciclo de vida de la pelea, RCON, decisión del ganador, historial en `DATA_DIR`. | Renderizar video. |
 | `apps/camera` | Bot espectador (`CAMERA_USERNAME`) ubicado en `ARENA.camera`; renderiza y publica RTMP en `RTMP_URL`. | Conocer el estado de la pelea. |

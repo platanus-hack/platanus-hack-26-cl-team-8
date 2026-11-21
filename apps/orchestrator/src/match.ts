@@ -28,6 +28,7 @@ export type MatchEnv = Pick<
   Env,
   | "LLM_PROVIDER"
   | "LLM_MODEL"
+  | "VERCEL_API_KEY"
   | "OPENAI_API_KEY"
   | "ANTHROPIC_API_KEY"
   | "OPENROUTER_API_KEY"
@@ -270,6 +271,7 @@ export class MatchManager {
     // LLM_MODEL solo aplica si el lado usa el mismo proveedor que el entorno.
     const model = config.model || (provider === env.LLM_PROVIDER ? env.LLM_MODEL : "") || undefined;
     const apiKeys: ApiKeys = {
+      vercel: env.VERCEL_API_KEY || undefined,
       openai: env.OPENAI_API_KEY || undefined,
       anthropic: env.ANTHROPIC_API_KEY || undefined,
       openrouter: env.OPENROUTER_API_KEY || undefined,

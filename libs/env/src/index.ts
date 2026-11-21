@@ -18,8 +18,10 @@ const EnvSchema = z.object({
   RCON_PASSWORD: z.string().default("phack-rcon"),
 
   // LLM
-  LLM_PROVIDER: z.enum(["mock", "openai", "anthropic", "openrouter"]).default("mock"),
+  LLM_PROVIDER: z.enum(["mock", "vercel", "openai", "anthropic", "openrouter"]).default("mock"),
   LLM_MODEL: z.string().default(""),
+  /** Vercel AI Gateway (proveedor "vercel"). */
+  VERCEL_API_KEY: z.string().default(""),
   OPENAI_API_KEY: z.string().default(""),
   ANTHROPIC_API_KEY: z.string().default(""),
   OPENROUTER_API_KEY: z.string().default(""),

@@ -75,7 +75,7 @@ Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios
 │   └── web/                 Sitio Astro; su imagen final es Caddy
 ├── packages/
 │   ├── protocol/            Contrato compartido: arena, estado, eventos, rutas de la API
-│   ├── llm/                 Cliente LLM unificado (mock, openai, anthropic, openrouter)
+│   ├── llm/                 Cliente LLM unificado (mock, vercel, openai, anthropic, openrouter)
 │   └── agent/               El "peleador": percibir -> LLM -> actuar, sobre mineflayer
 ├── libs/
 │   ├── env/                 loadEnv(): todas las variables de entorno y sus valores por defecto
@@ -205,9 +205,10 @@ Para entrar a mirar con un cliente real de Minecraft (Java 1.20.4): el puerto 25
 En `.env`:
 
 ```bash
-LLM_PROVIDER=anthropic        # mock | openai | anthropic | openrouter
+LLM_PROVIDER=vercel           # mock | vercel | openai | anthropic | openrouter
 LLM_MODEL=                    # vacío = modelo por defecto del proveedor (ver packages/llm)
-ANTHROPIC_API_KEY=...         # solo la clave del proveedor que uses
+VERCEL_API_KEY=vck_...        # solo la clave del proveedor que uses
+ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 OPENROUTER_API_KEY=
 ```
