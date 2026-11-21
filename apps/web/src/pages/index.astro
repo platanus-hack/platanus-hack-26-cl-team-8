@@ -2,7 +2,7 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
-import { DEFAULT_KIT, KITS, KIT_LIST } from "@phack/protocol";
+import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST } from "@phack/protocol";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
@@ -174,9 +174,20 @@ const stats = [
         <header class="section__head">
           <h2 class="section__title" id="prompts-title">Prompts</h2>
           <p class="section__hint">
-            Escribe cómo debe pelear cada agente y elige su kit. Cualquiera puede editarlos; valen desde la próxima pelea.
+            Escribe qué quiere lograr cada agente y cómo, y elige su kit. Cualquiera puede editarlos; valen desde la próxima pelea.
           </p>
         </header>
+
+        <!-- Ajuste de la pelea (no de un lado): lo maneja scripts/settings.ts. -->
+        <div class="comms" id="comms-field">
+          <label class="field">
+            <span class="field__label">Comunicación entre agentes</span>
+            <select id="comms" aria-describedby="comms-description">
+              {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
+            </select>
+          </label>
+          <p class="comms__description" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+        </div>
 
         <div class="editors">
           {

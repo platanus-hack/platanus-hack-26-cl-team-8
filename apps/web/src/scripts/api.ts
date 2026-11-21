@@ -2,17 +2,20 @@ import {
   API_ROUTES,
   AgentConfigSchema,
   MatchRecordSchema,
+  MatchSettingsSchema,
   MatchStateSchema,
   ModelsResponseSchema,
   ServerDefaultsSchema,
   type AgentConfig,
   type MatchRecord,
+  type MatchSettings,
   type MatchState,
   type ModelsResponse,
   type PromptsResponse,
   type ServerDefaults,
   type Side,
   type UpdatePromptBody,
+  type UpdateSettingsBody,
 } from "@phack/protocol";
 import { MOCK, apiUrl } from "./config";
 
@@ -112,6 +115,14 @@ export function fetchPrompts(): Promise<PromptsResponse> {
 
 export function savePrompt(side: Side, body: UpdatePromptBody): Promise<AgentConfig> {
   return request(API_ROUTES.prompt(side), AgentConfigSchema, { method: "PUT", body });
+}
+
+export function fetchSettings(): Promise<MatchSettings> {
+  return request(API_ROUTES.settings, MatchSettingsSchema);
+}
+
+export function saveSettings(body: UpdateSettingsBody): Promise<MatchSettings> {
+  return request(API_ROUTES.settings, MatchSettingsSchema, { method: "PUT", body });
 }
 
 export function startMatch(): Promise<MatchState> {

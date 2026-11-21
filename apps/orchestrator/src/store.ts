@@ -4,12 +4,15 @@ import {
   AgentConfigSchema,
   DEFAULT_KIT,
   DEFAULT_PROMPTS,
+  DEFAULT_SETTINGS,
   MatchRecordSchema,
+  MatchSettingsSchema,
   ProviderSchema,
   SIDES,
   kitOf,
   type AgentConfig,
   type MatchRecord,
+  type MatchSettings,
   type PromptsResponse,
   type Side,
   type UpdatePromptBody,
@@ -156,6 +159,56 @@ export class PromptStore {
       }
     });
     return this.writeChain;
+  }
+}
+
+/** Interpreta settings.json; si falta o está corrupto, los ajustes por defecto. */
+export function parseSettings(raw: string): MatchSettings {
+  try {
+    const parsed = MatchSettingsSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : { ...DEFAULT_SETTINGS };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+/** Ajustes pendientes para la próxima pelea (modo de comunicación): en memoria + DATA_DIR/settings.json. */
+export class SettingsStore {
+  private settings: MatchSettings = { ...DEFAULT_SETTINGS };
+  private readonly file: string;
+  private writeChain: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly dataDir: string,
+    private readonly log: LogFn,
+  ) {
+    this.file = join(dataDir, "settings.json");
+  }
+
+  async load(): Promise<void> {
+    const raw = await readIfExists(this.file);
+    if (raw !== null) this.settings = parseSettings(raw);
+  }
+
+  get(): MatchSettings {
+    return structuredClone(this.settings);
+  }
+
+  async update(change: Partial<MatchSettings>): Promise<MatchSettings> {
+    this.settings = MatchSettingsSchema.parse({ ...this.settings, ...change });
+    const snapshot = JSON.stringify(this.settings, null, 2);
+    this.writeChain = this.writeChain.then(async () => {
+      try {
+        await mkdir(this.dataDir, { recursive: true });
+        const tmp = `${this.file}.tmp`;
+        await writeFile(tmp, snapshot, "utf8");
+        await rename(tmp, this.file);
+      } catch (err) {
+        this.log("error", `No se pudieron guardar los ajustes: ${errorMessage(err)}`);
+      }
+    });
+    await this.writeChain;
+    return this.get();
   }
 }
 

@@ -1,4 +1,4 @@
-import type { KitId, Side } from "@phack/protocol";
+import type { CommsMode, Kit, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 
 /** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
@@ -21,6 +21,8 @@ export type FighterEvents = {
    */
   onDamageTaken(amount: number, health: number, bySelf: boolean): void;
   onDeath(): void;
+  /** Modo "chat": el agente le dijo `text` al rival (ya recortado). */
+  onMessage(text: string): void;
   onLog(level: "info" | "warn" | "error", text: string): void;
 };
 
@@ -29,8 +31,12 @@ export type FighterOptions = {
   username: string;
   opponentUsername: string;
   prompt: string;
-  /** Kit con el que pelea: define las herramientas que se le ofrecen al LLM. */
-  kit: KitId;
+  /** Kit con el que pelea (ya resuelto, también el personalizado): define las herramientas que se le ofrecen al LLM. */
+  kit: Kit;
+  /** Qué sabe del rival además de lo que ve (ver CommsMode). */
+  comms: CommsMode;
+  /** Duración de la pelea en segundos (contexto para el prompt). */
+  durationSeconds: number;
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;
@@ -42,6 +48,11 @@ export interface Fighter {
   connect(): Promise<void>;
   /** Comienza el bucle percibir -> LLM -> actuar. */
   start(): void;
+  /**
+   * Le hace llegar algo del rival: su razonamiento (modo "thoughts") o un mensaje (modo
+   * "chat"). Lo verá en su próxima observación. El orquestador decide cuándo llamarlo.
+   */
+  hear(kind: "thought" | "message", text: string): void;
   /** Detiene el bucle, cancela la llamada al LLM en curso y desconecta. Idempotente. */
   stop(): Promise<void>;
 }

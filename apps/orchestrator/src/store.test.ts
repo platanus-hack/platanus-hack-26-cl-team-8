@@ -10,6 +10,7 @@ import {
   normalizeConfig,
   parseMatchLines,
   parsePrompts,
+  parseSettings,
 } from "./store";
 
 function status(side: Side): AgentStatus {
@@ -42,6 +43,7 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende" },
     },
     final: { red: status("red"), blue: status("blue") },
+    settings: { comms: "none" },
     result: { winner: "red", reason: "kill" },
   };
 }
@@ -281,5 +283,19 @@ describe("MatchStore.update", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("parseSettings", () => {
+  it("vuelve a los ajustes por defecto si el archivo está corrupto o trae basura", () => {
+    expect(parseSettings("{no")).toEqual({ comms: "none" });
+    expect(parseSettings("{}")).toEqual({ comms: "none" });
+    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none" });
+    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat" });
+  });
+
+  it("un registro de historial sin ajustes vale como sin comunicación", () => {
+    const { settings: _omit, ...old } = record("viejo");
+    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none" });
   });
 });

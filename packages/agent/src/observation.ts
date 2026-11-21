@@ -21,6 +21,9 @@ export type ObservationInput = {
   pearlReadyAt?: number;
   /** Epoch ms desde el que se puede construir otro muro (ausente o pasado = ya se puede). */
   buildReadyAt?: number;
+  /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
+  rivalThoughts?: string[];
+  rivalMessages?: string[];
 };
 
 /**
@@ -47,6 +50,10 @@ export type Observation = {
   pearlCooldown?: number;
   /** Segundos que faltan para poder construir otro muro. Solo aparece mientras hay recarga. */
   buildCooldown?: number;
+  /** Modo "thoughts": razonamientos del rival desde tu decisión anterior (el más nuevo al final). */
+  rivalThoughts?: string[];
+  /** Modo "chat": mensajes que te mandó el rival desde tu decisión anterior (el más nuevo al final). */
+  rivalMessages?: string[];
 };
 
 function roundVec(v: Vec3Like): Vec3Like {
@@ -96,5 +103,8 @@ export function buildObservation(input: ObservationInput): Observation {
   // el historial y conviene que sea corta.
   if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
   if (buildCooldown > 0) observation.buildCooldown = buildCooldown;
+  // Igual que las recargas: solo aparecen cuando traen algo nuevo.
+  if (input.rivalThoughts && input.rivalThoughts.length > 0) observation.rivalThoughts = [...input.rivalThoughts];
+  if (input.rivalMessages && input.rivalMessages.length > 0) observation.rivalMessages = [...input.rivalMessages];
   return observation;
 }

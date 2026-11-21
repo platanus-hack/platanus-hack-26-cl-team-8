@@ -901,6 +901,19 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   color: var(--muted);
 }
 
+/* Modo "chat": lo que un agente le dice al otro va entre comillas, del color de su lado. */
+.feed-item--message .feed-item__text {
+  color: var(--side, var(--text));
+}
+
+.feed-item--message .feed-item__text::before {
+  content: "«";
+}
+
+.feed-item--message .feed-item__text::after {
+  content: "»";
+}
+
 .feed-item--damage .feed-item__text,
 .feed-item--death .feed-item__text {
   font-weight: 600;
@@ -1012,6 +1025,25 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .field select:hover {
   border-color: var(--side);
+}
+
+/* ---------- Comunicación entre agentes ---------- */
+
+.comms {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+  margin-bottom: 24px;
+}
+
+.comms[hidden] {
+  display: none;
+}
+
+.comms__description {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 /* ---------- Kit ---------- */

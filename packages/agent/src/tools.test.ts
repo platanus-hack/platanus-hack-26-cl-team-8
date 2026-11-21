@@ -93,3 +93,31 @@ describe("parseToolArgs: target", () => {
     expect(parseToolArgs({ target: " Away " }).target).toBe("away");
   });
 });
+
+describe("modo chat: argumento say", () => {
+  it("solo se ofrece en modo chat, en todas las herramientas", () => {
+    for (const def of kitToolDefs(KITS.classic, "none")) {
+      expect((def.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("say");
+    }
+    for (const def of kitToolDefs(KITS.classic, "thoughts")) {
+      expect((def.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("say");
+    }
+    const chat = kitToolDefs(KITS.ender, "chat");
+    expect(chat.map((def) => def.name)).toEqual(kitToolNames(KITS.ender));
+    for (const def of chat) {
+      const properties = (def.parameters as { properties: Record<string, unknown> }).properties;
+      expect(properties).toHaveProperty("say");
+      expect(properties).toHaveProperty("reason");
+    }
+    // No toca las definiciones compartidas.
+    expect((TOOL_DEFS[0]?.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("say");
+  });
+
+  it("parseToolArgs limpia y recorta lo que dice", () => {
+    expect(parseToolArgs({}).say).toBeNull();
+    expect(parseToolArgs({ say: "   " }).say).toBeNull();
+    expect(parseToolArgs({ say: 42 }).say).toBeNull();
+    expect(parseToolArgs({ say: "  hagamos\n una   tregua " }).say).toBe("hagamos una tregua");
+    expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(240);
+  });
+});

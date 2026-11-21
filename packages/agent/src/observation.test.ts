@@ -100,3 +100,19 @@ describe("summarizeInventory", () => {
     expect(summarizeInventory([])).toEqual({});
   });
 });
+
+describe("buildObservation: lo que llega del rival", () => {
+  it("solo trae rivalThoughts / rivalMessages cuando hay algo nuevo", () => {
+    const quiet = buildObservation({ ...base, rivalThoughts: [], rivalMessages: [] });
+    expect(quiet).not.toHaveProperty("rivalThoughts");
+    expect(quiet).not.toHaveProperty("rivalMessages");
+
+    const thoughts = ["voy a flanquear"];
+    const obs = buildObservation({ ...base, rivalThoughts: thoughts, rivalMessages: ["tregua?"] });
+    expect(obs.rivalThoughts).toEqual(["voy a flanquear"]);
+    expect(obs.rivalMessages).toEqual(["tregua?"]);
+    // Copia: vaciar la bandeja del agente no cambia la observación ya armada.
+    thoughts.length = 0;
+    expect(obs.rivalThoughts).toEqual(["voy a flanquear"]);
+  });
+});
