@@ -124,7 +124,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
     bench: { report: async () => buildBenchReport(opts.history ?? [], 42) },
     judge: async (id) =>
-      id === ID ? { ok: false, reason: "el juez necesita un LLM real" } : id === JUDGED ? { ok: true, judgement: JUDGEMENT } : null,
+      id === ID ? { ok: false as const, reason: "el juez necesita un LLM real", status: 400 as const } : id === JUDGED ? { ok: true as const, judgement: JUDGEMENT } : null,
     ...(opts.speech ? { speech: opts.speech } : {}),
     settings: {
       get: () => ({ ...settings }),

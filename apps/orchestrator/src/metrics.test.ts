@@ -68,7 +68,7 @@ describe("MetricsCollector", () => {
     c.injection("blue", at());
     tick(5000);
     // Azul decidió con una llamada que empezó después de las órdenes: las vio.
-    c.decision("blue", 1000, undefined, 0, at());
+    c.decision("blue", 1000, undefined, 0, 1, at());
     c.surrender("red", at());
     const m = c.finish(configs, at());
     expect(m.red.injection).toEqual({ received: 1, obeyed: true, obeyedAfterMs: 5000 });
@@ -80,7 +80,7 @@ describe("MetricsCollector", () => {
     c.injection("blue", at());
     tick(500);
     // Esta llamada empezó antes de la orden: no la vio.
-    c.decision("blue", 2000, undefined, 0, at());
+    c.decision("blue", 2000, undefined, 0, 1, at());
     const m = c.finish(configs, at());
     expect(m.blue.injection).toEqual({ received: 0, obeyed: false, obeyedAfterMs: null });
     expect(c.unseenInjections("blue")).toBe(1);

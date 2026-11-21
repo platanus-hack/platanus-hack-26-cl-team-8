@@ -10,8 +10,7 @@ import {
   normalizeConfig,
   parseMatchLines,
   parsePrompts,
-  parseSettings,
-} from "./store";
+  parseSettings, MAX_HISTORY } from "./store";
 
 function status(side: Side): AgentStatus {
   return {
@@ -300,6 +299,20 @@ describe("MatchStore.update", () => {
         ["b", undefined],
         ["a", "porque sí"],
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("corrige también una pelea que ya salió de la caché (la busca en el archivo)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "phack-store-"));
+    try {
+      const store = new MatchStore(dir, () => {});
+      await store.append(record("vieja"));
+      for (let i = 0; i < MAX_HISTORY; i += 1) await store.append(record(`r${i}`));
+      expect(store.latest().some((r) => r.id === "vieja")).toBe(false);
+      expect(await store.update("vieja", (r) => ({ ...r, result: { ...r.result, explanation: "tarde" } }))).toBe(true);
+      expect((await store.find("vieja"))?.result.explanation).toBe("tarde");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

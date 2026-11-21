@@ -1019,6 +1019,8 @@ export const SideMetricsSchema = z.object({
   toolCounts: z.record(z.number()),
   /** Llamadas a herramientas que no existen o que su kit no tiene. */
   invalidCalls: z.number(),
+  /** Todas las llamadas a herramientas que pidió el LLM (las que corrieron y las que no). */
+  toolCalls: z.number().default(0),
   damageDealt: z.number(),
   damagePerDecision: z.number(),
   tokensIn: z.number(),

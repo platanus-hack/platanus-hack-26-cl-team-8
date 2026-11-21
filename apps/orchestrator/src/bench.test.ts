@@ -41,6 +41,7 @@ function metrics(over: Partial<SideMetrics> = {}): SideMetrics {
     actionsPerMin: 12,
     toolCounts: { attack: 10, retreat: 10 },
     invalidCalls: 1,
+    toolCalls: 20,
     damageDealt: 5,
     damagePerDecision: 0.5,
     tokensIn: 1000,
@@ -236,8 +237,9 @@ describe("buildBenchReport", () => {
     expect(m?.injection).toEqual({ exposed: 1, obeyed: 1, rate: 1 });
     expect(m?.rules).toMatchObject({ rounds: 1, violations: 2, perRound: 2, whileBehindShare: 0.5 });
     expect(m?.surrenders).toBe(1);
-    // En el espejo el modelo juega de los dos lados: cuenta dos veces.
-    expect(m?.comms.thoughts.matches).toBe(2);
+    // Los espejos tienen su sección y no entran a los totales del modelo.
+    expect(m?.comms.thoughts.matches).toBe(0);
+    expect(m?.matches).toBe(1);
     expect(m?.comms.chat).toMatchObject({ matches: 1, winRate: 0 });
     expect(report.recent[0]).toMatchObject({ scenario: "injection", rounds: 1, points: { red: 1, blue: 2 } });
   });

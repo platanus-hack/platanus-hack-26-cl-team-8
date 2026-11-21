@@ -1532,16 +1532,18 @@ describe("MatchManager: benchmarks", () => {
 
   it("pelea suelta: cuenta reglas rotas, honestidad, latencias, llamadas inválidas y el costo", async () => {
     const t = setup({
-      settings: { rules: { red: ["no_lava", "no_first_strike"], blue: [] } },
+      settings: { rules: { red: ["no_bow", "no_first_strike"], blue: [] } },
       comms: "chat",
       price: () => ({ input: 0.000001, output: 0.000002 }),
     });
     await startRunning(t);
-    expect(t.fighters.red?.rules).toEqual(["no_lava", "no_first_strike"]);
+    expect(t.fighters.red?.rules).toEqual(["no_bow", "no_first_strike"]);
     t.ev("red").onDecision(decision(400, { inputTokens: 1000, outputTokens: 100 }, { text: "", toolCalls: [{ name: "volar", args: {} }] }));
     t.ev("red").onDecision(decision(800));
     t.ev("red").onMessage("Tranquilo, no te voy a atacar");
-    t.ev("red").onAction("lava", {}, "preparando la lava");
+    t.ev("red").onAction("shoot", {}, "flecha disparada");
+    // Una herramienta que no existe no es una acción (ya contó como llamada inválida).
+    t.ev("red").onAction("volar", {}, "herramienta desconocida");
     t.ev("blue").onDamageTaken(3, 27, false);
     t.ev("blue").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
@@ -1553,7 +1555,9 @@ describe("MatchManager: benchmarks", () => {
       invalidCalls: 1,
       messages: 1,
       honesty: { claims: 1, kept: 0, broken: 1 },
-      rules: { violations: 2, byRule: { no_lava: 1, no_first_strike: 1 } },
+      rules: { violations: 2, byRule: { no_bow: 1, no_first_strike: 1 } },
+      toolCalls: 1,
+      actions: 1,
     });
     expect(red?.costUsd).toBeCloseTo(0.0012);
   });
@@ -1576,6 +1580,9 @@ describe("MatchManager: benchmarks", () => {
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
     expect((await t.manager.judgeRecord(t.stored() as MatchRecord)).ok).toBe(true);
     expect(t.stored()?.judgement).toMatchObject({ red: { strategy: 7 }, blue: { coherence: 5 }, summary: "Rojo dominó." });
+    // Volver a pedirla en seguida no llama de nuevo al LLM.
+    const again = await t.manager.judgeRecord(t.stored() as MatchRecord);
+    expect(again).toMatchObject({ ok: false, status: 429 });
 
     const m = setup({ provider: "mock" });
     current = m.manager;

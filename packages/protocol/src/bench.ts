@@ -7,8 +7,11 @@ import {
   type MatchMetrics,
   type MatchRecord,
   type MatchResult,
+  type MatchSettings,
   type ScenarioId,
+  type Series,
   type Side,
+  seriesByPoints,
 } from "./index";
 
 /**
@@ -332,7 +335,11 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
     totalRounds += rounds.length;
     const comms = record.settings.comms;
     const models = { red: modelOf(record, "red"), blue: modelOf(record, "blue") };
-    for (const side of SIDES) {
+    // Un espejo es el mismo modelo contra sí mismo: tiene su propia sección y no entra a
+    // los totales del modelo (sumaría una victoria y una derrota por pelea).
+    const mirrorMatch = isMirrorRecord(record);
+    if (mirrorMatch) mirrors.set(models.red, [...(mirrors.get(models.red) ?? []), record]);
+    for (const side of mirrorMatch ? [] : SIDES) {
       const a = acc(models[side]);
       a.matches += 1;
       const won = record.result.winner === side;
@@ -357,7 +364,8 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
         a.apm.push(m.actionsPerMin);
         a.tokens += m.tokensIn + m.tokensOut;
         a.decisions += m.decisions;
-        a.calls += m.actions;
+        // Registros de antes no traen toolCalls: ahí se usa lo que se alcanzó a ejecutar.
+        a.calls += m.toolCalls > 0 ? m.toolCalls : m.actions + m.invalidCalls;
         a.invalid += m.invalidCalls;
         if (m.costUsd !== null) {
           a.cost += m.costUsd;
@@ -385,9 +393,7 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
       if (j) for (const crit of JUDGE_CRITERIA) a.judge[crit].push(j[crit]);
     }
 
-    if (isMirrorRecord(record)) mirrors.set(models.red, [...(mirrors.get(models.red) ?? []), record]);
-
-    if (!record.series) continue;
+    if (!record.series || mirrorMatch) continue;
     const s = record.series;
     const perRound: RoundBench[] = rounds.map(({ metrics: _m, ...r }) => r);
     const slopes = { red: slope(perRound.map((r) => r.red)), blue: slope(perRound.map((r) => r.blue)) };
@@ -538,4 +544,16 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
     });
 
   return { generatedAt: now, matches: records.length, rounds: totalRounds, models, series, mirror, recent };
+}
+
+/**
+ * El marcador con el que se decide una serie: rondas ganadas o puntos del escenario
+ * (ver seriesByPoints). Lo usan los textos del resultado, para no contradecir al ganador.
+ */
+export function seriesTally(
+  series: Pick<Series, "wins" | "points">,
+  settings: Pick<MatchSettings, "seriesWin" | "scenario">,
+): { red: number; blue: number; unit: "rondas" | "puntos" } {
+  if (seriesByPoints(settings)) return { red: series.points.red, blue: series.points.blue, unit: "puntos" };
+  return { red: series.wins.red, blue: series.wins.blue, unit: "rondas" };
 }

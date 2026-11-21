@@ -393,7 +393,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (!isTranscriptId(id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
       const outcome = await judge(id);
       if (outcome === null) return reply.code(404).send(errorBody("Esa pelea no está en el historial"));
-      if (!outcome.ok) return reply.code(400).send(errorBody(`No se pudo calificar: ${outcome.reason}`));
+      if (!outcome.ok) return reply.code(outcome.status).send(errorBody(`No se pudo calificar: ${outcome.reason}`));
       return outcome.judgement;
     });
   }

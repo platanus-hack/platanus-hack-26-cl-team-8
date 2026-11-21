@@ -8,6 +8,7 @@
  * queda aunque la pelea ya no esté entre ellas.
  */
 import {
+  seriesTally,
   API_ROUTES,
   COMMS_LABELS,
   MAX_FLAG_NOTE_LENGTH,
@@ -393,8 +394,9 @@ function rowMiddle(bout: Bout): HTMLElement {
   if (bout.live) return el("span", "row__mid row__mid--live", "En vivo");
   // Una serie muestra su marcador: rondas de Rojo y de Azul.
   if (bout.series) {
-    const score = el("span", "row__mid row__score", `${bout.series.wins.red}-${bout.series.wins.blue}`);
-    score.dataset.tip = `Serie por rondas: Rojo ${bout.series.wins.red}, Azul ${bout.series.wins.blue}`;
+    const t = seriesTally(bout.series, bout.settings);
+    const score = el("span", "row__mid row__score", `${t.red}-${t.blue}`);
+    score.dataset.tip = `Serie por ${t.unit === "puntos" ? "puntos" : "rondas"}: Rojo ${t.red}, Azul ${t.blue}`;
     return score;
   }
   const result = bout.result;
@@ -408,7 +410,8 @@ function factsLine(bout: Bout): string {
   const facts = [`${headline(bout)}.`];
   if (bout.result && !bout.live) facts.push(resultDetail(bout.result));
   if (bout.series) {
-    facts.push(`Serie de hasta ${bout.series.maxRounds} rondas: Rojo ${bout.series.wins.red}, Azul ${bout.series.wins.blue}.`);
+    const t = seriesTally(bout.series, bout.settings);
+    facts.push(`Serie de hasta ${bout.series.maxRounds} rondas: Rojo ${t.red}, Azul ${t.blue}${t.unit === "puntos" ? " en puntos" : ""}.`);
   }
   if (bout.durationMs !== null) facts.push(`Duró ${formatDuration(bout.durationMs)}.`);
   facts.push(`${COMMS_LABELS[bout.settings.comms].name}.`);

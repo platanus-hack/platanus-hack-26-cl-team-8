@@ -74,6 +74,8 @@ const EXPLAIN_TIMEOUT_MS = 15_000;
 const CUSTOM_KIT_TIMEOUT_MS = 20_000;
 /** Máximo que se espera al LLM juez. */
 const JUDGE_TIMEOUT_MS = 90_000;
+/** Pausa mínima entre dos calificaciones de la misma pelea (también mientras una está en curso). */
+const JUDGE_COOLDOWN_MS = 60_000;
 /**
  * Modo por rondas: pausa entre una ronda y la siguiente, en total. Sus últimos
  * COUNTDOWN_SECONDS son la cuenta regresiva que dibuja la web.
@@ -274,6 +276,8 @@ export class MatchManager {
   private ctx: MatchContext | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private shuttingDown = false;
+  /** Cuándo se pidió por última vez calificar cada pelea (ver JUDGE_COOLDOWN_MS). */
+  private readonly judgedAt = new Map<string, number>();
   private readonly sleep: SleepFn;
 
   constructor(private readonly deps: MatchDeps) {
@@ -608,7 +612,7 @@ export class MatchManager {
     };
     this.deps.hub.broadcast(event);
     this.record(ctx, event);
-    this.log(ctx, "info", describeRound(result, series));
+    this.log(ctx, "info", describeRound(result, series, this.state.settings));
     if (decided) {
       void this.finish(ctx, byPoints ? pointsResult(series) : seriesResult(series));
       return;
@@ -928,7 +932,8 @@ export class MatchManager {
         const a = agent();
         a.lastAction = formatAction(tool, args, result);
         this.emit(ctx, { type: "action", at: Date.now(), side, tool, args, result: truncate(result, 1000) });
-        if (fighting()) ctx.metrics?.action(side, tool, args);
+        // Una herramienta que no existe ya cuenta como llamada inválida: no es una acción.
+        if (fighting() && this.offeredTools(side).includes(tool)) ctx.metrics?.action(side, tool, args);
         hub.markStateDirty();
       },
       onDecision: (d) => {
@@ -940,7 +945,7 @@ export class MatchManager {
         // Una decisión por respuesta del LLM, traiga una acción, varias o ninguna.
         a.decisions += 1;
         const calls = Array.isArray(d.response?.toolCalls) ? d.response.toolCalls : [];
-        ctx.metrics?.decision(side, d.ms, d.usage, countInvalidCalls(calls, this.offeredTools(side)));
+        ctx.metrics?.decision(side, d.ms, d.usage, countInvalidCalls(calls, this.offeredTools(side)), calls.length);
         if (d.usage) {
           a.tokensIn += count(d.usage.inputTokens);
           a.tokensOut += count(d.usage.outputTokens);
@@ -1094,7 +1099,7 @@ export class MatchManager {
           this.deps.log("warn", `No se pudieron borrar los bloques colocados en la arena: ${errorMessage(err)}`);
         });
       }
-      this.log(ctx, result.reason === "error" ? "error" : "info", describeResult(result, this.state.series));
+      this.log(ctx, result.reason === "error" ? "error" : "info", describeResult(result, this.state.series, this.state.settings));
     } catch (err) {
       this.log(ctx, "error", `Error al cerrar la pelea: ${errorMessage(err)}`);
     } finally {
@@ -1200,27 +1205,43 @@ export class MatchManager {
    */
   async judgeRecord(record: MatchRecord): Promise<JudgeOutcome> {
     const { env, transcripts } = this.deps;
-    if (env.LLM_PROVIDER === "mock") return { ok: false, reason: "el juez necesita un LLM real (el servidor usa el simulado)" };
-    if (!transcripts.read) return { ok: false, reason: "no hay transcripciones que leer" };
+    if (env.LLM_PROVIDER === "mock") {
+      return { ok: false, reason: "el juez necesita un LLM real (el servidor usa el simulado)", status: 400 };
+    }
+    if (!transcripts.read) return { ok: false, reason: "no hay transcripciones que leer", status: 404 };
+    // Cada calificación cuesta una llamada grande al LLM: una a la vez por pelea y con pausa.
+    const now = Date.now();
+    const last = this.judgedAt.get(record.id);
+    if (last !== undefined && now - last < JUDGE_COOLDOWN_MS) {
+      return { ok: false, reason: "esa pelea se está calificando o se calificó hace muy poco", status: 429 };
+    }
+    this.judgedAt.set(record.id, now);
     await transcripts.flush?.();
     const raw = await transcripts.read(record.id);
-    if (raw === null) return { ok: false, reason: "no hay transcripción de esa pelea" };
+    if (raw === null) return { ok: false, reason: "no hay transcripción de esa pelea", status: 404 };
     const text = formatTranscript(parseTranscript(raw));
     const llm = this.deps.createLlmClient({ provider: env.LLM_PROVIDER, model: env.LLM_MODEL || undefined, apiKeys: this.apiKeys() });
     const abort = new AbortController();
     try {
       const outcome = await withTimeout(judgeMatch(llm, record, text, abort.signal), JUDGE_TIMEOUT_MS, "el juez no respondió a tiempo");
-      if (outcome.ok) await this.attachJudgement(record.id, outcome.judgement);
+      if (outcome.ok && !(await this.attachJudgement(record.id, outcome.judgement))) {
+        return { ok: false, reason: "la calificación no se pudo guardar", status: 502 };
+      }
       return outcome;
+    } catch (err) {
+      return { ok: false, reason: errorMessage(err), status: 502 };
     } finally {
       abort.abort();
+      this.judgedAt.set(record.id, Date.now());
     }
   }
 
-  private async attachJudgement(id: string, judgement: Judgement): Promise<void> {
+  /** Guarda la nota en el historial; false si esa pelea ya no está. */
+  private async attachJudgement(id: string, judgement: Judgement): Promise<boolean> {
     const updated = await this.deps.history.update(id, (record) => ({ ...record, judgement }));
-    if (!updated) this.deps.log("warn", "La pelea calificada ya no está entre las recientes: la nota no se guardó");
+    if (!updated) this.deps.log("warn", "La pelea calificada ya no está en el historial: la nota no se guardó");
     else this.deps.log("info", `Juez: ${judgement.summary}`);
+    return updated;
   }
 
   /**

@@ -271,7 +271,14 @@ export class MatchStore {
   async update(id: string, change: (record: MatchRecord) => MatchRecord): Promise<boolean> {
     const index = this.recent.findIndex((record) => record.id === id);
     const current = this.recent[index];
-    if (!current) return false;
+    if (!current) {
+      // Una pelea más vieja que las de la caché (p. ej. calificada desde el tablero): se
+      // corrige igual en el archivo, con una línea nueva del mismo id.
+      const old = (await this.all()).find((record) => record.id === id);
+      if (!old) return false;
+      await this.writeLine({ ...change(old), id }, "No se pudo actualizar la pelea en el historial");
+      return true;
+    }
     const updated: MatchRecord = { ...change(structuredClone(current)), id };
     this.recent = this.recent.map((record, i) => (i === index ? updated : record));
     await this.writeLine(updated, "No se pudo actualizar la pelea en el historial");

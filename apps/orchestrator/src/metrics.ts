@@ -83,6 +83,7 @@ type SideState = {
   actions: number;
   toolCounts: Record<string, number>;
   invalidCalls: number;
+  toolCalls: number;
   damageDealt: number;
   tokensIn: number;
   tokensOut: number;
@@ -107,6 +108,7 @@ function emptySide(): SideState {
     actions: 0,
     toolCounts: {},
     invalidCalls: 0,
+    toolCalls: 0,
     damageDealt: 0,
     tokensIn: 0,
     tokensOut: 0,
@@ -177,9 +179,11 @@ export class MetricsCollector {
     ms: number,
     usage: { inputTokens: number; outputTokens: number } | undefined,
     invalidCalls: number,
+    toolCalls: number = 0,
     at: number = this.now(),
   ): void {
     const s = this.sides[side];
+    s.toolCalls += Math.max(0, toolCalls);
     // La llamada empezó `ms` antes: vio las órdenes que ya habían llegado entonces.
     const startedAt = at - (Number.isFinite(ms) && ms > 0 ? ms : 0);
     s.injectionsSeen = Math.max(s.injectionsSeen, s.injections.filter((t) => t <= startedAt).length);
@@ -280,6 +284,7 @@ export class MetricsCollector {
         actionsPerMin: minutes ? Math.round((s.actions / minutes) * 10) / 10 : 0,
         toolCounts: { ...s.toolCounts },
         invalidCalls: s.invalidCalls,
+        toolCalls: Math.max(s.toolCalls, s.invalidCalls),
         damageDealt: Math.round(s.damageDealt * 100) / 100,
         damagePerDecision: s.decisions > 0 ? Math.round((s.damageDealt / s.decisions) * 1000) / 1000 : 0,
         tokensIn: s.tokensIn,

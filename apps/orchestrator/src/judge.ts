@@ -98,12 +98,16 @@ export function parseJudgement(args: Record<string, unknown> | undefined, model:
   return parsed.success ? parsed.data : null;
 }
 
-export type JudgeOutcome = { ok: true; judgement: Judgement } | { ok: false; reason: string };
+/**
+ * Resultado del juez. `status` dice qué responder por HTTP cuando no califica: 400 si no se
+ * puede (LLM simulado), 429 si se pidió hace poco, 502 si el LLM falló o no respondió.
+ */
+export type JudgeOutcome = { ok: true; judgement: Judgement } | { ok: false; reason: string; status: 400 | 404 | 429 | 502 };
 
 export async function judgeMatch(llm: LlmClient, record: MatchRecord, transcript: string, signal?: AbortSignal): Promise<JudgeOutcome> {
-  if (llm.provider === "mock") return { ok: false, reason: "el juez necesita un LLM real (el servidor usa el simulado)" };
+  if (llm.provider === "mock") return { ok: false, reason: "el juez necesita un LLM real (el servidor usa el simulado)", status: 400 };
   const response = await llm.complete({ messages: buildJudgeMessages(record, transcript), tools: [judgeTool], signal });
   const call = response.toolCalls.find((c) => c.name === judgeTool.name);
   const judgement = parseJudgement(call?.args, llm.model, Date.now());
-  return judgement ? { ok: true, judgement } : { ok: false, reason: "el juez no devolvió una calificación válida" };
+  return judgement ? { ok: true, judgement } : { ok: false, reason: "el juez no devolvió una calificación válida", status: 502 };
 }
