@@ -294,6 +294,15 @@ En la web, junto al modo de comunicación, hay un interruptor **Límite de tiemp
 
 Para que una pelea olvidada no gaste tokens toda la noche, el servidor detiene (sin ganador) las peleas sin límite que pasan de `MATCH_MAX_SECONDS` (30 minutos por defecto; `0` quita el tope).
 
+## Prompts marcados
+
+En la sección **Historial** de la web cada pelea muestra el prompt de cada lado, y cualquiera puede **marcarlo** con etiquetas y una nota. Marcar guarda ese prompt aparte, tal como peleó: su texto, modelo y kit, contra quién, con qué ajustes y cómo le fue. Se puede marcar a mitad de pelea; el resultado se completa cuando termina.
+
+- **Evaluar**: al filtrar por una etiqueta se ve cuántos de esos prompts ganaron y perdieron, y cada pelea tiene su transcripción.
+- **Replicar**: «Cargar en Rojo» o «Cargar en Azul» deja el prompt, su modelo y su kit en ese editor, como cambios sin guardar.
+
+El historial solo recuerda las últimas 50 peleas; lo marcado queda en `DATA_DIR/flags.json` aunque la pelea ya no esté entre ellas. Rutas: `GET /api/flags`, y `PUT` / `DELETE /api/matches/:id/flags/:side` (cuerpo `{ tags, note }`, hasta 8 etiquetas).
+
 ## Transcripciones
 
 Cada pelea deja su transcripción completa en `DATA_DIR/transcripts/<id>.jsonl`: una entrada por línea, en el orden en que pasó, escrita mientras la pelea ocurre (si el servidor se cae, queda lo que alcanzó a pasar). Parte con `start` (configs con el proveedor, modelo y kit reales, ajustes, el prompt de sistema completo de cada agente, tick y duración) y trae las fases, cada decisión, lo que pensó, dijo e hizo cada agente, el daño, los cambios de estado, el registro de eventos, el resultado (`end`) y el "por qué ganó" (`explanation`). También quedan las peleas que fallaron o se detuvieron antes de empezar. El formato es `TranscriptEntrySchema`, en `packages/protocol`.

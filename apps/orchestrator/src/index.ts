@@ -5,6 +5,7 @@ import { loadEnv } from "@phack/env";
 import { DEFAULT_MODELS, createLlmClient } from "@phack/llm";
 import type { ServerDefaults } from "@phack/protocol";
 import { applyWorldRules, buildArena } from "./arena";
+import { FlagStore, withFlagOutcomes } from "./flags";
 import { Hub } from "./hub";
 import { MatchManager } from "./match";
 import { ModelCatalog } from "./models";
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
   await prompts.load();
   await settings.load();
   await history.load();
+  const flags = new FlagStore(dataDir, log);
+  await flags.load();
   const transcripts = new TranscriptStore(dataDir, log);
 
   const rcon = new RconClient({
@@ -63,7 +66,8 @@ async function main(): Promise<void> {
     hub,
     prompts,
     settings,
-    history,
+    // Al guardar una pelea (y al llegar su explicación), sus prompts marcados reciben el resultado.
+    history: withFlagOutcomes(history, flags, log),
     transcripts,
     createFighter,
     createLlmClient,
@@ -83,6 +87,7 @@ async function main(): Promise<void> {
     prompts,
     settings,
     history,
+    flags,
     transcripts,
     defaults,
     models,

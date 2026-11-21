@@ -1767,6 +1767,258 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   color: var(--amber);
 }
 
+/* ---------- Historial y prompts marcados ---------- */
+
+.history {
+  margin-top: 72px;
+  padding-top: 40px;
+  border-top: 1px solid var(--line);
+}
+
+.history__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Filtros: el elegido queda lleno; las etiquetas son los mismos botones. */
+.filter {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  background: none;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filter:hover {
+  border-color: var(--text);
+}
+
+.filter[aria-pressed="true"] {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+.history__summary {
+  margin-bottom: 16px;
+  font-size: 15px;
+}
+
+.history__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history__empty {
+  padding: 24px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Una pelea: qué pasó arriba, y abajo el prompt de cada lado con su marca. */
+.bout {
+  display: grid;
+  gap: 14px;
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+
+.bout__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+}
+
+.bout__title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.bout.is-live .bout__title {
+  color: var(--ok);
+}
+
+.bout__facts {
+  flex: 1 1 320px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.bout__when {
+  color: var(--faint);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bout__transcript {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+.bout__transcript:hover,
+.bout__transcript:focus-visible {
+  color: var(--text);
+}
+
+.bout__why {
+  max-width: 80ch;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bout__sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 40px;
+}
+
+.bout__side {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--side);
+}
+
+.bout__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.bout__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--side);
+}
+
+.bout__kit {
+  color: var(--muted);
+}
+
+.bout__outcome {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.bout__outcome[data-outcome="lost"] {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* El prompt se ve en tres líneas; "Ver completo" lo abre. */
+.bout__prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  max-width: 78ch;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.bout__prompt.is-open {
+  display: block;
+}
+
+.bout__stats {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* La marca: etiquetas del color del lado y, debajo, la nota de quien marcó. */
+.bout__flag {
+  display: grid;
+  gap: 6px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tags__item {
+  padding: 3px 8px;
+  background: var(--side);
+  color: #0b0b0d;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tags__item--plain {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--side);
+  color: var(--side);
+}
+
+.bout__note {
+  max-width: 70ch;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.bout__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.flag-form {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 4px;
+}
+
+.flag-form input,
+.flag-form textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.flag-form input:focus,
+.flag-form textarea:focus {
+  border-color: var(--text);
+  outline: none;
+}
+
+.flag-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.flag-form__hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* ---------- Pie y avisos ---------- */
 
 .footer {

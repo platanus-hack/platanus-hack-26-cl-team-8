@@ -1,5 +1,6 @@
 import {
   API_ROUTES,
+  FlaggedPromptSchema,
   AgentConfigSchema,
   MatchRecordSchema,
   MatchSettingsSchema,
@@ -16,6 +17,8 @@ import {
   type Side,
   type UpdatePromptBody,
   type UpdateSettingsBody,
+  type FlagBody,
+  type FlaggedPrompt,
 } from "@phack/protocol";
 import { MOCK, apiUrl } from "./config";
 
@@ -136,6 +139,20 @@ export function stopMatch(): Promise<MatchState> {
 /** Últimas peleas guardadas. La web solo lo usa para leer el "por qué ganó" de la más reciente. */
 export function fetchMatches(): Promise<MatchRecord[]> {
   return request(API_ROUTES.matches, { parse: (data) => MatchRecordSchema.array().parse(data) });
+}
+
+/** Prompts marcados, los más recientes primero. */
+export function fetchFlags(): Promise<FlaggedPrompt[]> {
+  return request(API_ROUTES.flags, { parse: (data) => FlaggedPromptSchema.array().parse(data) });
+}
+
+/** Marca (o edita la marca de) el prompt de un lado en una pelea. */
+export function saveFlag(matchId: string, side: Side, body: FlagBody): Promise<FlaggedPrompt> {
+  return request(API_ROUTES.flag(matchId, side), FlaggedPromptSchema, { method: "PUT", body });
+}
+
+export function removeFlag(matchId: string, side: Side): Promise<unknown> {
+  return request(API_ROUTES.flag(matchId, side), { parse: (data) => data }, { method: "DELETE" });
 }
 
 export function fetchDefaults(): Promise<ServerDefaults> {

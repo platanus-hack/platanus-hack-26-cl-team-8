@@ -5,6 +5,7 @@ import { initControls, setPhase } from "./controls";
 import { initCountdown, updateCountdown } from "./countdown";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
+import { addToHistory, initHistory, syncHistory } from "./history";
 import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
 import { setDefaults } from "./models";
 import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
@@ -60,6 +61,7 @@ function applyState(state: MatchState): void {
   syncThoughts(state);
   setPhase(state.phase);
   setTranscriptMatch(state.id);
+  syncHistory(state);
   updateCountdown(state);
 
   if (lastPhase !== null && lastPhase !== state.phase) {
@@ -120,6 +122,7 @@ function handleEvent(event: ArenaEvent): void {
       // En un K.O. ya sonó la caída; en los demás finales suena la campana.
       if (event.record.result.reason !== "kill") playEnd();
       showResult(event.record.result);
+      addToHistory(event.record);
       if (!event.record.result.explanation) void awaitExplanation(event.record.id);
       addFeed({
         at: event.at,
@@ -251,6 +254,7 @@ function init(): void {
   initFeed();
   initTranscriptLink();
   initPrompts();
+  initHistory();
   initSettings();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.
