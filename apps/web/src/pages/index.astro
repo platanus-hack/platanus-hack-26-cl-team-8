@@ -2,6 +2,7 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
+import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
 // Los ids generados aquí (fighter-red, prompt-blue, ...) son el contrato con
@@ -9,6 +10,13 @@ import "../styles/global.css";
 const sides = [
   { id: "red", label: "Rojo", bot: "AgenteRojo" },
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
+] as const;
+
+// Estadísticas de cada agente: un ícono de píxeles y su número (el nombre va en el `title`).
+const stats = [
+  { id: "food", label: "Comida" },
+  { id: "damage", label: "Daño hecho" },
+  { id: "decisions", label: "Decisiones" },
 ] as const;
 
 const providers = [
@@ -65,6 +73,7 @@ const providers = [
             <div class={`hud__side hud__side--${side.id}`} id={`fighter-${side.id}`} data-side={side.id}>
               <div class="hud__row">
                 <h2 class="hud__name">{side.label}</h2>
+                <span class="model-tag hud__model" id={`fighter-model-${side.id}`} hidden />
                 <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
                 <span class="hud__hp" id={`hp-value-${side.id}`}>–</span>
               </div>
@@ -105,18 +114,17 @@ const providers = [
               <span class="sr-only">Última acción</span>
               <p class="mind__action" id={`action-${side.id}`}>—</p>
               <dl class="stats">
-                <div>
-                  <dt>Comida</dt>
-                  <dd id={`food-${side.id}`}>–</dd>
-                </div>
-                <div>
-                  <dt>Daño hecho</dt>
-                  <dd id={`damage-${side.id}`}>–</dd>
-                </div>
-                <div>
-                  <dt>Decisiones</dt>
-                  <dd id={`decisions-${side.id}`}>–</dd>
-                </div>
+                {
+                  stats.map((stat) => (
+                    <div title={stat.label}>
+                      <dt>
+                        <PixelIcon name={stat.id} />
+                        <span class="sr-only">{stat.label}</span>
+                      </dt>
+                      <dd id={`${stat.id}-${side.id}`}>–</dd>
+                    </div>
+                  ))
+                }
               </dl>
             </article>
           ))
@@ -144,6 +152,7 @@ const providers = [
               <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} data-side={side.id} autocomplete="off" novalidate>
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
+                  <span class="model-tag editor__model" id={`editor-model-${side.id}`} hidden />
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
                 </div>
 

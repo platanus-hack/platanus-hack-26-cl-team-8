@@ -28,6 +28,7 @@ import {
   type MatchResult,
   type MatchState,
   type PromptsResponse,
+  type ServerDefaults,
   type Side,
 } from "@phack/protocol";
 
@@ -58,6 +59,18 @@ const prompts: PromptsResponse = {
       "si le queda menos de 5 de vida.",
     provider: "gateway",
     model: "openai/gpt-6-luna",
+  },
+};
+
+/** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
+const defaults: ServerDefaults = {
+  provider: "gateway",
+  models: {
+    mock: "mock-scripted",
+    openai: "gpt-6-luna",
+    anthropic: "claude-haiku-5-5",
+    openrouter: "openai/gpt-6-luna",
+    gateway: "anthropic/claude-haiku-5.5",
   },
 };
 
@@ -375,6 +388,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.state) return buildState(phase);
   if (method === "GET" && path === API_ROUTES.prompts) return prompts;
   if (method === "GET" && path === API_ROUTES.matches) return history;
+  if (method === "GET" && path === API_ROUTES.defaults) return defaults;
 
   if (method === "POST" && path === API_ROUTES.matchStart) {
     if (phase === "preparing" || phase === "running") fail(409, "Ya hay una pelea en curso");

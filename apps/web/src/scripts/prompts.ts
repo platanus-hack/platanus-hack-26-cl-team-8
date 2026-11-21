@@ -12,6 +12,7 @@ import {
 import { describeError, fetchPrompts, savePrompt } from "./api";
 import { byId, setText } from "./dom";
 import { SIDE_LABEL } from "./format";
+import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import { showToast } from "./toast";
 
 /** Contenido de un editor tal como está en los campos del formulario. */
@@ -22,6 +23,8 @@ type Editor = {
   textarea: HTMLTextAreaElement;
   provider: HTMLSelectElement;
   model: HTMLInputElement;
+  /** Logo + nombre del modelo que usará este prompt, según lo elegido en el formulario. */
+  modelTag: HTMLElement;
   count: HTMLElement;
   status: HTMLElement;
   save: HTMLButtonElement;
@@ -66,6 +69,11 @@ function refresh(editor: Editor): void {
   const draft = readDraft(editor);
   const length = draft.prompt.length;
   setText(editor.count, `${length} / ${MAX_PROMPT_LENGTH}`);
+  const provider = ProviderSchema.safeParse(draft.provider);
+  renderModelTag(
+    editor.modelTag,
+    resolveModel({ provider: provider.success ? provider.data : undefined, model: draft.model }),
+  );
   editor.count.classList.toggle("is-over", length > MAX_PROMPT_LENGTH);
   editor.save.disabled = editor.saving || length > MAX_PROMPT_LENGTH;
   setText(editor.save, editor.saving ? "Guardando…" : "Guardar");
@@ -157,6 +165,7 @@ function createEditor(side: Side): Editor {
     textarea: byId<HTMLTextAreaElement>(`prompt-${side}`),
     provider: byId<HTMLSelectElement>(`provider-${side}`),
     model: byId<HTMLInputElement>(`model-${side}`),
+    modelTag: byId(`editor-model-${side}`),
     count: byId(`count-${side}`),
     status: byId(`save-status-${side}`),
     save: byId<HTMLButtonElement>(`save-${side}`),
@@ -197,4 +206,9 @@ function createEditor(side: Side): Editor {
 
 export function initPrompts(): void {
   editors = { red: createEditor("red"), blue: createEditor("blue") };
+  onDefaultsChange(() => {
+    if (!editors) return;
+    refresh(editors.red);
+    refresh(editors.blue);
+  });
 }

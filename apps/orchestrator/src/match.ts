@@ -195,6 +195,13 @@ export class MatchManager {
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm("red"), blue: this.makeLlm("blue") };
       for (const side of SIDES) {
+        // Se anota el proveedor y modelo que de verdad se usan (resueltos los valores por
+        // defecto): es lo que muestran la web y el historial.
+        this.state.configs[side] = {
+          ...this.state.configs[side],
+          provider: llms[side].provider,
+          model: llms[side].model,
+        };
         ctx.fighters[side] = this.deps.createFighter({
           side,
           username: AGENT_USERNAMES[side],

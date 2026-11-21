@@ -3,10 +3,12 @@ import {
   AgentConfigSchema,
   MatchRecordSchema,
   MatchStateSchema,
+  ServerDefaultsSchema,
   type AgentConfig,
   type MatchRecord,
   type MatchState,
   type PromptsResponse,
+  type ServerDefaults,
   type Side,
   type UpdatePromptBody,
 } from "@phack/protocol";
@@ -126,6 +128,10 @@ export function stopMatch(): Promise<MatchState> {
 
 export function fetchMatches(): Promise<MatchRecord[]> {
   return request(API_ROUTES.matches, matchesParser);
+}
+
+export function fetchDefaults(): Promise<ServerDefaults> {
+  return request(API_ROUTES.defaults, ServerDefaultsSchema);
 }
 
 export function describeError(err: unknown): string {

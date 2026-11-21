@@ -331,6 +331,36 @@ textarea {
   font: 400 24px/1 var(--pixel);
 }
 
+/* Modelo del agente: logo de la marca + nombre. Se usa en el marcador, los editores y el historial. */
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.model-tag__icon {
+  display: flex;
+  flex: none;
+}
+
+.model-tag__icon svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.model-tag__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud__model {
+  font-size: 16px;
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
 .hud__state {
   min-width: 0;
   font-size: 14px;
@@ -500,12 +530,11 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Estadísticas: ícono de píxeles + número, como el HUD del juego. */
 .stats {
   display: flex;
-  gap: 18px;
-  margin-top: 10px;
-  font-size: 13px;
-  color: rgba(237, 236, 232, 0.7);
+  gap: 22px;
+  margin-top: 12px;
 }
 
 .mind--blue .stats {
@@ -514,13 +543,23 @@ textarea {
 
 .stats div {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+}
+
+.stats dt {
+  display: flex;
+}
+
+/* Cuadrícula de 11 px dibujada a 22 px: cada píxel del ícono ocupa 2x2, sin borrosidad. */
+.pixel-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .stats dd {
-  color: var(--text);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font: 400 16px/1 var(--pixel);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
 }
 
 .controls {
@@ -744,9 +783,17 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .editor__head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
+}
+
+.editor__model {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.editor__count {
+  margin-left: auto;
 }
 
 .editor__title {
@@ -800,7 +847,7 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .editor__options {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
   align-items: end;
   gap: 10px;
 }
@@ -991,12 +1038,10 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   white-space: pre-wrap;
 }
 
-.history__meta {
-  display: block;
-  margin: 4px 0 0 12px;
-  font: 11.5px/1.4 var(--mono);
-  color: var(--faint);
-  overflow-wrap: anywhere;
+.history__model {
+  margin: 6px 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .history__empty {

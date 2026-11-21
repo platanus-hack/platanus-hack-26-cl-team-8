@@ -10,6 +10,7 @@ import {
   type MatchRecord,
   type MatchState,
   type PromptsResponse,
+  type ServerDefaults,
   type Side,
   type UpdatePromptBody,
 } from "@phack/protocol";
@@ -29,6 +30,8 @@ export type ServerDeps = {
     update(side: Side, body: UpdatePromptBody): Promise<AgentConfig>;
   };
   history: { latest(): MatchRecord[] };
+  /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
+  defaults: ServerDefaults;
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
 };
@@ -151,6 +154,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post(API_ROUTES.matchStop, async () => deps.match.stop());
 
   app.get(API_ROUTES.matches, async () => deps.history.latest());
+
+  app.get(API_ROUTES.defaults, async () => deps.defaults);
 
   // ---------- WebSocket (solo servidor -> cliente) ----------
 

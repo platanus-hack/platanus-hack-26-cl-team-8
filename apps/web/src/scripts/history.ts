@@ -2,6 +2,7 @@ import type { AgentConfig, MatchRecord, Side } from "@phack/protocol";
 import { describeError, fetchMatches } from "./api";
 import { byId, el, setText } from "./dom";
 import { REASON_LABEL, SIDE_LABEL, formatDateTime, formatDuration, formatNumber } from "./format";
+import { renderModelTag, resolveModel } from "./models";
 import { showToast } from "./toast";
 
 const MAX_RECORDS = 50;
@@ -33,8 +34,12 @@ function promptCell(record: MatchRecord, side: Side): HTMLTableCellElement {
   });
   cell.append(snippet);
 
-  const meta = [config.provider, config.model].filter((part) => part !== undefined && part !== "").join(" · ");
-  if (meta !== "") cell.append(el("span", "history__meta", meta));
+  // Solo si el registro guardó con qué se peleó: no se adivina con los valores de hoy.
+  if (config.provider !== undefined || (config.model ?? "") !== "") {
+    const tag = el("span", "model-tag history__model");
+    renderModelTag(tag, resolveModel(config));
+    cell.append(tag);
+  }
   return cell;
 }
 

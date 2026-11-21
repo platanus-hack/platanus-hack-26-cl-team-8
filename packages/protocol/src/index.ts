@@ -154,6 +154,7 @@ export type ArenaEvent = z.infer<typeof ArenaEventSchema>;
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
+//   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
 
 export const API_ROUTES = {
@@ -164,10 +165,28 @@ export const API_ROUTES = {
   matchStart: "/api/match/start",
   matchStop: "/api/match/stop",
   matches: "/api/matches",
+  defaults: "/api/defaults",
   ws: "/api/ws",
 } as const;
 
 export type PromptsResponse = { red: AgentConfig; blue: AgentConfig };
+
+/**
+ * Qué se usa cuando un agente no elige proveedor o modelo: el proveedor por defecto
+ * del servidor y el modelo por defecto de cada proveedor. La web lo usa para mostrar
+ * el modelo real de cada agente.
+ */
+export const ServerDefaultsSchema = z.object({
+  provider: ProviderSchema,
+  models: z.object({
+    mock: z.string(),
+    openai: z.string(),
+    anthropic: z.string(),
+    openrouter: z.string(),
+    gateway: z.string(),
+  }),
+});
+export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 
 export function parseArenaEvent(raw: string): ArenaEvent | null {
   try {
