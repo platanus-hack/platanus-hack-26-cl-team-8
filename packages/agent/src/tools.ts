@@ -1,14 +1,30 @@
 import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
 import { cleanMessage } from "./comms";
-import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isLavaBucket, isPearl, isShield, isWaterBucket } from "./items";
+import {
+  ALWAYS_EDIBLE,
+  isArrow,
+  isBow,
+  isBuildBlock,
+  isDrinkPotion,
+  isFoodName,
+  isLavaBucket,
+  isPearl,
+  isShield,
+  isSplashPotion,
+  isWaterBucket,
+} from "./items";
+import { MOVE_PLACES, type MovePlace } from "./tactics";
 
 export const TOOL_NAMES = [
   "approach",
   "attack",
   "retreat",
+  "move",
   "shoot",
   "eat",
+  "drink",
+  "throw",
   "pearl",
   "build",
   "dig",
@@ -28,12 +44,30 @@ export const PEARL_TARGETS = ["rival", "away"] as const;
 export type PearlTarget = (typeof PEARL_TARGETS)[number];
 
 /** Qué levanta "build": un muro hacia el rival o una torre bajo los propios pies. */
-export const BUILD_SHAPES = ["wall", "tower", "box"] as const;
+export const BUILD_SHAPES = ["wall", "tower", "box", "block"] as const;
 export type BuildShape = (typeof BUILD_SHAPES)[number];
 
 /** Dónde se vacía el cubo de agua: entre tú y el rival, o bajo tus pies. */
 export const WATER_PLACES = ["between", "feet"] as const;
 export type WaterPlace = (typeof WATER_PLACES)[number];
+
+/** Lado (respecto del rival) donde "build" pone un bloque suelto. */
+export const BLOCK_SIDES = ["front", "behind", "left", "right"] as const;
+export type BlockSide = (typeof BLOCK_SIDES)[number];
+
+/** Estilos de "move". */
+export const MOVE_STYLES = ["strafe", "circle", "keep", "goto"] as const;
+export type MoveStyle = (typeof MOVE_STYLES)[number];
+/** Distancia por defecto (y límites) de move "keep". */
+export const KEEP_DISTANCE_DEFAULT = 8;
+export const KEEP_DISTANCE_MIN = 2;
+export const KEEP_DISTANCE_MAX = 16;
+
+/** A quién se arroja una poción. */
+export const THROW_AT = ["rival", "self"] as const;
+export type ThrowAt = (typeof THROW_AT)[number];
+/** Más lejos que esto la poción arrojadiza no llega al rival. */
+export const THROW_MAX_DISTANCE = 8;
 
 /** Qué rompe "dig": lo que hay entre tú y el rival, o el bloque más cercano. */
 export const DIG_TARGETS = ["between", "nearest"] as const;
@@ -111,9 +145,12 @@ export function refusalText(reason: string, mode: ToolName): string {
  */
 export function kitToolNames(kit: Kit): ToolName[] {
   const has = (match: (name: string) => boolean): boolean => kit.items.some((i) => match(i.item));
-  const names: ToolName[] = ["approach", "attack", "retreat"];
+  // Moverse con táctica se puede siempre, igual que acercarse o alejarse.
+  const names: ToolName[] = ["approach", "attack", "retreat", "move"];
   if (has(isBow) && has(isArrow)) names.push("shoot");
   if (has(isFoodName)) names.push("eat");
+  if (has(isDrinkPotion)) names.push("drink");
+  if (has(isSplashPotion)) names.push("throw");
   if (has(isPearl)) names.push("pearl");
   if (has(isBuildBlock)) names.push("build");
   // Romper bloques se puede siempre: a mano, aunque el kit no traiga herramientas.
@@ -157,19 +194,84 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "number",
           description: "Opcional: cuántos segundos atacar antes de quedar en espera.",
         },
+        weapon: {
+          type: "string",
+          description:
+            "Opcional: id del arma de tu inventario con la que pegar (por ejemplo 'diamond_axe'). Si no lo dices, la mejor espada y si no hay, el hacha.",
+        },
+        guard: {
+          type: "boolean",
+          description:
+            "Opcional, solo con escudo: true = entre golpe y golpe levantas el escudo y lo bajas justo para pegar (recibes menos daño, persigues más lento).",
+        },
       },
       required: [],
     },
   },
   simpleTool("retreat", "Aléjate del rival manteniéndote dentro de la arena."),
+  {
+    name: "move",
+    description:
+      "Movimiento táctico (sigue hasta tu próxima decisión). style='strafe': esquivas de lado a lado frente al rival, difícil de acertar con flechas. style='circle': lo rodeas a la distancia en que estás (entre 3 y 8 bloques). style='keep': mantienes la distancia 'distance' (te acercas o te alejas, y esquivas de lado cuando ya estás). style='goto': vas a un lugar: place='center' (centro), 'far_corner' (la esquina más lejos del rival) o 'behind_rival' (al otro lado del rival).",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        style: { type: "string", enum: [...MOVE_STYLES], description: "Cómo moverte." },
+        distance: {
+          type: "number",
+          description: `Solo con style='keep': a cuántos bloques del rival quedarte (${KEEP_DISTANCE_MIN} a ${KEEP_DISTANCE_MAX}; por defecto ${KEEP_DISTANCE_DEFAULT}).`,
+        },
+        place: { type: "string", enum: [...MOVE_PLACES], description: "Solo con style='goto': adónde ir." },
+      },
+      required: ["style"],
+    },
+  },
   simpleTool(
     "shoot",
     "Dispara con el arco: te detienes, apuntas, cargas cerca de 1 segundo y sueltas. Sigue disparando hasta tu próxima decisión. Necesita arco y flechas.",
   ),
-  simpleTool(
-    "eat",
-    "Come para recuperar vida: filete (solo si tu barra de comida no está llena) o manzana dorada (siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras tengas corazones amarillos). Tarda cerca de 2 segundos y te deja quieto.",
-  ),
+  {
+    name: "eat",
+    description: "Come para recuperar vida: filete (solo si tu barra de comida no está llena) o manzana dorada (siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras tengas corazones amarillos). Tarda cerca de 2 segundos y te deja quieto. Con 'food' eliges qué comer.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        food: {
+          type: "string",
+          description: "Opcional: id de la comida de tu inventario (por ejemplo 'cooked_beef' o 'golden_apple'). Si no lo dices, la primera que se pueda comer.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "drink",
+    description:
+      "Bebe una poción de tu inventario (tarda cerca de 2 segundos y te deja quieto). 'potion' es el tipo (por ejemplo 'healing' o 'strength'); en la observación aparecen como 'potion:<tipo>'.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        potion: { type: "string", description: "Tipo de la poción a beber; si no lo dices, la primera que tengas." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "throw",
+    description: `Arroja una poción arrojadiza: at='rival' (por defecto) a los pies del rival, si está a ${THROW_MAX_DISTANCE} bloques o menos; at='self' a tus propios pies (para curarte al instante). 'potion' es el tipo; en la observación aparecen como 'splash_potion:<tipo>'. Es instantáneo.`,
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        potion: { type: "string", description: "Tipo de la poción a arrojar; si no lo dices, la primera que tengas." },
+        at: { type: "string", enum: [...THROW_AT], description: "'rival' = al rival; 'self' = a tus pies." },
+      },
+      required: [],
+    },
+  },
   {
     name: "pearl",
     description: `Lanza una perla de ender y te teletransporta donde cae. target='rival': caes junto al rival y pasas a atacar automáticamente. target='away': caes lejos del rival, al otro lado de la arena, y empiezas a comer de inmediato si tienes comida y tu barra de comida no está llena (si no, quedas en espera). Cada perla te quita unos 2.5 de vida al caer. Recarga de ${PEARL_COOLDOWN_MS / 1000} segundos. Tienes pocas: tu inventario dice cuántas te quedan.`,
@@ -188,7 +290,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "build",
-    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. shape='box': te encierras en una caja de bloques con techo (gasta hasta ${BOX_BLOCKS}); nada te alcanza hasta que el rival rompa un bloque, pero tú tampoco puedes atacar sin romper uno. Tarda 1 a 4 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
+    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. shape='box': te encierras en una caja de bloques con techo (gasta hasta ${BOX_BLOCKS}); nada te alcanza hasta que el rival rompa un bloque, pero tú tampoco puedes atacar sin romper uno. shape='block': pones una columna de 2 bloques justo a tu lado, en el lado 'side' respecto del rival ('front' entre tú y él, 'behind', 'left' o 'right'), para tapar un paso o cubrirte de un lado. Tarda 1 a 4 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
     parameters: {
       type: "object",
       properties: {
@@ -196,8 +298,9 @@ export const TOOL_DEFS: ToolDef[] = [
         shape: {
           type: "string",
           enum: [...BUILD_SHAPES],
-          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir; 'box' = encerrarte.",
+          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir; 'box' = encerrarte; 'block' = columna de 2 a tu lado.",
         },
+        side: { type: "string", enum: [...BLOCK_SIDES], description: "Solo con shape='block': de qué lado ponerla (respecto del rival)." },
       },
       required: [],
     },
@@ -276,6 +379,20 @@ export type ParsedToolArgs = {
   where: WaterPlace;
   /** Para "dig". "target" de la perla y de dig comparten nombre: cada uno lee el suyo. */
   digTarget: DigTarget;
+  /** "build" shape "block". */
+  side: BlockSide;
+  /** "move". */
+  style: MoveStyle;
+  distance: number;
+  place: MovePlace;
+  /** "attack": arma elegida (id) y si se cubre con el escudo entre golpes. */
+  weapon: string | null;
+  guard: boolean;
+  /** "eat": comida elegida (id). */
+  food: string | null;
+  /** "drink" / "throw": tipo de poción elegido y a quién se arroja. */
+  potion: string | null;
+  at: ThrowAt;
   /** Modo "chat": lo que el agente le dice al rival, con limpieza técnica (cleanMessage); null si no dijo nada. */
   say: string | null;
 };
@@ -300,8 +417,31 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   const rawShape = word("shape");
   const shape: BuildShape = rawShape === "tower" || rawShape === "box" ? rawShape : "wall";
   const digTarget: DigTarget = word("target") === "nearest" ? "nearest" : "between";
+  const oneOf = <T extends string>(key: string, options: readonly T[], fallback: T): T => {
+    const value = word(key);
+    return (options as readonly string[]).includes(value) ? (value as T) : fallback;
+  };
+  const side = oneOf("side", BLOCK_SIDES, "front");
+  const style = oneOf("style", MOVE_STYLES, "strafe");
+  const place = oneOf("place", MOVE_PLACES, "center");
+  const at = oneOf("at", THROW_AT, "rival");
+  const rawDistance = source["distance"];
+  const distanceNumber = typeof rawDistance === "string" ? Number(rawDistance) : rawDistance;
+  const distance =
+    typeof distanceNumber === "number" && Number.isFinite(distanceNumber)
+      ? Math.min(KEEP_DISTANCE_MAX, Math.max(KEEP_DISTANCE_MIN, distanceNumber))
+      : KEEP_DISTANCE_DEFAULT;
+  // Ids: se aceptan con o sin "minecraft:" y se normalizan; vacío = que elija el cuerpo.
+  const id = (key: string): string | null => {
+    const value = word(key).replace(/^minecraft:/, "").replace(/^(splash_)?potion:/, "");
+    return /^[a-z0-9_]+$/.test(value) ? value : null;
+  };
+  const weapon = id("weapon");
+  const food = id("food");
+  const potion = id("potion");
+  const guard = source["guard"] === true || word("guard") === "true";
   const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
   // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
   const say = cleanMessage(source["say"]);
-  return { reason, seconds, target, shape, where, digTarget, say };
+  return { reason, seconds, target, shape, where, digTarget, side, style, distance, place, weapon, guard, food, potion, at, say };
 }

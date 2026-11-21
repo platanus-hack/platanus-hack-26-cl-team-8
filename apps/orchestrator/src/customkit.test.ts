@@ -80,6 +80,25 @@ describe("buildCustomKit", () => {
     expect(KitSchema.safeParse(kit).success).toBe(true);
   });
 
+  it("pociones: el tipo va en el nombre y en la NBT; sin tipo válido se descartan", () => {
+    const { kit, ignored } = buildCustomKit({
+      items: [
+        { item: "potion", potion: "healing", count: 2 },
+        { item: "splash_potion", potion: "minecraft:harming" },
+        { item: "potion" },
+        { item: "potion", potion: "luck" },
+      ],
+    });
+    expect(kit.items.map((i) => [i.item, i.potion, i.label])).toEqual([
+      ["potion", "healing", "Poción de curación"],
+      ["potion", "healing", "Poción de curación"],
+      ["splash_potion", "harming", "Poción arrojadiza de daño"],
+    ]);
+    expect(ignored).toHaveLength(2);
+    expect(fighterKitCommands("AgenteRojo", kit)[2]).toMatch(/with minecraft:splash_potion\{Potion:"minecraft:harming"\}$/);
+    expect(KitSchema.safeParse(kit).success).toBe(true);
+  });
+
   it("los comandos de RCON salen bien formados", () => {
     const { kit } = buildCustomKit({
       items: [{ item: "netherite_sword", enchantments: [{ id: "sharpness", level: 5 }] }, { item: "cooked_beef", count: 8 }],

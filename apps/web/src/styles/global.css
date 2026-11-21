@@ -1497,8 +1497,13 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 /* Efectos permanentes del kit ("Velocidad I"): ocupan el resto de la fila de la armadura. */
+/* La mano secundaria queda un poco separada de la armadura. */
+.inv__slot--offhand {
+  margin-left: 6px;
+}
+
 .inv__effects {
-  grid-column: 5 / -1;
+  grid-column: 6 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

@@ -61,6 +61,8 @@ export function bestDigTool(blockName: string, inventory: readonly string[]): st
   return candidates.reduce((best, name) => (tierOf(name) > tierOf(best) ? name : best));
 }
 export const isShield = (name: string): boolean => name === "shield";
+export const isDrinkPotion = (name: string): boolean => name === "potion";
+export const isSplashPotion = (name: string): boolean => name === "splash_potion";
 export const isWaterBucket = (name: string): boolean => name === "water_bucket";
 export const isLavaBucket = (name: string): boolean => name === "lava_bucket";
 

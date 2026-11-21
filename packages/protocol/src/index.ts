@@ -79,6 +79,8 @@ export type KitItem = {
   /** Nombre en español para tooltips y lectores de pantalla. */
   label: string;
   enchantments?: readonly KitEnchantment[];
+  /** Solo pociones ("potion", "splash_potion"): el tipo, sin prefijo ("healing"). Ver CUSTOM_KIT_POTIONS. */
+  potion?: string;
 };
 
 /** Efecto permanente que se da con `effect give ... infinite`. `amplifier` 0 = nivel I. */
@@ -158,9 +160,10 @@ export const KITS: Record<KitId, Kit> = {
     id: "tank",
     name: "Tanque",
     description:
-      "Peto y grebas de diamante con casco y botas de hierro. Aguanta mucho, pero solo lleva una espada de piedra y no tiene arco.",
+      "Peto y grebas de diamante con casco y botas de hierro, y escudo. Aguanta mucho, pero solo lleva una espada de piedra y no tiene arco.",
     items: [
       ...armor(["iron", "diamond", "diamond", "iron"]),
+      item("weapon.offhand", "shield", "Escudo"),
       item("hotbar.0", "stone_sword", "Espada de piedra"),
       item("hotbar.2", "cooked_beef", "Filete", 4),
     ],
@@ -333,6 +336,9 @@ function buildCatalog(): Record<string, CatalogEntry> {
     lava_bucket: { label: "Cubo de lava", stack: 1 },
     shield: { label: "Escudo", stack: 1 },
     shears: { label: "Tijeras", stack: 1 },
+    // Las pociones llevan además su tipo (CustomKitRequest.items[].potion).
+    potion: { label: "Poción", stack: 1 },
+    splash_potion: { label: "Poción arrojadiza", stack: 1 },
     cobblestone: { label: "Roca", stack: 64 },
     dirt: { label: "Tierra", stack: 64 },
     obsidian: { label: "Obsidiana", stack: 64 },
@@ -369,6 +375,24 @@ export const CUSTOM_KIT_ENCHANTMENTS: Readonly<Record<string, number>> = {
   unbreaking: 3,
 };
 
+/**
+ * Tipos de poción que se pueden pedir (id de Minecraft sin "minecraft:"): nombre en
+ * español y qué hace. `harmful` = se arroja al rival, no se bebe.
+ */
+export const CUSTOM_KIT_POTIONS: Readonly<Record<string, { label: string; effect: string; harmful?: boolean }>> = {
+  healing: { label: "curación", effect: "cura 4 de vida al instante" },
+  strong_healing: { label: "curación II", effect: "cura 8 de vida al instante" },
+  regeneration: { label: "regeneración", effect: "recuperas vida de a poco durante unos 45 s" },
+  strength: { label: "fuerza", effect: "tus golpes quitan más vida durante 3 min" },
+  swiftness: { label: "rapidez", effect: "caminas más rápido durante 3 min" },
+  fire_resistance: { label: "resistencia al fuego", effect: "la lava y el fuego no te dañan durante 3 min" },
+  harming: { label: "daño", effect: "quita 6 de vida al instante", harmful: true },
+  strong_harming: { label: "daño II", effect: "quita 12 de vida al instante", harmful: true },
+  poison: { label: "veneno", effect: "quita vida de a poco (no mata: deja en 1)", harmful: true },
+  slowness: { label: "lentitud", effect: "camina más lento", harmful: true },
+  weakness: { label: "debilidad", effect: "sus golpes quitan menos vida", harmful: true },
+};
+
 /** Efectos permanentes permitidos: id -> nombre en español (el nivel va aparte). */
 export const CUSTOM_KIT_EFFECTS: Readonly<Record<string, string>> = {
   speed: "Velocidad",
@@ -383,7 +407,7 @@ export const CUSTOM_KIT_MAX_AMPLIFIER = 4;
 
 /** Lo que se pide para un kit personalizado, antes de validar. */
 export type CustomKitRequest = {
-  items: { item: string; count?: number; enchantments?: { id: string; level?: number }[] }[];
+  items: { item: string; count?: number; enchantments?: { id: string; level?: number }[]; potion?: string }[];
   effects?: { id: string; level?: number }[];
 };
 
@@ -469,6 +493,18 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
       continue;
     }
 
+    // Una poción sin un tipo válido no sirve de nada: se descarta.
+    let potion: string | undefined;
+    if (id === "potion" || id === "splash_potion") {
+      const kind = typeof raw.potion === "string" ? raw.potion.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+      const info = CUSTOM_KIT_POTIONS[kind];
+      if (!info) {
+        ignored.push(`${id}: falta el tipo de poción o no está permitido (${kind || "sin tipo"})`);
+        continue;
+      }
+      potion = kind;
+    }
+
     // El escudo va en la mano secundaria: así se levanta sin soltar el arma.
     if (id === "shield" && !used.has("weapon.offhand")) {
       used.add("weapon.offhand");
@@ -486,7 +522,13 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
       }
       const count = Math.min(remaining, entry.stack);
       used.add(slot);
-      items.push(enchantments.length ? { slot, item: id, count, label: entry.label, enchantments } : { slot, item: id, count, label: entry.label });
+      const placed: KitItem = { slot, item: id, count, label: entry.label };
+      if (enchantments.length) placed.enchantments = enchantments;
+      if (potion) {
+        placed.potion = potion;
+        placed.label = `${entry.label} de ${CUSTOM_KIT_POTIONS[potion]?.label ?? potion}`;
+      }
+      items.push(placed);
       remaining -= count;
     }
   }
@@ -527,6 +569,7 @@ export const KitSchema = z.object({
           .max(12)
           .readonly()
           .optional(),
+        potion: z.string().regex(/^[a-z_]+$/).max(40).optional(),
       }),
     )
     .max(41)

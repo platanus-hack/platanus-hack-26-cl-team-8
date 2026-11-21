@@ -4,7 +4,7 @@ import { ARENA } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
 import { CommsInbox, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
-import { clampToArena, distance3, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
+import { clampToArena, distance3, distanceXZ, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
 import {
   ALWAYS_EDIBLE,
@@ -16,12 +16,15 @@ import {
   isBow,
   isBreakable,
   isBuildBlock,
+  isDrinkPotion,
   isLavaBucket,
   isPearl,
   isShield,
+  isSplashPotion,
   isSword,
   isWaterBucket,
 } from "./items";
+import { keepDistanceTarget, orbitTarget, placeTarget, strafeTarget, type MovePlace } from "./tactics";
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
 import {
@@ -41,10 +44,14 @@ import {
   PEARL_MIN_HEALTH,
   refusalText,
   shootRefusal,
+  THROW_MAX_DISTANCE,
   TOWER_HEIGHT,
   WATER_BETWEEN_MIN_DISTANCE,
+  type BlockSide,
   type BuildShape,
   type DigTarget,
+  type MoveStyle,
+  type ThrowAt,
   type ParsedToolArgs,
   type PearlTarget,
   type ToolName,
@@ -63,6 +70,18 @@ const { pathfinder, Movements, goals } = requireCjs("mineflayer-pathfinder") as 
 type Entity = NonNullable<Bot["players"][string]["entity"]>;
 type Vec3 = Entity["position"];
 type Block = NonNullable<ReturnType<Bot["blockAt"]>>;
+type InventoryItem = NonNullable<Bot["heldItem"]>;
+
+/**
+ * Tipo de una poción ("healing"), leído de su NBT (`Potion: "minecraft:healing"` en
+ * 1.20.4); null si no es poción o no lo trae.
+ */
+function potionOf(item: InventoryItem | null | undefined): string | null {
+  if (!item) return null;
+  const nbt = (item as unknown as { nbt?: { value?: Record<string, { value?: unknown }> } }).nbt;
+  const raw = nbt?.value?.["Potion"]?.value;
+  return typeof raw === "string" ? raw.replace(/^minecraft:/, "") : null;
+}
 
 type Mode = ToolName;
 type GoalKind = "none" | "follow" | "point" | "center";
@@ -76,6 +95,14 @@ const FOLLOW_RANGE = 2;
 const BOW_CHARGE_MS = 1100;
 const BOW_PAUSE_MS = 250;
 const EAT_MS = 1800;
+/** Lo que tarda beber una poción (32 ticks) más un margen. */
+const DRINK_MS = 1800;
+/** Cada cuánto cambia de lado al esquivar. */
+const STRAFE_SWITCH_MS = 1200;
+/** Con "guard", el escudo solo se levanta con el rival a esta distancia o menos (más lejos, se persigue a toda velocidad). */
+const GUARD_RANGE = 5;
+/** Tras bajar el escudo, cuánto se espera antes de pegar (el servidor debe ver el escudo abajo). */
+const GUARD_LOWER_MS = 100;
 const RETREAT_REPLAN_MS = 400;
 const EYE_HEIGHT = 1.62;
 
@@ -341,6 +368,21 @@ class MineflayerFighter implements Fighter {
   private buildReadyAt = 0;
   /** Qué levanta "build" en curso. */
   private buildShape: BuildShape = "wall";
+  // Movimiento táctico ("move").
+  private moveStyle: MoveStyle = "strafe";
+  private keepDistance = 8;
+  private movePlace: MovePlace = "center";
+  private strafeSide: 1 | -1 = 1;
+  private strafeSwitchAt = 0;
+  // Elecciones del modelo: arma, escudo entre golpes, comida, poción y a quién arrojarla.
+  private attackWeapon: string | null = null;
+  private attackGuard = false;
+  /** Momento en que se bajó el escudo para pegar (0 = está arriba o no se usa). */
+  private guardLoweredAt = 0;
+  private eatFood: string | null = null;
+  private potionChoice: string | null = null;
+  private throwAt: ThrowAt = "rival";
+  private blockSide: BlockSide = "front";
   /** Qué rompe el "dig" en curso. */
   private digTarget: DigTarget = "between";
   /** true mientras bot.dig está rompiendo un bloque (leaveMode lo corta). */
@@ -910,8 +952,19 @@ class MineflayerFighter implements Fighter {
 
     const now = Date.now();
     if (name === this.mode) {
-      // Repetir la herramienta continúa la acción en curso (no reinicia cargas ni comidas).
-      if (name === "attack") this.modeUntil = args.seconds !== null ? now + args.seconds * 1000 : null;
+      // Repetir la herramienta continúa la acción en curso (no reinicia cargas ni comidas),
+      // pero sí toma los argumentos nuevos que cambian cómo se hace.
+      if (name === "attack") {
+        this.modeUntil = args.seconds !== null ? now + args.seconds * 1000 : null;
+        this.attackWeapon = args.weapon;
+        this.attackGuard = args.guard;
+      }
+      if (name === "move") {
+        this.moveStyle = args.style;
+        this.keepDistance = args.distance;
+        this.movePlace = args.place;
+        this.lastRetreatPlanAt = 0;
+      }
       const text = `continúas con "${name}": ${this.lastResult}`;
       // El aviso de cómo se llegó a esta acción ya fue al LLM en este texto: no se repite.
       this.pearlNote = "";
@@ -932,13 +985,55 @@ class MineflayerFighter implements Fighter {
           ? `avanzando hacia el rival (distancia ${round1(distance3(bot.entity.position, opponent.position))})`
           : "rival no visible; avanzando al centro de la arena";
         break;
-      case "attack":
-        result = has(isSword)
-          ? "atacando cuerpo a cuerpo con la espada"
-          : has(isAxe)
-            ? "atacando cuerpo a cuerpo con el hacha"
-            : "atacando cuerpo a cuerpo sin arma";
+      case "attack": {
+        const chosen = args.weapon && itemNames.includes(args.weapon) ? args.weapon : null;
+        const missing = args.weapon && !chosen ? `no tienes ${args.weapon}; ` : "";
+        const how = chosen
+          ? `con ${chosen.replaceAll("_", " ")}`
+          : has(isSword)
+            ? "con la espada"
+            : has(isAxe)
+              ? "con el hacha"
+              : "sin arma";
+        const guard = args.guard ? (this.hasShield(bot) ? ", cubriéndote con el escudo entre golpes" : " (no tienes escudo para cubrirte)") : "";
+        result = `${missing}atacando cuerpo a cuerpo ${how}${guard}`;
         break;
+      }
+      case "move": {
+        if (args.style !== "goto" && !opponent) return refusalText("no ves al rival: no hay respecto de quién moverte", this.mode);
+        result =
+          args.style === "strafe"
+            ? "esquivando de lado a lado"
+            : args.style === "circle"
+              ? "rodeando al rival"
+              : args.style === "keep"
+                ? `manteniéndote a ${args.distance} bloques del rival`
+                : `yendo a ${args.place === "center" ? "el centro" : args.place === "far_corner" ? "la esquina más lejos del rival" : "detrás del rival"}`;
+        break;
+      }
+      case "drink": {
+        const potions = this.potionsIn(bot, isDrinkPotion);
+        if (potions.length === 0) return refusalText("no te quedan pociones para beber", this.mode);
+        if (args.potion && !potions.includes(args.potion)) {
+          return refusalText(`no tienes poción de ${args.potion} para beber; tienes: ${potions.join(", ")}`, this.mode);
+        }
+        result = `bebiendo poción de ${args.potion ?? potions[0]}`;
+        break;
+      }
+      case "throw": {
+        const potions = this.potionsIn(bot, isSplashPotion);
+        if (potions.length === 0) return refusalText("no te quedan pociones arrojadizas", this.mode);
+        if (args.potion && !potions.includes(args.potion)) {
+          return refusalText(`no tienes poción arrojadiza de ${args.potion}; tienes: ${potions.join(", ")}`, this.mode);
+        }
+        if (args.at === "rival") {
+          if (!opponent) return refusalText("no ves al rival: no hay a quién arrojarle la poción", this.mode);
+          const dist = round1(distance3(bot.entity.position, opponent.position));
+          if (dist > THROW_MAX_DISTANCE) return refusalText(`el rival está a ${dist} bloques: la poción no llega (máximo ${THROW_MAX_DISTANCE})`, this.mode);
+        }
+        result = `arrojando poción de ${args.potion ?? potions[0]} ${args.at === "self" ? "a tus pies" : "al rival"}`;
+        break;
+      }
       case "retreat":
         result = opponent ? "alejándote del rival" : "rival no visible; te quedas donde estás";
         break;
@@ -951,7 +1046,15 @@ class MineflayerFighter implements Fighter {
       case "eat": {
         const refusal = eatRefusal(itemNames, bot.food, (itemName) => this.isFood(bot, itemName));
         if (refusal) return refusalText(refusal, this.mode);
-        result = "empezando a comer";
+        if (args.food) {
+          if (!itemNames.includes(args.food) || !this.isFood(bot, args.food)) {
+            return refusalText(`no tienes ${args.food} para comer`, this.mode);
+          }
+          if (bot.food >= 20 && !ALWAYS_EDIBLE.has(args.food)) {
+            return refusalText(`no puedes comer ${args.food}: no tienes hambre (comida 20/20)`, this.mode);
+          }
+        }
+        result = args.food ? `empezando a comer ${args.food.replaceAll("_", " ")}` : "empezando a comer";
         break;
       }
       case "pearl": {
@@ -967,14 +1070,18 @@ class MineflayerFighter implements Fighter {
             ? this.towerRefusal(bot, now)
             : args.shape === "box"
               ? this.boxRefusal(bot, now)
-              : this.buildRefusal(bot, opponent, now);
+              : args.shape === "block"
+                ? this.blockRefusal(bot, opponent, now)
+                : this.buildRefusal(bot, opponent, now);
         if (refusal) return refusalText(refusal, this.mode);
         result =
           args.shape === "tower"
             ? "preparando los bloques para la torre"
             : args.shape === "box"
               ? "preparando los bloques para encerrarte"
-              : "preparando los bloques para el muro";
+              : args.shape === "block"
+                ? "preparando un par de bloques a tu lado"
+                : "preparando los bloques para el muro";
         break;
       }
       case "dig": {
@@ -1017,6 +1124,17 @@ class MineflayerFighter implements Fighter {
     this.buildShape = args.shape;
     this.waterPlace = args.where;
     this.digTarget = args.digTarget;
+    this.blockSide = args.side;
+    this.moveStyle = args.style;
+    this.keepDistance = args.distance;
+    this.movePlace = args.place;
+    this.strafeSwitchAt = now + STRAFE_SWITCH_MS;
+    this.attackWeapon = args.weapon;
+    this.attackGuard = args.guard;
+    this.guardLoweredAt = 0;
+    this.eatFood = args.food;
+    this.potionChoice = args.potion;
+    this.throwAt = args.at;
     this.pearlAimedAt = 0;
     this.pearlThrownAt = 0;
     this.lastResult = result;
@@ -1181,12 +1299,38 @@ class MineflayerFighter implements Fighter {
     };
   }
 
-  /** Inventario para la observación: items() no trae la mano secundaria, donde va el escudo. */
+  /**
+   * Inventario para la observación: items() no trae la mano secundaria, donde va el
+   * escudo. Las pociones van con su tipo ("potion:healing"), que es lo que elige el modelo.
+   */
   private inventoryWithOffhand(bot: Bot): { name: string; count: number }[] {
-    const items = bot.inventory.items().map((item) => ({ name: item.name, count: item.count }));
+    const all = [...bot.inventory.items()];
     const offhand = bot.inventory.slots[OFFHAND_SLOT];
-    if (offhand) items.push({ name: offhand.name, count: offhand.count });
-    return items;
+    if (offhand) all.push(offhand);
+    return all.map((item) => {
+      const potion = isDrinkPotion(item.name) || isSplashPotion(item.name) ? potionOf(item) : null;
+      return { name: potion ? `${item.name}:${potion}` : item.name, count: item.count };
+    });
+  }
+
+  /** Tipos de las pociones del inventario que calzan con `match` (bebibles o arrojadizas), sin repetir. */
+  private potionsIn(bot: Bot, match: (name: string) => boolean): string[] {
+    const types = new Set<string>();
+    for (const item of bot.inventory.items()) {
+      if (!match(item.name)) continue;
+      const potion = potionOf(item);
+      if (potion) types.add(potion);
+    }
+    return [...types];
+  }
+
+  /** Por qué no se puede poner un bloque suelto ahora, o null si se puede. */
+  private blockRefusal(bot: Bot, opponent: Entity | null, now: number): string | null {
+    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
+    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
+    if (!opponent) return "no ves al rival: no hay respecto de quién elegir el lado";
+    if (!bot.entity.onGround) return "no puedes poner bloques en el aire: espera a pisar";
+    return null;
   }
 
   /** ¿Tiene un escudo, en la mano secundaria o en el inventario? */
@@ -1282,6 +1426,15 @@ class MineflayerFighter implements Fighter {
       case "retreat":
         this.tickRetreat(bot, opponent, now);
         break;
+      case "move":
+        this.tickMove(bot, opponent, now);
+        break;
+      case "drink":
+        this.tickDrink(bot, now);
+        break;
+      case "throw":
+        this.tickThrow(bot, opponent, now);
+        break;
       case "shoot":
         this.tickShoot(bot, opponent, now);
         break;
@@ -1294,6 +1447,7 @@ class MineflayerFighter implements Fighter {
       case "build":
         if (this.buildShape === "tower") this.tickTower(bot, now);
         else if (this.buildShape === "box") this.tickBox(bot, now);
+        else if (this.buildShape === "block") this.tickBlock(bot, opponent, now);
         else this.tickBuild(bot, opponent, now);
         break;
       case "dig":
@@ -1330,21 +1484,46 @@ class MineflayerFighter implements Fighter {
       this.lastResult = "rival no visible; lo buscas en el centro de la arena";
       return;
     }
-    // Preferir espada; si no hay, hacha; si no, a puño limpio.
+    // El arma que eligió el modelo; si no eligió (o no la tiene), espada; si no hay, hacha;
+    // si no, a puño limpio.
     const items = bot.inventory.items();
-    if (items.some((item) => isSword(item.name))) this.ensureHeld(bot, isSword);
+    const chosen = this.attackWeapon;
+    if (chosen && items.some((item) => item.name === chosen)) this.ensureHeld(bot, (name) => name === chosen);
+    else if (items.some((item) => isSword(item.name))) this.ensureHeld(bot, isSword);
     else if (items.some((item) => isAxe(item.name))) this.ensureHeld(bot, isAxe);
 
     this.follow(bot, opponent);
     const dist = distance3(bot.entity.position, opponent.position);
-    if (dist <= MELEE_REACH) {
-      this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
-      // La recarga depende del arma que está en la mano (un hacha es más lenta que una espada).
-      if (now - this.lastAttackAt >= attackCooldownMs(heldItemName(bot))) {
-        this.lastAttackAt = now;
-        bot.attack(opponent);
-        this.hits++;
+    // La recarga depende del arma que está en la mano (un hacha es más lenta que una espada).
+    const ready = now - this.lastAttackAt >= attackCooldownMs(heldItemName(bot));
+    const guarding = this.attackGuard && bot.inventory.slots[OFFHAND_SLOT]?.name === "shield";
+    if (dist <= MELEE_REACH) this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
+    if (guarding) {
+      // Con escudo no se puede pegar: se baja justo antes del golpe y se vuelve a subir
+      // mientras el arma recarga (o mientras el rival se acerca).
+      if (dist <= MELEE_REACH && ready) {
+        if (this.using) {
+          bot.deactivateItem();
+          this.using = false;
+          this.guardLoweredAt = now;
+        } else if (now - this.guardLoweredAt >= GUARD_LOWER_MS) {
+          this.lastAttackAt = now;
+          bot.attack(opponent);
+          this.hits++;
+        }
+      } else if (dist <= GUARD_RANGE && !this.using) {
+        bot.activateItem(true);
+        this.using = true;
+        this.useStartedAt = now;
+      } else if (dist > GUARD_RANGE && this.using) {
+        // Lejos, el escudo solo frena la persecución.
+        bot.deactivateItem();
+        this.using = false;
       }
+    } else if (dist <= MELEE_REACH && ready) {
+      this.lastAttackAt = now;
+      bot.attack(opponent);
+      this.hits++;
     }
     const progress =
       this.hits > 0
@@ -1367,6 +1546,142 @@ class MineflayerFighter implements Fighter {
     this.goalKind = "point";
     this.followTarget = null;
     this.lastResult = `alejándote del rival (distancia ${round1(distance3(self, opponent.position))})`;
+  }
+
+  /**
+   * Movimiento táctico: cada RETREAT_REPLAN_MS vuelve a calcular el punto (el rival se
+   * mueve) y se lo da al pathfinder. Las cuentas están en tactics.ts.
+   */
+  private tickMove(bot: Bot, opponent: Entity | null, now: number): void {
+    if (this.moveStyle !== "goto" && !opponent) {
+      this.clearGoal(bot);
+      this.lastResult = "rival no visible; te quedas donde estás";
+      return;
+    }
+    if (now - this.lastRetreatPlanAt < RETREAT_REPLAN_MS) return;
+    this.lastRetreatPlanAt = now;
+    if (now >= this.strafeSwitchAt) {
+      this.strafeSide = this.strafeSide === 1 ? -1 : 1;
+      this.strafeSwitchAt = now + STRAFE_SWITCH_MS;
+    }
+    const self = bot.entity.position;
+    const arena = { center: ARENA.center, radius: ARENA.radius };
+    const rival = opponent ? opponent.position : null;
+    const dist = rival ? round1(distance3(self, rival)) : null;
+    let target: Vec3Like;
+    switch (this.moveStyle) {
+      case "strafe":
+        target = strafeTarget(self, rival as Vec3, this.strafeSide, arena);
+        this.lastResult = `esquivando de lado (rival a ${dist} bloques)`;
+        break;
+      case "circle":
+        // Siempre en el mismo sentido: rodear es dar la vuelta, no ir y volver.
+        target = orbitTarget(self, rival as Vec3, 1, arena);
+        this.lastResult = `rodeando al rival (a ${dist} bloques)`;
+        break;
+      case "keep": {
+        const point = keepDistanceTarget(self, rival as Vec3, this.keepDistance, arena);
+        // Ya a la distancia pedida: se esquiva de lado para no ser un blanco quieto.
+        target = point ?? strafeTarget(self, rival as Vec3, this.strafeSide, arena);
+        this.lastResult = point
+          ? `${(dist ?? 0) > this.keepDistance ? "acercándote" : "alejándote"} hasta quedar a ${this.keepDistance} bloques (ahora a ${dist})`
+          : `a ${dist} bloques del rival, como querías; esquivando de lado`;
+        break;
+      }
+      case "goto":
+        target = placeTarget(this.movePlace, self, rival, arena);
+        this.lastResult =
+          distanceXZ(self, target) <= 1.5
+            ? "llegaste al lugar"
+            : `yendo al lugar (te faltan ${round1(distanceXZ(self, target))} bloques)`;
+        break;
+    }
+    bot.pathfinder.setGoal(new goals.GoalNear(target.x, Math.floor(self.y), target.z, 1));
+    this.goalKind = "point";
+    this.followTarget = null;
+  }
+
+  /** Beber: como comer, pero con la poción del tipo elegido. */
+  private tickDrink(bot: Bot, now: number): void {
+    if (this.using) {
+      if (now - this.useStartedAt >= DRINK_MS) {
+        this.using = false;
+        try {
+          bot.deactivateItem();
+        } catch {
+          // nada
+        }
+        this.enterWait(bot, `bebiste la poción (vida ${round1(bot.health)}/20)`);
+      }
+      return;
+    }
+    const chosen = this.potionChoice;
+    const held = this.ensureHeldItem(bot, (item) => isDrinkPotion(item.name) && (!chosen || potionOf(item) === chosen));
+    if (held === "missing") {
+      this.enterWait(bot, chosen ? `no te quedan pociones de ${chosen}` : "no te quedan pociones para beber");
+      return;
+    }
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste sacar la poción");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.activateItem();
+    this.using = true;
+    this.useStartedAt = now;
+    this.lastResult = "bebiendo (tarda unos 2 segundos)";
+  }
+
+  /** Arrojar una poción: sacarla, mirar (a los pies del rival o hacia abajo) y lanzarla. */
+  private tickThrow(bot: Bot, opponent: Entity | null, now: number): void {
+    if (this.buildBusy) return;
+    const chosen = this.potionChoice;
+    const held = this.ensureHeldItem(bot, (item) => isSplashPotion(item.name) && (!chosen || potionOf(item) === chosen));
+    if (held === "missing") {
+      this.enterWait(bot, chosen ? `no te quedan pociones arrojadizas de ${chosen}` : "no te quedan pociones arrojadizas");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste sacar la poción");
+      return;
+    }
+    const self = bot.entity.position;
+    let aim: Vec3;
+    if (this.throwAt === "self") {
+      aim = self.offset(0, -1, 0);
+    } else {
+      if (!opponent) {
+        this.enterWait(bot, "no ves al rival: no lanzaste la poción");
+        return;
+      }
+      // Un poco por encima de sus pies: la poción cae en arco.
+      const dist = distance3(self, opponent.position);
+      aim = opponent.position.offset(0, Math.min(2, dist * 0.15), 0);
+    }
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    const potion = potionOf(bot.heldItem) ?? "?";
+    (async () => {
+      await bot.lookAt(aim, true);
+      if (!this.buildActive(generation)) return false;
+      bot.activateItem();
+      await delay(150);
+      return true;
+    })()
+      .then((thrown) => {
+        if (!thrown || !this.buildActive(generation)) return;
+        this.enterWait(bot, `arrojaste la poción de ${potion} ${this.throwAt === "self" ? "a tus pies" : "al rival"}`);
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al arrojar la poción: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste arrojar la poción");
+      })
+      .finally(() => {
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
   }
 
   private tickShoot(bot: Bot, opponent: Entity | null, now: number): void {
@@ -1431,7 +1746,10 @@ class MineflayerFighter implements Fighter {
     }
     // Con la barra de hambre llena el servidor solo deja comer ciertas comidas (manzana dorada).
     const full = bot.food >= 20;
-    const held = this.ensureHeld(bot, (name) => (full ? ALWAYS_EDIBLE.has(name) : this.isFood(bot, name)));
+    const chosen = this.eatFood;
+    const held = this.ensureHeld(bot, (name) =>
+      chosen ? name === chosen : full ? ALWAYS_EDIBLE.has(name) : this.isFood(bot, name),
+    );
     if (held === "missing") {
       this.enterWait(bot, "no puedes comer: no tienes comida");
       return;
@@ -1908,6 +2226,69 @@ class MineflayerFighter implements Fighter {
   }
 
   /**
+   * Bloque suelto, de un solo uso: una columna de 2 en la celda de al lado, del lado
+   * elegido respecto del rival (al frente, atrás, a la izquierda o a la derecha).
+   */
+  private tickBlock(bot: Bot, opponent: Entity | null, now: number): void {
+    if (this.buildBusy) return;
+    const held = this.ensureHeld(bot, isBuildBlock);
+    if (held === "missing") {
+      this.enterWait(bot, "no te quedan bloques");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (held === "pending") {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste equipar los bloques");
+      return;
+    }
+    if (!opponent) {
+      this.enterWait(bot, "no ves al rival: no hay respecto de quién elegir el lado");
+      return;
+    }
+    const p = bot.entity.position;
+    // Dirección hacia el rival redondeada al eje dominante: la celda vecina de ese lado.
+    const dx = opponent.position.x - p.x;
+    const dz = opponent.position.z - p.z;
+    const toward: [number, number] = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
+    const [fx, fz] = toward;
+    const offsets: Record<BlockSide, [number, number]> = {
+      front: [fx, fz],
+      behind: [-fx, -fz],
+      left: [-fz, fx],
+      right: [fz, -fx],
+    };
+    const [ox, oz] = offsets[this.blockSide];
+    const x = Math.floor(p.x) + ox;
+    const y = Math.floor(p.y);
+    const z = Math.floor(p.z) + oz;
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
+    this.lastResult = "poniendo bloques a tu lado";
+    this.placeWall(bot, [{ x, y, z }, { x, y: y + 1, z }], generation, now + BUILD_TIMEOUT_MS)
+      .then((tried) => {
+        if (!this.buildActive(generation)) return;
+        const placed = tried.filter((cell) => isBuildBlock(bot.blockAt(cell)?.name ?? "")).length;
+        const sideText = { front: "entre tú y el rival", behind: "a tu espalda", left: "a tu izquierda", right: "a tu derecha" }[this.blockSide];
+        this.enterWait(
+          bot,
+          placed > 0
+            ? `pusiste ${placed} bloques ${sideText}; te quedan ${this.countItems(bot, isBuildBlock)} bloques`
+            : `no pudiste poner bloques ${sideText} (ocupado o sin espacio)`,
+        );
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al poner bloques: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste poner los bloques");
+      })
+      .finally(() => {
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
+  }
+
+  /**
    * Caja, de un solo uso: queda al centro de su bloque y se rodea de bloques (4 lados de
    * 2 de alto), con un apoyo arriba y el techo. Misma cadena asíncrona que el muro.
    */
@@ -2147,9 +2528,14 @@ class MineflayerFighter implements Fighter {
 
   /** Asegura (de forma asíncrona, sin bloquear el tick) que el ítem buscado esté en la mano. */
   private ensureHeld(bot: Bot, match: (name: string) => boolean): HeldState {
+    return this.ensureHeldItem(bot, (item) => match(item.name));
+  }
+
+  /** Igual que ensureHeld, pero mirando el ítem entero (las pociones se distinguen por su tipo). */
+  private ensureHeldItem(bot: Bot, match: (item: InventoryItem) => boolean): HeldState {
     const held = bot.heldItem;
-    if (held && match(held.name)) return "held";
-    const item = bot.inventory.items().find((candidate) => match(candidate.name));
+    if (held && match(held)) return "held";
+    const item = bot.inventory.items().find((candidate) => match(candidate));
     if (!item) return "missing";
     if (!this.equipBusy) {
       this.equipBusy = true;
