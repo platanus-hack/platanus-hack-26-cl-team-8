@@ -440,7 +440,6 @@ export class MatchManager {
                 refillKit: this.deps.roundsRefillKit ?? (this.state.settings.refillKit || ROUNDS_REFILL_KIT),
               }
             : null,
-          rules: this.state.settings.rules[side],
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,

@@ -63,8 +63,6 @@ export type FighterOptions = {
    * "surrender" y la observación trae cómo va la serie). null = una sola pelea.
    */
   rounds: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
-  /** Benchmarks: reglas que le impone su entrenador (van al prompt). */
-  rules?: readonly RuleId[];
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;

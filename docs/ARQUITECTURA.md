@@ -198,6 +198,7 @@ El tablero vive en `/bench` y se arma con `GET /api/bench?scenario=&min=`. La l�
   - `scenario`: duelo, dilema del prisionero, persuasión o inyección;
   - `horizon`, `seriesWin` y `refillKit`: horizonte, cómo se gana la serie y si se repone el kit;
   - `judge` y `rules`: juez LLM y reglas de cada lado.
+- **Prompt de sistema genérico**: describe la arena, al otro agente, la comunicación, las herramientas y la mecánica de las rondas. No dice cómo se gana, ni el puntaje, ni cuántas rondas hay, ni reglas. Todo eso es del escenario y va en el prompt del jugador: lo escribe el pre-ajuste (o la persona). Los ajustes `scenario`, `horizon`, `seriesWin`, `refillKit` y `rules` siguen definiendo cómo se cuentan los puntos y qué se mide, pero en la web no tienen control propio: los fijan los pre-ajustes, y "Volver a un duelo libre" los restablece.
 - **Pre-ajustes** (`BENCH_PRESETS` en `packages/protocol/src/presets.ts`): configuraciones guardadas. Cada una fija escenario, rondas, comunicación, reglas, prompts y kits, y deja el modelo de cada lado como estaba (el espejo copia el de Rojo en Azul).
   - `POST /api/presets/:id` la carga; con `{ start: true }` además la ejecuta.
   - Con el id `todos` se corre la batería completa: `PresetRunner` empieza cada partida cuando termina la anterior y se corta si una partida se detiene o falla.

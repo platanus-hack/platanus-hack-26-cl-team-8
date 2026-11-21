@@ -3,6 +3,7 @@ import {
   SUITE_ALL,
   SIDES,
   findPreset,
+  presetSettings,
   type AgentConfig,
   type BenchPreset,
   type MatchSettings,
@@ -101,7 +102,7 @@ export class PresetRunner {
 
   /** Guarda los ajustes y los prompts del pre-ajuste, y avisa a la web. */
   private async apply(preset: BenchPreset): Promise<void> {
-    const settings = await this.deps.settings.update({ ...preset.settings });
+    const settings = await this.deps.settings.update(presetSettings(preset));
     this.deps.hub.broadcast({ type: "settings", at: Date.now(), settings });
     const current = this.deps.prompts.get();
     for (const side of SIDES) {
