@@ -20,7 +20,9 @@ import {
 } from "@phack/protocol";
 import { clearPlacedBlocksCommands, teleportCommand, kitEffectCommands } from "./arena";
 import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
+import { MIN_SPEECH_MS, SAME_SPEAKER_GAP_MS, TURN_GAP_MS } from "./conversation";
 import { defaultPrompts } from "./store";
+import { manualClock } from "./test-clock";
 import type { SleepFn } from "./util";
 
 /**
@@ -86,6 +88,8 @@ type SetupOptions = {
   voice?: boolean;
   /** Servicio de voz falso; sin esto la pelea no tiene voz. */
   speech?: MatchDeps["speech"];
+  /** Velocidad de la voz (MatchDeps.speechSpeed). */
+  speechSpeed?: number;
 };
 
 /** Lo que responde un servidor 1.20.4 de verdad: prepareFighter revisa la respuesta de los comandos del kit. */
@@ -121,6 +125,8 @@ function setup(opts: SetupOptions = {}) {
   /** Lo que se escribió en las transcripciones, en orden. */
   const entries: { matchId: string; entry: TranscriptEntry }[] = [];
   const complete: Complete = opts.complete ?? (async () => ({ text: '  "Rojo ganó\n atacando sin parar."  ', toolCalls: [] }));
+  /** Reloj de los turnos para hablar: avanza solo con clock.advance() (el azar de la pausa vale 0). */
+  const clock = manualClock();
 
   const history = {
     append: vi.fn(async (record: MatchRecord) => {
@@ -220,6 +226,8 @@ function setup(opts: SetupOptions = {}) {
     sleep: opts.sleep ?? (async () => {}),
     ...(opts.refillKit !== undefined ? { roundsRefillKit: opts.refillKit } : {}),
     ...(opts.speech ? { speech: opts.speech } : {}),
+    ...(opts.speechSpeed !== undefined ? { speechSpeed: opts.speechSpeed } : {}),
+    conversationClock: clock,
   };
   const manager: MatchManager = new MatchManager(deps);
   const ev = (side: Side): FighterEvents => {
@@ -241,8 +249,16 @@ function setup(opts: SetupOptions = {}) {
     logs,
     flushed,
     entries,
+    clock,
     stored: () => stored,
   };
+}
+
+/** Mensajes que fueron a la web, en orden. */
+function sentMessages(t: ReturnType<typeof setup>): { side: Side; text: string; speechId?: string }[] {
+  return t.hub.broadcast.mock.calls
+    .map(([event]) => event as { type: string; side: Side; text: string; speechId?: string })
+    .filter((event) => event.type === "message");
 }
 
 let current: MatchManager | null = null;
@@ -1041,12 +1057,137 @@ describe("MatchManager: transcripción", () => {
   });
 });
 
+describe("MatchManager: turnos para hablar", () => {
+  /** 46 caracteres: 2116 ms a velocidad 1 (sin voz). */
+  const LONG = "Estoy cansado de correr, hagamos una pausa ya.";
+  const LONG_MS = 2116;
+
+  /** Servicio de voz falso que anota lo pedido; durationMs devuelve lo que diga `real`. */
+  function fakeSpeech(real?: (id: string) => Promise<number | null>) {
+    const requested: { side: Side; text: string }[] = [];
+    return {
+      requested,
+      speech: {
+        available: () => true,
+        request: (side: Side, text: string) => {
+          requested.push({ side, text });
+          return `00000000-0000-4000-8000-00000000000${requested.length}`;
+        },
+        ...(real ? { durationMs: real } : {}),
+      },
+    };
+  }
+
+  it("con la palabra libre el mensaje sale en el acto, con la hora en que salió", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    const before = Date.now();
+    t.ev("red").onMessage("hola");
+    expect(sentMessages(t)).toEqual([expect.objectContaining({ side: "red", text: "hola" })]);
+    const at = (sentMessages(t)[0] as unknown as { at: number }).at;
+    expect(at).toBeGreaterThanOrEqual(before);
+    expect(t.heard.blue).toEqual([{ kind: "message", text: "hola" }]);
+  });
+
+  it("la respuesta que llega mientras suena la primera frase sale cuando esta termina, en orden", async () => {
+    expect(Array.from(LONG)).toHaveLength(46);
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    t.ev("red").onMessage(LONG);
+    t.ev("blue").onMessage("no");
+    expect(sentMessages(t).map((m) => m.text)).toEqual([LONG]);
+    // El rival recién la oye cuando empieza a sonar.
+    expect(t.heard.red).toEqual([]);
+    t.clock.advance(LONG_MS + TURN_GAP_MS - 1);
+    expect(sentMessages(t)).toHaveLength(1);
+    t.clock.advance(1);
+    expect(sentMessages(t).map((m) => [m.side, m.text])).toEqual([
+      ["red", LONG],
+      ["blue", "no"],
+    ]);
+    expect(t.heard.red).toEqual([{ kind: "message", text: "no" }]);
+    expect(t.entries.filter((e) => e.entry.type === "message").map((e) => e.entry.type === "message" && e.entry.text)).toEqual([LONG, "no"]);
+  });
+
+  it("la voz se pide al salir la frase: una frase reemplazada no pide nada", async () => {
+    const voice = fakeSpeech();
+    const t = setup({ comms: "chat", voice: true, speech: voice.speech, speechSpeed: 1 });
+    await startRunning(t);
+    t.ev("red").onMessage(LONG);
+    t.ev("blue").onMessage("primera idea");
+    t.ev("blue").onMessage("mejor esta");
+    expect(voice.requested).toEqual([{ side: "red", text: LONG }]);
+    t.clock.advance(LONG_MS + TURN_GAP_MS);
+    expect(voice.requested).toEqual([
+      { side: "red", text: LONG },
+      { side: "blue", text: "mejor esta" },
+    ]);
+    expect(sentMessages(t)[1]).toMatchObject({ side: "blue", text: "mejor esta", speechId: "00000000-0000-4000-8000-000000000002" });
+  });
+
+  it("con voz la frase dura lo estimado a la velocidad de la voz, o lo que dura de verdad el audio", async () => {
+    // A velocidad 2, la frase larga ocupa la mitad.
+    const estimated = setup({ comms: "chat", voice: true, speech: fakeSpeech().speech, speechSpeed: 2 });
+    await startRunning(estimated);
+    estimated.ev("red").onMessage(LONG);
+    estimated.ev("blue").onMessage("ya");
+    estimated.clock.advance(LONG_MS / 2 + TURN_GAP_MS);
+    expect(sentMessages(estimated)).toHaveLength(2);
+    await estimated.manager.shutdown();
+
+    // El audio dura 800 ms: el turno pasa antes de lo estimado.
+    const real = setup({ comms: "chat", voice: true, speech: fakeSpeech(async () => 800).speech, speechSpeed: 1 });
+    await startRunning(real);
+    real.ev("red").onMessage(LONG);
+    real.ev("blue").onMessage("ya");
+    await Promise.resolve();
+    await Promise.resolve();
+    real.clock.advance(800 + TURN_GAP_MS);
+    expect(sentMessages(real).map((m) => m.text)).toEqual([LONG, "ya"]);
+  });
+
+  it("al terminar la ronda lo que esperaba no sale, y la ronda siguiente parte con la palabra libre", async () => {
+    const t = setup({ comms: "chat", mode: "rounds" });
+    await startRunning(t);
+    t.ev("red").onMessage(LONG);
+    t.ev("blue").onMessage("ya voy");
+    t.ev("blue").onDeath();
+    expect(t.clock.timers()).toBe(0);
+    t.clock.advance(60_000);
+    expect(sentMessages(t).map((m) => m.text)).toEqual([LONG]);
+    // En la pausa entre rondas no se habla.
+    t.ev("red").onMessage("en la pausa");
+    expect(sentMessages(t)).toHaveLength(1);
+    await vi.waitFor(() => expect(t.manager.getState().series?.round).toBe(2));
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    t.ev("blue").onMessage("ronda dos");
+    expect(sentMessages(t).map((m) => m.text)).toEqual([LONG, "ronda dos"]);
+  });
+
+  it("al terminar la pelea no sale nada más ni queda un temporizador", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    t.ev("red").onMessage(LONG);
+    t.ev("blue").onMessage("espera");
+    t.ev("red").onMessage("y otra");
+    expect(t.clock.timers()).toBe(1);
+    await t.manager.stop();
+    expect(t.clock.timers()).toBe(0);
+    t.clock.advance(60_000);
+    expect(sentMessages(t).map((m) => m.text)).toEqual([LONG]);
+    expect(t.heard.blue).toEqual([{ kind: "message", text: LONG }]);
+    expect(t.heard.red).toEqual([]);
+  });
+});
+
 describe("MatchManager: los mensajes entre agentes llegan enteros", () => {
   it("dos mensajes iguales seguidos de un lado se transmiten y entregan los dos", async () => {
     const t = setup({ comms: "chat" });
     await startRunning(t);
     t.ev("red").onMessage("ríndete");
     t.ev("red").onMessage("ríndete");
+    // El segundo sale cuando termina el primero (el mismo lado sigue tras su pausa).
+    t.clock.advance(MIN_SPEECH_MS + SAME_SPEAKER_GAP_MS);
     const messages = t.hub.broadcast.mock.calls.map(([event]) => event).filter((event) => event.type === "message");
     expect(messages).toEqual([
       expect.objectContaining({ side: "red", text: "ríndete" }),
@@ -1067,9 +1208,11 @@ describe("MatchManager: los mensajes entre agentes llegan enteros", () => {
     expect(t.heard.red).toEqual([{ kind: "message", text }]);
     // Un mensaje justo en el tope (contado por punto de código) no se vuelve a cortar.
     const full = "😀".repeat(MAX_AGENT_MESSAGE_LENGTH);
+    t.clock.advance(60_000);
     t.ev("blue").onMessage(full);
     expect(t.heard.red[1]?.text).toBe(full);
     // Uno más largo (no debería llegar así del agente) se corta sin partir emojis.
+    t.clock.advance(60_000);
     t.ev("blue").onMessage(`${full}😀`);
     expect(t.heard.red[2]?.text).toBe(full);
   });

@@ -360,7 +360,7 @@ export const SURRENDER_DEF: ToolDef = {
 
 const sayProperty = {
   type: "string",
-  description: `Opcional: mensaje breve y natural para el otro agente, normalmente una frase; una segunda si hace falta (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Puedes actuar en silencio: no tienes que hablar cada turno ni responder por obligación. Omite say si aparece sayCooldown; al terminar la pausa tampoco es obligatorio hablar. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
+  description: `Opcional: mensaje breve y natural para el otro agente, normalmente una frase; una segunda si hace falta (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Puedes actuar en silencio: no tienes que hablar cada turno ni responder por obligación. Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
 };
 
 /**

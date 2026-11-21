@@ -37,6 +37,7 @@ import {
   type TranscriptEntry,
 } from "@phack/protocol";
 import { buildArena, clearPlacedBlocks, prepareFighter, resetFighterForRound, runCountdown } from "./arena";
+import { Conversation, type ConversationClock } from "./conversation";
 import { extractCustomKit } from "./customkit";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
@@ -84,6 +85,8 @@ const ROUND_BREAK_MS = 6_000;
 /** Modo por rondas: cuánto se espera, al terminar una ronda, a que reaparezca el que murió. */
 const RESPAWN_WAIT_MS = 2_000;
 const RESPAWN_STEP_MS = 100;
+/** Velocidad de la voz si no la pasan en MatchDeps.speechSpeed (la de ELEVENLABS_SPEED por defecto). */
+const DEFAULT_SPEECH_SPEED = 1.1;
 /**
  * Modo por rondas: false = el kit se entrega una sola vez, antes de la ronda 1, y lo que
  * un agente gasta no vuelve en las rondas siguientes. true = se entrega de nuevo (limpio)
@@ -147,7 +150,16 @@ export type MatchDeps = {
     request(side: Side, text: string): string | null;
     /** Despierta las voces antes de la pelea; opcional. */
     warm?(): void;
+    /** Lo que dura de verdad el audio de ese id, en ms, cuando esté listo; null si no se sabe. */
+    durationMs?(speechId: string): Promise<number | null>;
   };
+  /**
+   * Velocidad de la voz (ELEVENLABS_SPEED, ya acotada). Con la voz encendida, con ella se
+   * estima cuánto dura cada frase mientras no llega la duración real del audio.
+   */
+  speechSpeed?: number;
+  /** Solo para los tests: reloj, temporizadores y azar de los turnos para hablar. */
+  conversationClock?: ConversationClock;
 };
 
 /** Se lanza al intentar iniciar una pelea cuando ya hay una en curso (HTTP 409). */
@@ -188,6 +200,8 @@ type MatchContext = {
   absorption: Record<Side, number>;
   /** Modo por rondas: cómo terminó la última ronda, contado a cada agente (ver roundNote). */
   roundNotes: Record<Side, string>;
+  /** Modo "chat": quién tiene la palabra y qué frase espera su turno (ver conversation.ts). */
+  conversation: Conversation;
   /** Benchmarks: lo que se mide de la ronda en juego (null entre rondas). */
   metrics: MetricsCollector | null;
   /** Benchmarks: lo medido en cada ronda ya cerrada, en orden. */
@@ -315,6 +329,9 @@ export class MatchManager {
       this.idleTimer = null;
     }
 
+    const { settings, notes } = effectiveSettings(this.deps.settings.get());
+    // Con voz, cada frase ocupa lo que dura dicha a la velocidad de la voz; sin voz, a velocidad normal.
+    const speed = settings.voice ? (this.deps.speechSpeed ?? DEFAULT_SPEECH_SPEED) : 1;
     const ctx: MatchContext = {
       id: randomUUID(),
       createdAt: Date.now(),
@@ -328,6 +345,11 @@ export class MatchManager {
       lastStatus: { red: null, blue: null },
       absorption: { red: 0, blue: 0 },
       roundNotes: { red: "", blue: "" },
+      conversation: new Conversation({
+        speed,
+        onRelease: (side, text) => this.releaseMessage(ctx, side, text),
+        ...(this.deps.conversationClock ? { clock: this.deps.conversationClock } : {}),
+      }),
       metrics: null,
       roundMetrics: [],
       prices: { red: null, blue: null },
@@ -335,7 +357,6 @@ export class MatchManager {
       injectionTimers: [],
     };
     this.ctx = ctx;
-    const { settings, notes } = effectiveSettings(this.deps.settings.get());
     this.state = {
       id: ctx.id,
       phase: "preparing",
@@ -589,6 +610,8 @@ export class MatchManager {
     series.roundStartedAt = null;
     this.state.phase = "intermission";
     this.state.endsAt = null;
+    // Lo que esperaba su turno para decirse ya no sale: la ronda terminó.
+    ctx.conversation.clear();
     for (const side of SIDES) {
       const note = this.roundNoteFor(result, side);
       ctx.roundNotes[side] = note;
@@ -866,6 +889,32 @@ export class MatchManager {
     }
   }
 
+  /**
+   * Le tocó el turno a una frase (ver conversation.ts): recién ahora se pide su voz, se
+   * muestra, se anota y le llega al rival, que puede pensar mientras suena. Devuelve la
+   * duración real del audio, cuando se sepa, para que la palabra dure eso.
+   */
+  private releaseMessage(ctx: MatchContext, side: Side, message: string): Promise<number | null> | void {
+    if (this.ctx !== ctx || ctx.ended || this.state.phase !== "running") return;
+    const speechId = this.requestSpeech(ctx, side, message);
+    this.emit(ctx, { type: "message", at: Date.now(), side, text: message, ...(speechId ? { speechId } : {}) });
+    ctx.fighters[otherSide(side)]?.hear("message", message);
+    // Benchmarks: cuentan los mensajes que de verdad salieron, no los que esperaron y se reemplazaron.
+    ctx.metrics?.message(side, message);
+    return speechId ? this.speechDuration(speechId) : undefined;
+  }
+
+  /** Lo que dura el audio de esa frase; nunca lanza (null si no se sabe). */
+  private speechDuration(speechId: string): Promise<number | null> | undefined {
+    const speech = this.deps.speech;
+    if (!speech?.durationMs) return undefined;
+    try {
+      return speech.durationMs(speechId).catch(() => null);
+    } catch {
+      return undefined;
+    }
+  }
+
   private apiKeys(): ApiKeys {
     return { vercel: this.deps.env.VERCEL_API_KEY || undefined };
   }
@@ -916,16 +965,13 @@ export class MatchManager {
         }
       },
       onMessage: (text) => {
-        if (!live() || this.state.settings.comms !== "chat") return;
+        if (!fighting() || this.state.settings.comms !== "chat") return;
         // Solo el tope de largo, por si acaso: el agente ya lo entrega limpio y recortado
         // igual (por punto de código), así que un mensaje nunca se corta dos veces. Sin
-        // filtros por contenido ni por repetición; el luchador ya espacia los mensajes.
+        // filtros por contenido ni por repetición.
         const message = cutCodePoints(text, MAX_AGENT_MESSAGE_LENGTH);
-        // Con la voz encendida se pide el audio en el acto; el mensaje sale igual, sin esperarlo.
-        const speechId = this.requestSpeech(ctx, side, message);
-        this.emit(ctx, { type: "message", at: Date.now(), side, text: message, ...(speechId ? { speechId } : {}) });
-        ctx.fighters[otherSide(side)]?.hear("message", message);
-        if (fighting()) ctx.metrics?.message(side, message);
+        // Espera su turno para hablar (ver releaseMessage): sale apenas el otro termina.
+        ctx.conversation.say(side, message);
       },
       onAction: (tool, args, result) => {
         if (!live()) return;
@@ -1033,6 +1079,8 @@ export class MatchManager {
     ctx.ended = true;
     if (ctx.timer) clearTimeout(ctx.timer);
     ctx.timer = null;
+    // Ninguna frase sale después del final, ni queda un temporizador de la conversación.
+    ctx.conversation.clear();
     this.clearInjections(ctx);
     // Si falló antes de crear a los agentes, "start" va igual primero.
     this.recordStart(ctx);

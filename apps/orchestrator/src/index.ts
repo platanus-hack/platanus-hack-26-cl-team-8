@@ -11,7 +11,7 @@ import { MatchManager } from "./match";
 import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
-import { SpeechService } from "./speech";
+import { SpeechService, clampSpeed } from "./speech";
 import { MatchStore, PromptStore, SettingsStore } from "./store";
 import { TranscriptStore } from "./transcript";
 import { errorMessage, sleep, type LogFn } from "./util";
@@ -99,6 +99,8 @@ async function main(): Promise<void> {
       },
     },
     speech,
+    // Los turnos para hablar estiman cada frase a la velocidad con que la dice la voz.
+    speechSpeed: clampSpeed(env.ELEVENLABS_SPEED),
     log,
   });
   hub.setProviders({
