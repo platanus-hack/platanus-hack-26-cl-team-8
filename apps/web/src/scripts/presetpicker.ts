@@ -42,9 +42,6 @@ export function matchesPreset(preset: BenchPreset, s: MatchSettings, p: PromptsR
     if (p[side].prompt.trim() !== preset.prompts[side].prompt.trim()) return false;
     if (kitOf(p[side]).id !== preset.prompts[side].kit) return false;
   }
-  if (preset.mirrorModel && ((p.red.provider ?? "") !== (p.blue.provider ?? "") || (p.red.model ?? "") !== (p.blue.model ?? ""))) {
-    return false;
-  }
   return true;
 }
 
@@ -56,7 +53,6 @@ function describe(preset: BenchPreset | undefined): string {
     s.scenario ? SCENARIOS[s.scenario].name : "Duelo",
     `${rounds} ${rounds === 1 ? "ronda" : "rondas"}`,
     s.comms ? COMMS_LABELS[s.comms].name.toLowerCase() : "",
-    preset.mirrorModel ? "Azul con el modelo de Rojo" : "",
   ].filter(Boolean);
   return `${preset.description} (${parts.join(" · ")}.) Cambiar cualquier cosa lo vuelve "Personalizado".`;
 }

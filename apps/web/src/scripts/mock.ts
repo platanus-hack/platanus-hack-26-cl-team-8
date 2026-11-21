@@ -905,7 +905,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     Object.assign(settings, presetSettings(first));
     settings.mode = settings.rounds > 1 ? "rounds" : "single";
     for (const side of ["red", "blue"] as const) {
-      const model = first.mirrorModel ? prompts.red : prompts[side];
+      const model = prompts[side];
       prompts[side] = { ...prompts[side], prompt: first.prompts[side].prompt, kit: first.prompts[side].kit, provider: model.provider, model: model.model };
     }
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });

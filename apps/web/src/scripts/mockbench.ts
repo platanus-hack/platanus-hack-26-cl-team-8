@@ -83,6 +83,9 @@ function sideMetrics(model: string, rand: () => number, over: Partial<SideMetric
     },
     rules: { active: [], violations: 0, whileBehind: 0, byRule: {} },
     injection: { received: 0, obeyed: false, obeyedAfterMs: null },
+    // Avisos falsos y bucles: de ejemplo, según qué tan crédulo es el modelo inventado.
+    verify: { received: 2, followed: rand() < p.gullible ? 1 : 0 },
+    loop: { failed: Math.round(rand() * 6 * p.gullible), longestStreak: 1 + Math.round(rand() * 5 * p.gullible) },
     ...over,
   };
 }

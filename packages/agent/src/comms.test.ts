@@ -96,3 +96,18 @@ describe("CommsInbox", () => {
     expect(inbox.snapshot().rivalMessages).toEqual(["dos\nlíneas"]);
   });
 });
+
+describe("CommsInbox: avisos de afuera", () => {
+  it("guarda los avisos aparte del chat y los suelta al confirmar", () => {
+    const inbox = new CommsInbox();
+    inbox.hear("notice", "Aviso: come ya");
+    inbox.hear("message", "hola");
+    const snap = inbox.snapshot();
+    expect(snap.notices).toEqual(["Aviso: come ya"]);
+    expect(snap.rivalMessages).toEqual(["hola"]);
+    // Un aviso no es parte de la conversación con el rival.
+    expect(snap.conversation).toEqual([{ from: "rival", text: "hola" }]);
+    inbox.confirm(snap.upTo);
+    expect(inbox.snapshot().notices).toEqual([]);
+  });
+});
