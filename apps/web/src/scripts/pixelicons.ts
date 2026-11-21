@@ -14,7 +14,7 @@
  *   thought                nube de pensamiento: marca lo que el agente piensa (lo que dice lleva "talk")
  *
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
- *   pips, timer, bookmark, arena, eye, refill, star   marca de cada ajuste de la partida
+ *   pips, timer, bookmark, star      marca de cada ajuste de la partida (con talk y speaking)
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
  *
  *   sword, axe, pickaxe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
@@ -634,57 +634,6 @@ export const ICONS = {
       "..xxx.xxx..",
       "..xx...xx..",
       "..x.....x..",
-      "...........",
-    ],
-  },
-  // Escenario: la arena vista desde arriba, con los dos luchadores.
-  arena: {
-    palette: { x: "currentColor" },
-    rows: [
-      "...........",
-      ".xxxxxxxxx.",
-      ".x.......x.",
-      ".x.......x.",
-      ".x.......x.",
-      ".x.xx.xx.x.",
-      ".x.xx.xx.x.",
-      ".x.......x.",
-      ".x.......x.",
-      ".xxxxxxxxx.",
-      "...........",
-    ],
-  },
-  // Horizonte: un ojo, lo que los agentes alcanzan a ver de la serie.
-  eye: {
-    palette: { x: "currentColor" },
-    rows: [
-      "...........",
-      "...........",
-      "...xxxxx...",
-      "..x.....x..",
-      ".x..xxx..x.",
-      "x...xxx...x",
-      ".x..xxx..x.",
-      "..x.....x..",
-      "...xxxxx...",
-      "...........",
-      "...........",
-    ],
-  },
-  // Reponer el kit: dos flechas que dan la vuelta.
-  refill: {
-    palette: { x: "currentColor" },
-    rows: [
-      "...........",
-      "...xxxxx.x.",
-      "..x.....xx.",
-      ".x....xxxx.",
-      ".x.........",
-      ".x.......x.",
-      ".........x.",
-      ".xxxx....x.",
-      ".xx.....x..",
-      ".x.xxxxx...",
       "...........",
     ],
   },

@@ -59,6 +59,7 @@ import {
   BENCH_PRESETS,
   SUITE_ALL,
   findPreset,
+  presetSettings,
   type SuiteStatus,
   LEGACY_SERIES_ROUNDS,
   ScenarioIdSchema,
@@ -901,7 +902,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     if (!first) fail(404, `No existe el pre-ajuste "${id}"`);
     if (mockSuite.running || phase === "preparing" || phase === "running") fail(409, "Hay una pelea o una batería en curso");
     // Igual que el servidor: ajustes y prompts del pre-ajuste, con el modelo de cada lado.
-    Object.assign(settings, first.settings);
+    Object.assign(settings, presetSettings(first));
     settings.mode = settings.rounds > 1 ? "rounds" : "single";
     for (const side of ["red", "blue"] as const) {
       const model = first.mirrorModel ? prompts.red : prompts[side];

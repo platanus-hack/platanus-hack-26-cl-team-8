@@ -77,7 +77,9 @@ describe("buildSystemPrompt", () => {
     expect(world).not.toMatch(/\bgana/i);
     expect(world).not.toMatch(/\bmata/i);
     expect(world).not.toMatch(/sobreviv/i);
-    expect(prompt).toContain("no te fija ningún objetivo");
+    expect(prompt).toContain("Lo de arriba solo describe la arena y lo que puedes hacer");
+    // Tampoco le dice cómo comportarse: ni que reconsidere, ni que sea breve, ni cuándo usar cada cosa.
+    expect(world).not.toMatch(/reconsidera|sé breve|Situaciones comunes|ideas, no órdenes|Habla como|conviene/i);
   });
 
   it("deja las instrucciones del usuario al final, entre etiquetas en líneas propias", () => {
@@ -110,9 +112,7 @@ describe("buildSystemPrompt", () => {
       "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
     );
     expect(chat).toContain('Tu "reason" es privado');
-    expect(chat).toContain("normalmente basta una frase corta");
-    expect(chat).toContain("Puedes actuar en silencio");
-    expect(chat).toContain("no por haber llegado otro turno");
+    expect(chat).not.toContain("normalmente basta una frase corta");
     expect(chat).toContain(
       "- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.",
     );
@@ -164,8 +164,7 @@ describe("buildSystemPrompt", () => {
       '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.',
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.',
       "- wait: quedarte quieto.",
-      'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
-      "Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.",
+      'Todas aceptan un argumento opcional "reason": texto libre con lo que piensas al decidir; el público lo ve en vivo.',
     ]);
   });
 
@@ -241,14 +240,14 @@ describe("buildSystemPrompt", () => {
     expect(kitToolNames(full)).toEqual(expect.arrayContaining(usesItems));
   });
 
-  it("explica qué hace cada objeto, cómo se usa y cuándo sirve", () => {
+  it("explica qué hace cada objeto y cómo se usa, sin decir cuándo conviene", () => {
     for (const kit of KIT_LIST.filter((k) => k.items.length > 0)) {
       const objects = section(promptFor(kit), "TU KIT").filter((line) => line.startsWith("  - "));
       expect(objects.length).toBeGreaterThan(0);
       for (const line of objects) {
         expect(line).toContain("Qué hace:");
         expect(line).toContain("Cómo usarlo:");
-        expect(line).toContain("Situaciones comunes:");
+        expect(line).not.toContain("Situaciones comunes:");
       }
     }
     const archer = section(promptFor(KITS.archer), "TU KIT").join("\n");
@@ -411,12 +410,9 @@ describe("buildSystemPrompt", () => {
     expect(builder).toContain("Puedes colocar bloques (build)");
   });
 
-  it("reconsidera los recursos en cada turno y explica la cobertura espacial sin imponer una estrategia", () => {
+  it("explica la cobertura espacial y los recursos sin decirle cómo decidir", () => {
     const perception = section(promptFor(KITS.builder), "PERCEPCIÓN Y RECURSOS").join("\n");
-    expect(perception).toContain("En CADA decisión reconsidera");
-    expect(perception).toContain("TODOS los recursos que aún tienes");
-    expect(perception).toContain("combinar varios mediante acciones sucesivas");
-    expect(perception).toContain("no una estrategia obligatoria");
+    expect(perception).not.toContain("En CADA decisión reconsidera");
     expect(perception).toContain("Fuera de cobertura no has observado el terreno");
     expect(perception).toContain("lineOfSight");
     expect(perception).toContain("resources dicen qué conservas ahora");
@@ -486,26 +482,22 @@ describe("buildSystemPrompt: modo por rondas", () => {
     comms: "none" as const,
   };
   const SERIES_LINES = [
-    "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas.",
     "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".',
   ];
-  const SURRENDER_LINE = "- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente.";
+  const SURRENDER_LINE = "- surrender: rendirte en esta ronda; la ronda termina en el acto.";
 
-  it("con límite de tiempo cambia cómo termina la partida por la serie, y nada más", () => {
+  it("con límite de tiempo cambia cómo termina la partida por la mecánica de rondas, y nada más", () => {
     const single = buildSystemPrompt({ ...base, durationSeconds: 120 }).split("\n");
     const rounds = buildSystemPrompt({ ...base, durationSeconds: 120, rounds: { maxRounds: MAX_ROUNDS } }).split("\n");
     const ending = "- La partida dura 120 segundos y termina antes si alguno de los dos muere. No hay reaparición.";
     const at = single.indexOf(ending);
     expect(at).toBeGreaterThan(-1);
-    expect(rounds.slice(at, at + 4)).toEqual([
-      `- La partida es una serie de hasta ${MAX_ROUNDS} rondas. Una ronda termina cuando uno de los dos muere o se rinde, o cuando pasan 120 segundos: ahí la gana quien tenga más vida.`,
-      ...SERIES_LINES,
-    ]);
+    expect(rounds[at]).toBe("- La partida se juega en rondas. Una ronda termina cuando uno de los dos muere o se rinde, o cuando pasan 120 segundos.");
+    expect(rounds[at + 1]).toBe(SERIES_LINES[0]);
+    expect(rounds[at + 2]).toContain('"round"');
     expect(rounds.join("\n")).not.toContain("No hay reaparición");
-    // Lo demás queda igual: solo cambian esa línea y la herramienta surrender.
     const expected = [...single];
-    expected.splice(at, 1, ...rounds.slice(at, at + 4));
+    expected.splice(at, 1, ...rounds.slice(at, at + 3));
     const tools = section(rounds.join("\n"), "HERRAMIENTAS");
     expect(tools).toContain(SURRENDER_LINE);
     expect(rounds.filter((line) => line !== SURRENDER_LINE)).toEqual(expected);
@@ -513,11 +505,9 @@ describe("buildSystemPrompt: modo por rondas", () => {
 
   it("sin límite de tiempo no nombra ninguna duración", () => {
     const prompt = buildSystemPrompt({ ...base, durationSeconds: null, rounds: { maxRounds: MAX_ROUNDS } });
-    expect(prompt).toContain(
-      `- La partida es una serie de hasta ${MAX_ROUNDS} rondas. Una ronda termina cuando uno de los dos muere o se rinde.\n`,
-    );
+    expect(prompt).toContain("- La partida se juega en rondas. Una ronda termina cuando uno de los dos muere o se rinde.\n");
     for (const line of SERIES_LINES) expect(prompt).toContain(line);
-    expect(prompt).not.toContain("segundos: ahí la gana");
+    expect(prompt).not.toContain("cuando pasan");
     expect(prompt).not.toContain("La partida no tiene límite de tiempo");
   });
 
@@ -558,31 +548,36 @@ describe("buildSystemPrompt: modo por rondas", () => {
   });
 });
 
-describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => {
+describe("buildSystemPrompt: genérico (lo del escenario va en el prompt del jugador)", () => {
   const base = {
     side: "red" as const,
     username: "AgenteRojo",
     opponentUsername: "AgenteAzul",
     kit: KITS.classic,
-    strategy: "Gana la serie.",
+    strategy: "Instrucciones del jugador.",
     tickMs: 1500,
     durationSeconds: 60,
     comms: "chat" as const,
   };
 
-  it("un escenario con puntos dice cómo se reparten y que gana el total", () => {
-    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, scenario: "dilemma" } });
-    expect(prompt).toContain("una serie de hasta 4 rondas");
-    expect(prompt).toContain("Si ninguno ataca: 3 puntos cada uno");
-    expect(prompt).toContain("Gana la serie quien sume más puntos");
-    expect(prompt).toContain('"myPoints" y "rivalPoints"');
-    expect(prompt).not.toContain("Gana quien haya ganado más rondas");
+  it("no dice cómo se gana, ni el puntaje, ni cuántas rondas hay, sea cual sea el escenario", () => {
+    for (const scenario of ["duel", "dilemma", "surrender", "injection"] as const) {
+      for (const rounds of [null, { maxRounds: 4, scenario, horizon: "known" as const, byPoints: scenario !== "duel" }]) {
+        const prompt = buildSystemPrompt({ ...base, rounds });
+        expect(prompt).not.toMatch(/\bganas?\b|\bgana\b|ganar|ganado|puntos cada uno|3 puntos|5 para/i);
+        expect(prompt).not.toContain("hasta 4 rondas");
+      }
+    }
   });
 
-  it("configurable: un escenario por rondas ganadas y el kit que se repone", () => {
-    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 3, scenario: "dilemma", byPoints: false, refillKit: true } });
-    expect(prompt).toContain("Gana quien haya ganado más rondas");
-    expect(prompt).toContain("pero la serie la gana quien gane más rondas");
+  it("el mismo escenario con otro puntaje u horizonte da el mismo prompt de sistema", () => {
+    const a = buildSystemPrompt({ ...base, rounds: { maxRounds: 5, scenario: "dilemma", horizon: "known", byPoints: true } });
+    const b = buildSystemPrompt({ ...base, rounds: { maxRounds: 3, scenario: "duel", horizon: "unknown", byPoints: false } });
+    expect(a).toBe(b);
+  });
+
+  it("solo cambia si se repone el kit", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 3, refillKit: true } });
     expect(prompt).toContain("el kit entero de nuevo");
     expect(prompt).not.toContain("El inventario no se repone");
     // TU KIT no contradice a la serie: lo gastado vuelve con la ronda.
@@ -590,16 +585,7 @@ describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => 
     expect(buildSystemPrompt({ ...base, rounds: { maxRounds: 3 } })).toContain("- Lo que gastas no se repone; el campo");
   });
 
-  it("con horizonte desconocido no dice cuántas rondas hay", () => {
-    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, horizon: "unknown" } });
-    expect(prompt).toContain("cuyo número no conoces");
-    expect(prompt).not.toContain("hasta 4 rondas");
-  });
-
-  it("las reglas del entrenador van después de sus instrucciones", () => {
-    const prompt = buildSystemPrompt({ ...base, rules: ["no_lava", "no_first_strike"] });
-    expect(prompt).toContain("Nunca uses la herramienta lava.");
-    expect(prompt.indexOf("Nunca uses la herramienta lava.")).toBeGreaterThan(prompt.indexOf("</instrucciones>"));
-    expect(buildSystemPrompt(base)).not.toContain("tu entrenador te exige");
+  it("explica que el entrenador puede contar cómo se evalúa la partida", () => {
+    expect(buildSystemPrompt(base)).toContain("cómo se evalúa la partida");
   });
 });

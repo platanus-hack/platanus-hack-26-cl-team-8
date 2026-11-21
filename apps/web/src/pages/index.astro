@@ -12,15 +12,7 @@ import {
   MAX_HEALTH,
   TIMER_LABELS,
   VOICE_LABELS,
-  DEFAULT_SCENARIO,
-  HORIZONS,
   MAX_ROUNDS,
-  RULE_IDS,
-  RULE_LABELS,
-  SCENARIOS,
-  SCENARIO_IDS,
-  SERIES_WINS,
-  SERIES_WIN_LABELS,
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
@@ -232,14 +224,30 @@ const stats = [
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
         <!--
-          Ajustes de la partida: una fila por ajuste, con su nombre a la izquierda y el control
-          a la derecha. La ayuda de cada uno se abre con el botón "i" junto al nombre. Los campos y sus ids son los de siempre
-          (scripts/settings.ts y scripts/benchsettings.ts); controls-enhance.ts les pone el
-          contador y las opciones a la vista.
+          Una fila por ajuste, con su nombre a la izquierda y el control a la derecha, en dos
+          columnas. La ayuda de cada uno se abre con el botón "i" junto al nombre. Los campos y
+          sus ids son los de scripts/settings.ts, benchsettings.ts y presetpicker.ts;
+          controls-enhance.ts les pone el contador, las opciones a la vista y la ayuda.
         -->
-        <div class="settings">
-          <section class="settings__group" id="settings-field" aria-labelledby="settings-match-title">
-            <h3 class="settings__title" id="settings-match-title">Partida</h3>
+        <div class="settings" id="settings-field">
+          <div class="settings__group">
+            <!-- Pre-ajuste: elegir uno lo carga de inmediato; si algo cambia, vuelve a "Personalizado" (scripts/presetpicker.ts). -->
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="preset"><PixelIcon name="bookmark" />Pre-ajuste</label>
+                <p class="setting__help" id="preset-description"></p>
+                <!-- El escenario que dejó un pre-ajuste, mientras siga activo: un aviso siempre a la vista. -->
+                <p class="setting__help setting__help--strong preset__active" id="preset-active-row" hidden>
+                  <span id="preset-active"></span>
+                  <button type="button" class="btn btn--small" id="preset-reset">Quitar</button>
+                </p>
+              </div>
+              <div class="setting__control">
+                <select id="preset" class="select" aria-describedby="preset-description">
+                  <option value="">Personalizado</option>
+                </select>
+              </div>
+            </div>
 
             <div class="setting">
               <div class="setting__text">
@@ -265,6 +273,20 @@ const stats = [
               </div>
             </div>
 
+            <div class="setting setting--wide">
+              <div class="setting__text">
+                <label class="setting__label" for="comms"><PixelIcon name="talk" />Comunicación entre agentes</label>
+                <p class="setting__help" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+              </div>
+              <div class="setting__control">
+                <select id="comms" aria-label="Comunicación entre agentes" aria-describedby="comms-description" data-segmented>
+                  {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings__group">
             <div class="setting">
               <div class="setting__text">
                 <label class="setting__label" for="timer"><PixelIcon name="timer" />Límite de tiempo</label>
@@ -295,18 +317,6 @@ const stats = [
               </div>
             </div>
 
-            <div class="setting setting--wide">
-              <div class="setting__text">
-                <label class="setting__label" for="comms"><PixelIcon name="talk" />Comunicación entre agentes</label>
-                <p class="setting__help" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
-              </div>
-              <div class="setting__control">
-                <select id="comms" aria-label="Comunicación entre agentes" aria-describedby="comms-description" data-segmented>
-                  {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
-                </select>
-              </div>
-            </div>
-
             <div class="setting">
               <div class="setting__text">
                 <label class="setting__label" for="voice"><PixelIcon name="speaking" />Voz de los agentes</label>
@@ -318,78 +328,6 @@ const stats = [
                   <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
                   <span class="toggle__track" aria-hidden="true"><i></i></span>
                 </label>
-              </div>
-            </div>
-          </section>
-
-          <!-- Benchmarks: escenario y reglas de la serie (scripts/benchsettings.ts). Ver /bench. -->
-          <section class="settings__group" id="bench-settings" aria-labelledby="settings-bench-title">
-            <h3 class="settings__title" id="settings-bench-title">Experimento</h3>
-
-            <!-- Pre-ajustes: configuraciones guardadas de benchmark (scripts/presetpicker.ts). -->
-            <div class="setting setting--wide" id="main-preset-field">
-              <div class="setting__text">
-                <label class="setting__label" for="main-preset"><PixelIcon name="bookmark" />Pre-ajuste</label>
-                <p class="setting__help" id="main-preset-description"></p>
-                <p class="setting__help setting__help--strong" id="main-preset-status" role="status" hidden></p>
-              </div>
-              <div class="setting__control setting__control--row">
-                <select id="main-preset" class="select" aria-describedby="main-preset-description"></select>
-                <button type="button" class="btn btn--small" id="main-preset-load">Cargar</button>
-                <button type="button" class="btn btn--small preset__run" id="main-preset-run">Ejecutar</button>
-                <button type="button" class="btn btn--small" id="main-preset-stop" hidden>Detener batería</button>
-              </div>
-            </div>
-
-            <div class="setting">
-              <div class="setting__text">
-                <label class="setting__label" for="scenario"><PixelIcon name="arena" />Escenario</label>
-                <p class="setting__help" id="scenario-description">{SCENARIOS[DEFAULT_SCENARIO].description}</p>
-                <p class="setting__help setting__help--strong" id="scenario-hint" hidden></p>
-              </div>
-              <div class="setting__control">
-                <select id="scenario" class="select" aria-describedby="scenario-description">
-                  {SCENARIO_IDS.map((id) => <option value={id} selected={id === DEFAULT_SCENARIO}>{SCENARIOS[id].name}</option>)}
-                </select>
-              </div>
-            </div>
-
-            <!-- Solo con 2 rondas o más (benchsettings.ts lo muestra y lo esconde). -->
-            <div class="settings__series" id="series-options">
-              <div class="setting">
-                <div class="setting__text">
-                  <label class="setting__label" for="horizon"><PixelIcon name="eye" />Horizonte</label>
-                  <p class="setting__help">Si los agentes saben cuántas rondas quedan.</p>
-                </div>
-                <div class="setting__control">
-                  <select id="horizon" aria-label="Horizonte" aria-describedby="series-description" data-segmented>
-                    {HORIZONS.map((h) => <option value={h}>{h === "known" ? "Conocido" : "Desconocido"}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div class="setting">
-                <div class="setting__text">
-                  <label class="setting__label" for="series-win"><PixelIcon name="crown" />Gana la serie</label>
-                  <p class="setting__help">Cómo se decide quién se lleva la serie.</p>
-                  <p class="setting__help" id="series-description"></p>
-                </div>
-                <div class="setting__control">
-                  <select id="series-win" aria-label="Gana la serie" aria-describedby="series-description" data-segmented>
-                    {SERIES_WINS.map((w) => <option value={w}>{SERIES_WIN_LABELS[w].name}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div class="setting">
-                <div class="setting__text">
-                  <label class="setting__label" for="refill-kit"><PixelIcon name="refill" />Reponer el kit</label>
-                  <p class="setting__help">Antes de cada ronda. Si no, lo gastado no vuelve.</p>
-                </div>
-                <div class="setting__control">
-                  <label class="toggle">
-                    <input type="checkbox" role="switch" id="refill-kit" />
-                    <span class="toggle__track" aria-hidden="true"><i></i></span>
-                  </label>
-                </div>
               </div>
             </div>
 
@@ -408,13 +346,7 @@ const stats = [
                 </label>
               </div>
             </div>
-
-            <!-- Espejo: una acción suelta, no un ajuste. El botón y, al lado, qué hace. -->
-            <div class="settings__action">
-              <button type="button" class="btn btn--small" id="btn-mirror">Copiar Rojo en Azul</button>
-              <p class="setting__help">Mismo prompt, modelo y kit en los dos lados.</p>
-            </div>
-          </section>
+          </div>
         </div>
 
         <div class="editors">
@@ -424,9 +356,18 @@ const stats = [
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
+                  <!-- Espejo: trae el prompt guardado del otro lado (texto, modelo y kit). -->
+                  <button
+                    type="button"
+                    class="btn btn--small editor__copy"
+                    id={`copy-${side.id}`}
+                    data-tip={`Pone en ${side.label} el prompt, el modelo y el kit guardados de ${side.id === "red" ? "Azul" : "Rojo"}.`}
+                  >
+                    Copiar del {side.id === "red" ? "azul" : "rojo"}
+                  </button>
                 </div>
 
-                <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
+                <textarea class="editor__text" id={`prompt-${side.id}`} rows="12" spellcheck="false"></textarea>
 
                 <!-- Kit del lado: se guarda con el prompt. El inventario lo dibuja scripts/inventory.ts. -->
                 <div class="kit">
@@ -440,18 +381,6 @@ const stats = [
                   <div class="inv" id={`inv-${side.id}`} role="group" aria-label="Inventario del kit" />
                 </div>
 
-                <!-- Reglas del entrenador: se guardan al marcarlas, como los ajustes (scripts/benchsettings.ts). -->
-                <fieldset class="rules" id={`rules-${side.id}`} data-side={side.id}>
-                  <legend class="field__label">Reglas (se cuentan las veces que las rompe)</legend>
-                  {
-                    RULE_IDS.map((rule) => (
-                      <label class="rules__item">
-                        <input type="checkbox" value={rule} data-rule={rule} />
-                        {RULE_LABELS[rule].name}
-                      </label>
-                    ))
-                  }
-                </fieldset>
 
                 <div class="editor__options">
                   <!-- Selector de modelo: lo arma scripts/modelpicker.ts con la lista de modelos permitidos. -->

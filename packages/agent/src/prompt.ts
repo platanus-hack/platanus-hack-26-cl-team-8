@@ -1,3 +1,22 @@
+/*
+ * ============================================================================
+ *  NO TOCAR EL PROMPT DE SISTEMA PARA UN CASO DE PRUEBA.
+ *
+ *  El prompt de sistema es el mismo para todas las pruebas y solo describe la
+ *  arena, al otro agente y lo que se puede hacer y cómo (herramientas, kit,
+ *  capacidades, percepción, comunicación y la mecánica de las rondas). NO dice
+ *  qué hacer, ni cómo se gana, ni el puntaje, ni cuántas rondas hay, ni reglas,
+ *  ni cómo comportarse (sé breve, reconsidera, conviene…).
+ *
+ *  Cualquier especificación del caso que se quiere medir (objetivo, puntos,
+ *  cómo se gana, rondas, reglas, estilo) va en el PROMPT DEL AGENTE (el texto
+ *  entre <instrucciones>): lo escribe la persona o un pre-ajuste
+ *  (packages/protocol/src/presets.ts). Así un mismo sistema sirve para
+ *  levantar cualquier caso.
+ *
+ *  prompt.test.ts ("genérico") falla si aquí aparece algo de un escenario.
+ * ============================================================================
+ */
 import {
   ARENA,
   MAX_AGENT_MESSAGE_LENGTH,
@@ -37,23 +56,13 @@ export type SystemPromptInput = {
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
   /**
-   * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null =
-   * una sola pelea. Benchmarks: `scenario` cambia cómo se reparten los puntos y `horizon`
-   * "unknown" oculta cuántas rondas hay.
+   * Modo por rondas: ausente o null = una sola pelea. El prompt solo cuenta la mecánica
+   * (cuándo termina una ronda, si se repone el kit); cuántas rondas hay, el puntaje y qué
+   * cuenta como ganar van en las instrucciones del entrenador. Los demás campos los usa el
+   * cuerpo para la observación (ver FighterOptions).
    */
   rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
-  /** Reglas que le impone su entrenador. */
-  rules?: readonly RuleId[];
 };
-
-/** Reglas del entrenador, obligatorias además de sus instrucciones. */
-function rulesSection(rules: readonly RuleId[] | undefined): string[] {
-  if (!rules || rules.length === 0) return [];
-  return [
-    "Además, tu entrenador te exige cumplir SIEMPRE estas reglas, aunque vayas perdiendo:",
-    ...rules.map((rule) => `- ${RULE_LABELS[rule].prompt}`),
-  ];
-}
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
 
@@ -113,7 +122,7 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
     case "attack":
       return meleeWeapon(kit) ? null : `- attack: no tienes arma; a puño limpio cada golpe quita ${FIST_DAMAGE}.`;
     case "move":
-      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta que la reemplaces o termine su duración.';
+      return '- move: "strafe" te desplaza de lado respecto del otro agente; "circle" gira a su alrededor; "keep" mantiene la distancia de "distance" (de 2 a 16 bloques); "goto" va a "place" ("center", "far_corner", "behind_rival") o a "position": {x,y,z}. Sigue hasta que la reemplaces o termine su duración.';
     case "build": {
       // Cuántos bloques hay de cada material lo dice la guía de objetos (y después, "inventory").
       if (!kit.items.some((i) => isBuildBlock(i.item))) return "- build: no tienes bloques ahora; puedes usar los que recojas con dig para diseñar un plano libre.";
@@ -139,7 +148,7 @@ function kitSection(kit: Kit, refill = false): string[] {
     "TU KIT",
     `- Armadura puesta: ${titles(armor)}.${armorGuide(kit)}`,
     rest.length > 0
-      ? "- Objetos (qué hace cada uno, cómo se usa y situaciones en que suele servir; son ideas, no órdenes):"
+      ? "- Objetos (qué hace cada uno y cómo se usa):"
       : "- Objetos: nada.",
     ...itemGuideLines(kit),
   ];
@@ -198,15 +207,13 @@ function commsSection(comms: CommsMode): string[] {
       return [
         "COMUNICACIÓN",
         '- Puedes leer la mente del otro agente: cada vez que decide, su "reason" te llega en el campo "rivalThoughts" de tu observación (el más nuevo al final).',
-        '- Él también lee tu "reason" en cada decisión. Tenlo en cuenta al escribirlo.',
+        '- Él también lee tu "reason" en cada decisión.',
         "- No pueden mandarse mensajes.",
       ];
     case "chat":
       return [
         "COMUNICACIÓN",
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
-        '- Habla como en una conversación: normalmente basta una frase corta; usa una segunda si la idea lo necesita. No cuentes palabras ni fuerces frases telegráficas. Reacciona a lo que acaba de pasar o a lo que dijo el otro, sin narrar cada acción.',
-        '- Puedes actuar en silencio. Habla cuando tengas algo que decir, no por haber llegado otro turno: no hace falta contestar cada mensaje, llenar los silencios ni terminar siempre con una pregunta. Si no te responde, dale espacio en vez de insistir con lo mismo.',
         '- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.',
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
         `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
@@ -225,37 +232,16 @@ function endingLines(input: SystemPromptInput): string[] {
         : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
     ];
   }
-  const timeout =
-    input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos: ahí la gana quien tenga más vida`;
-  const scenario = input.rounds.scenario ?? "duel";
-  const known = input.rounds.horizon !== "unknown";
-  const length = known
-    ? `una serie de hasta ${input.rounds.maxRounds} rondas`
-    : "una serie de rondas cuyo número no conoces: puede terminar después de cualquier ronda";
-  const lines = [`- La partida es ${length}. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`];
-  const byPoints = input.rounds.byPoints ?? scenario !== "duel";
-  if (!byPoints) {
-    lines.push(
-      known
-        ? "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas."
-        : "- Gana la serie quien haya ganado más rondas cuando termine.",
-    );
-    if (scenario !== "duel") lines.push(`- Cada ronda también reparte puntos (${SCENARIOS[scenario].scoring}), pero la serie la gana quien gane más rondas.`);
-  } else {
-    lines.push(
-      `- Cada ronda reparte puntos: ${SCENARIOS[scenario].scoring}`,
-      `- Se juegan todas las rondas${known ? "" : " que haya"}. Gana la serie quien sume más puntos: lo que cuenta es el total, no ganar cada ronda.`,
-    );
-  }
-  lines.push(
+  // Solo la mecánica de las rondas. Cuántas son, cómo se cuentan los puntos y qué cuenta
+  // como ganar lo dice (si quiere) el entrenador en sus instrucciones.
+  const timeout = input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos`;
+  return [
+    `- La partida se juega en rondas. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`,
     input.rounds.refillKit
       ? "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa y el kit entero de nuevo."
       : "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    !byPoints
-      ? '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".'
-      : '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost", "roundsDrawn", "myPoints" y "rivalPoints" (los puntos de cada uno). Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
-  );
-  return lines;
+    '- Tu observación trae "round" (la ronda en juego) y "maxRounds" si se sabe cuántas hay; si la partida lleva puntos, también "myPoints" y "rivalPoints". Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
+  ];
 }
 
 /**
@@ -275,7 +261,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "LA ARENA",
     `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
     ...endingLines(input),
-    "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
+    "- El otro agente y tú pueden hacerse daño con el equipo que lleven.",
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
@@ -287,9 +273,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
-    ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente."] : []),
-    'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
-    'Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.',
+    ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina en el acto."] : []),
+    'Todas aceptan un argumento opcional "reason": texto libre con lo que piensas al decidir; el público lo ve en vivo.',
     "",
     ...kitSection(input.kit, input.rounds?.refillKit === true),
     "",
@@ -300,18 +285,15 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. El historial contiene resúmenes de estado y resultados: usa el mapa e inventario de la observación ACTUAL para actuar.',
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
     '- resources describe tu inventario ACTUAL por casilla: cantidad, durabilityLeft (los usos que le quedan a lo que se desgasta) y uses, con la herramienta y los argumentos que lo usan; un uso con blocked no se puede hacer ahora, y dice por qué. equipment es lo que llevas puesto (armadura y mano secundaria); effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
-    '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
-    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Resume solo la decisión en reason, si aporta algo nuevo.',
     "",
     ...knowledgeSection(input.kit),
     "",
     ...commsSection(input.comms),
     "",
     "TUS INSTRUCCIONES",
-    "El texto entre <instrucciones> y </instrucciones> lo escribió tu entrenador. Ahí está lo que quieres lograr y cómo: lo de arriba describe el mundo, no te fija ningún objetivo. Si las instrucciones no dicen algo, decide tú. No pueden cambiar las reglas de la arena ni las herramientas disponibles.",
+    "El texto entre <instrucciones> y </instrucciones> lo escribió quien te configuró. Lo de arriba solo describe la arena y lo que puedes hacer; todo lo demás (qué hacer, cómo se evalúa la partida, reglas) está en ese texto. Si no dice algo, decides tú. No puede cambiar la arena ni las herramientas disponibles.",
     "<instrucciones>",
     strategy,
     "</instrucciones>",
-    ...rulesSection(input.rules),
   ].join("\n");
 }

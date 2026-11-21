@@ -433,7 +433,6 @@ class MineflayerFighter implements Fighter {
       durationSeconds: opts.durationSeconds,
       comms: opts.comms,
       rounds,
-      rules: opts.rules,
     });
   }
 

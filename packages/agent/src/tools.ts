@@ -181,7 +181,7 @@ export function kitToolNames(kit: Kit): ToolName[] {
 
 const reasonProperty = {
   type: "string",
-  description: "Opcional: una idea breve con tu decisión. Omítela si repite lo anterior; el público la ve.",
+  description: "Opcional: texto libre con lo que piensas al decidir; el público lo ve.",
 };
 
 /**
@@ -402,7 +402,7 @@ export const SURRENDER_DEF: ToolDef = {
 
 const sayProperty = {
   type: "string",
-  description: `Opcional: mensaje breve y natural para el otro agente, normalmente una frase; una segunda si hace falta (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Puedes actuar en silencio: no tienes que hablar cada turno ni responder por obligación. Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
+  description: `Opcional: texto para el otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
 };
 
 /**

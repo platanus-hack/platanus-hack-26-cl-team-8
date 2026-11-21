@@ -1584,6 +1584,18 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   gap: 14px;
 }
 
+/* "Copiar del rojo / del azul": arriba a la derecha de cada editor. */
+.editor__copy {
+  margin-left: auto;
+}
+
+.preset__active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .editor__count {
   margin-left: auto;
 }
@@ -1612,7 +1624,7 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 .editor__text {
   display: block;
-  min-height: 9.5em;
+  min-height: 16em;
   padding: 12px 14px;
   resize: vertical;
   line-height: 1.5;
@@ -1643,8 +1655,8 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 /* ---------- Ajustes de la partida ---------- */
 
 /*
- * Dos grupos lado a lado (la partida y el experimento). Cada ajuste es una fila: a la
- * izquierda su nombre y una línea de ayuda, a la derecha el control, todos del mismo alto.
+ * Dos columnas de ajustes. Cada ajuste es una fila: a la izquierda su nombre, a la
+ * derecha el control, todos del mismo alto.
  */
 .settings {
   display: grid;
@@ -1654,15 +1666,8 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   margin-bottom: 32px;
 }
 
-.settings__group[hidden] {
+.settings[hidden] {
   display: none;
-}
-
-.settings__title {
-  margin: 0;
-  padding-bottom: 10px;
-  font-size: 15px;
-  font-weight: 600;
 }
 
 /*
@@ -1802,20 +1807,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 }
 
 .setting__info .setting__help:empty {
-  display: none;
-}
-
-/* Una acción suelta al pie del grupo (espejo): el botón y, a su lado, qué hace. */
-.settings__action {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-
-/* Las reglas de la serie solo existen con 2 rondas o más. */
-.settings__series[hidden] {
   display: none;
 }
 
@@ -2027,71 +2018,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 .duration input:focus {
   border-color: var(--text);
   outline: none;
-}
-
-/* Un control ancho con varias piezas en fila (pre-ajuste: la lista y sus botones). */
-.setting__control--row {
-  justify-content: flex-start;
-}
-
-.setting__control--row .select {
-  flex: 1;
-  min-width: 0;
-  max-width: none;
-}
-
-/* Textos de ayuda del tablero (/bench), que usa estos nombres. */
-.comms__description {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--muted);
-}
-
-.comms__hint {
-  color: var(--text);
-}
-
-/* Pre-ajustes de benchmark (scripts/presetpicker.ts): ocupa toda la fila. */
-.preset {
-  display: grid;
-  flex-basis: 100%;
-  gap: 6px;
-}
-
-.preset__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: end;
-}
-
-.preset__select select {
-  min-width: 240px;
-}
-
-/* Reglas del entrenador, bajo el kit de cada editor. */
-.rules {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  margin: 12px 0 0;
-  padding: 0;
-  border: 0;
-}
-
-.rules legend {
-  width: 100%;
-  margin-bottom: 6px;
-  padding: 0;
-}
-
-.rules__item {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
 }
 
 /* ---------- Kit ---------- */

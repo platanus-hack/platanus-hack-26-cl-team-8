@@ -18,32 +18,24 @@ export type SeriesView = {
   hideMax?: boolean;
 };
 
-/** Campos de la serie que van en la observación (solo en el modo por rondas). */
+/**
+ * Campos de la serie que van en la observación (solo en el modo por rondas). Solo datos:
+ * en qué ronda va, cuántas hay (si se sabe) y los puntos (si la partida los cuenta). Qué
+ * cuenta como ganar no se dice aquí: lo dice el prompt del jugador.
+ */
 export type SeriesObservation = {
   /** Ronda en juego, desde 1. */
   round: number;
   /** Falta con el horizonte desconocido. */
   maxRounds?: number;
-  /** Rondas que ganó este agente. */
-  roundsWon: number;
-  /** Rondas que ganó el otro agente. */
-  roundsLost: number;
-  /** Rondas empatadas (se acabó el tiempo con la misma vida). */
-  roundsDrawn: number;
   /** Benchmarks: puntos propios y del otro agente. */
   myPoints?: number;
   rivalPoints?: number;
 };
 
 export function seriesObservation(series: SeriesView): SeriesObservation {
-  // El orden de las claves es el de antes: round, maxRounds, roundsWon…
-  const out: SeriesObservation = {
-    round: series.round,
-    ...(series.hideMax ? {} : { maxRounds: series.maxRounds }),
-    roundsWon: series.won,
-    roundsLost: series.lost,
-    roundsDrawn: series.drawn,
-  };
+  const out: SeriesObservation = { round: series.round };
+  if (!series.hideMax) out.maxRounds = series.maxRounds;
   if (series.points) {
     out.myPoints = series.points.mine;
     out.rivalPoints = series.points.rival;

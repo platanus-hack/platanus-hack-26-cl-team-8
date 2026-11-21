@@ -200,17 +200,9 @@ const presetsParser: Parser<PresetsResponse> = {
   },
 };
 
-export function fetchPresets(): Promise<PresetsResponse> {
-  return request(API_ROUTES.presets, presetsParser);
-}
-
 /** Carga un pre-ajuste; con `start`, lo ejecuta ("todos" corre la batería completa). */
 export function runPreset(id: string, start: boolean): Promise<PresetsResponse> {
   return request(API_ROUTES.preset(encodeURIComponent(id)), presetsParser, { method: "POST", body: { start } });
-}
-
-export function stopPresets(): Promise<PresetsResponse> {
-  return request(API_ROUTES.presetsStop, presetsParser, { method: "POST" });
 }
 
 /** Archiva el historial de peleas en el servidor (el tablero queda vacío). */

@@ -321,7 +321,9 @@ describe("agente: modo por rondas", () => {
 
   it("al reanudar decide con la serie al día y la nota como resultado de la última acción", async () => {
     const { fighter, received } = await start([{ name: "wait", args: {} }], 100, { rounds: ROUNDS });
-    expect(received[0]).toMatchObject({ round: 1, maxRounds: 5, roundsWon: 0, roundsLost: 0, roundsDrawn: 0 });
+    expect(received[0]).toMatchObject({ round: 1, maxRounds: 5 });
+    // Solo datos: qué cuenta como ganar una ronda lo dice el prompt del jugador.
+    expect(received[0]).not.toHaveProperty("roundsWon");
     fighter.pause("terminó la ronda 1");
     await vi.advanceTimersByTimeAsync(300);
     const seen = received.length;
@@ -330,7 +332,7 @@ describe("agente: modo por rondas", () => {
     const note = "terminó la ronda 1: la ganaste por K.O.; empieza la ronda 2";
     fighter.resume({ round: 2, won: 1, lost: 0, drawn: 0, maxRounds: 5 }, note);
     await vi.advanceTimersByTimeAsync(0);
-    expect(received[seen]).toMatchObject({ round: 2, roundsWon: 1, roundsLost: 0, lastActionResult: note, currentAction: "wait" });
+    expect(received[seen]).toMatchObject({ round: 2, lastActionResult: note, currentAction: "wait" });
   });
 
   it("morir en pausa no lo detiene: reaparece y espera a que lo reanuden", async () => {
@@ -345,7 +347,7 @@ describe("agente: modo por rondas", () => {
     expect(received).toHaveLength(seen);
     fighter.resume({ round: 2, won: 0, lost: 1, drawn: 0, maxRounds: 5 }, "empieza la ronda 2");
     await vi.advanceTimersByTimeAsync(0);
-    expect(received[seen]).toMatchObject({ round: 2, roundsLost: 1, lastActionResult: "empieza la ronda 2" });
+    expect(received[seen]).toMatchObject({ round: 2, lastActionResult: "empieza la ronda 2" });
   });
 
   it("surrender avisa la acción, después la rendición, y no corre lo que venía en cola", async () => {
