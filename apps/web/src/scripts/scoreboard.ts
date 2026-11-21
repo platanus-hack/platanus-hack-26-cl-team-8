@@ -1,5 +1,5 @@
 import { SIDES, type AgentStatus, type MatchResult, type MatchState, type Side } from "@phack/protocol";
-import { byId, setText } from "./dom";
+import { byId, el, setText } from "./dom";
 import { PHASE_LABEL, formatClock, formatNumber, resultDetail, resultTitle } from "./format";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 
@@ -17,9 +17,16 @@ type SideElements = {
   food: HTMLElement;
   damage: HTMLElement;
   decisions: HTMLElement;
+  /** Bloque de subtítulos del agente (pensamiento + acción). */
+  mind: HTMLElement;
   thought: HTMLElement;
   action: HTMLElement;
 };
+
+/** Sin pensamientos ni acciones nuevas durante este tiempo, los subtítulos se desvanecen. */
+const STALE_MS = 8000;
+const POP_MS = 1100;
+const staleTimers = new WeakMap<HTMLElement, number>();
 
 type Elements = {
   sides: Record<Side, SideElements>;
@@ -47,6 +54,7 @@ function sideElements(side: Side): SideElements {
     food: byId(`food-${side}`),
     damage: byId(`damage-${side}`),
     decisions: byId(`decisions-${side}`),
+    mind: byId(`mind-${side}`),
     thought: byId(`thought-${side}`),
     action: byId(`action-${side}`),
   };
@@ -80,14 +88,41 @@ function setHealth(side: SideElements, health: number): void {
   setText(side.hpValue, formatNumber(clamped));
 }
 
+/** Número de daño que salta junto a la vida del que recibió el golpe y se desvanece. */
+function popDamage(target: SideElements, amount: number): void {
+  if (!(amount > 0)) return;
+  const pop = el("span", "hud__pop", `-${formatNumber(amount)}`);
+  pop.setAttribute("aria-hidden", "true");
+  target.card.append(pop);
+  // Respaldo por si no corre la animación (movimiento reducido): igual se quita.
+  window.setTimeout(() => pop.remove(), POP_MS);
+}
+
+/**
+ * Escribe un pensamiento o acción. Si el texto es nuevo, los subtítulos de ese agente
+ * aparecen; tras STALE_MS sin novedades se desvanecen para dejar ver el video.
+ */
+function setMindText(side: SideElements, target: HTMLElement, raw: string): void {
+  const text = raw.trim();
+  if ((target.textContent ?? "") === (text || "—")) return;
+  setText(target, text || "—");
+  if (text === "") return;
+  side.mind.classList.remove("is-stale");
+  window.clearTimeout(staleTimers.get(side.mind));
+  staleTimers.set(
+    side.mind,
+    window.setTimeout(() => side.mind.classList.add("is-stale"), STALE_MS),
+  );
+}
+
 function renderAgent(side: SideElements, agent: AgentStatus): void {
   setText(side.bot, agent.username);
   setHealth(side, agent.health);
   setText(side.food, formatNumber(agent.food));
   setText(side.damage, formatNumber(agent.damageDealt));
   setText(side.decisions, String(agent.decisions));
-  setText(side.thought, agent.lastThought.trim() || "—");
-  setText(side.action, agent.lastAction.trim() || "—");
+  setMindText(side, side.thought, agent.lastThought);
+  setMindText(side, side.action, agent.lastAction);
 
   const state = !agent.connected ? "off" : agent.alive ? "alive" : "dead";
   side.status.dataset.state = state;
@@ -147,10 +182,11 @@ export function showResult(result: MatchResult): void {
 }
 
 /** Actualizaciones puntuales entre dos eventos "state", para que se sienta instantáneo. */
-export function applyDamage(side: Side, health: number): void {
+export function applyDamage(side: Side, health: number, amount: number): void {
   if (!els) return;
   const target = els.sides[side];
   setHealth(target, health);
+  popDamage(target, amount);
   target.card.classList.remove("is-hit");
   // Forzar reflow para reiniciar la animación si llegan golpes seguidos.
   void target.card.offsetWidth;
@@ -159,12 +195,12 @@ export function applyDamage(side: Side, health: number): void {
 
 export function applyThought(side: Side, text: string): void {
   if (!els) return;
-  setText(els.sides[side].thought, text.trim() || "—");
+  setMindText(els.sides[side], els.sides[side].thought, text);
 }
 
 export function applyAction(side: Side, text: string): void {
   if (!els) return;
-  setText(els.sides[side].action, text.trim() || "—");
+  setMindText(els.sides[side], els.sides[side].action, text);
 }
 
 export function applyDeath(side: Side): void {

@@ -12,6 +12,7 @@ import {
 import { describeError, fetchPrompts, savePrompt } from "./api";
 import { byId, setText } from "./dom";
 import { SIDE_LABEL } from "./format";
+import { createModelPicker } from "./modelpicker";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import { showToast } from "./toast";
 
@@ -72,7 +73,11 @@ function refresh(editor: Editor): void {
   const provider = ProviderSchema.safeParse(draft.provider);
   renderModelTag(
     editor.modelTag,
-    resolveModel({ provider: provider.success ? provider.data : undefined, model: draft.model }),
+    resolveModel({ provider: provider.success ? provider.data : undefined, model: draft.model }) ?? {
+      name: "Por defecto del servidor",
+      detail: "",
+      brand: null,
+    },
   );
   editor.count.classList.toggle("is-over", length > MAX_PROMPT_LENGTH);
   editor.save.disabled = editor.saving || length > MAX_PROMPT_LENGTH;
@@ -165,7 +170,7 @@ function createEditor(side: Side): Editor {
     textarea: byId<HTMLTextAreaElement>(`prompt-${side}`),
     provider: byId<HTMLSelectElement>(`provider-${side}`),
     model: byId<HTMLInputElement>(`model-${side}`),
-    modelTag: byId(`editor-model-${side}`),
+    modelTag: byId(`picker-current-${side}`),
     count: byId(`count-${side}`),
     status: byId(`save-status-${side}`),
     save: byId<HTMLButtonElement>(`save-${side}`),
@@ -183,6 +188,15 @@ function createEditor(side: Side): Editor {
   editor.textarea.addEventListener("input", onInput);
   editor.model.addEventListener("input", onInput);
   editor.provider.addEventListener("change", onInput);
+  createModelPicker({
+    side,
+    getChoice: () => ({ provider: editor.provider.value, model: editor.model.value }),
+    onPick: (choice) => {
+      editor.provider.value = choice.provider;
+      editor.model.value = choice.model;
+      refresh(editor);
+    },
+  });
 
   editor.form.addEventListener("submit", (event) => {
     event.preventDefault();

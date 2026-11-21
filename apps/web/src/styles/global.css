@@ -180,7 +180,7 @@ textarea {
 
 .stage::after {
   bottom: 0;
-  height: 300px;
+  height: 250px;
   background: linear-gradient(to top, rgba(6, 7, 9, 0.88), rgba(6, 7, 9, 0.55) 50%, transparent);
 }
 
@@ -289,6 +289,7 @@ textarea {
 }
 
 .hud__side {
+  position: relative;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -419,6 +420,40 @@ textarea {
   }
 }
 
+/* Golpe recibido: el número de daño salta junto a la vida y cae desvaneciéndose. */
+.hud__pop {
+  position: absolute;
+  top: 66px;
+  right: 0;
+  font: 400 32px/1 var(--pixel);
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: pop 1.05s ease-out forwards;
+}
+
+.hud__side--blue .hud__pop {
+  right: auto;
+  left: 0;
+}
+
+@keyframes pop {
+  0% {
+    transform: translateY(-8px) scale(1.5);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+}
+
 .hud__side.is-dead .hud__name {
   background: var(--faint);
   text-decoration: line-through;
@@ -492,6 +527,13 @@ textarea {
   max-width: 46ch;
   padding-left: 16px;
   border-left: 3px solid var(--side);
+  transition: opacity 0.25s ease-out;
+}
+
+/* Sin novedades hace un rato: el subtítulo se va y deja ver el video. */
+.mind.is-stale {
+  opacity: 0;
+  transition-duration: 1.2s;
 }
 
 .mind--red {
@@ -530,14 +572,14 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-/* Estadísticas: ícono de píxeles + número, como el HUD del juego. */
+/* Estadísticas bajo la barra de vida: ícono de píxeles + número, como el HUD del juego. */
 .stats {
   display: flex;
   gap: 22px;
-  margin-top: 12px;
+  margin-top: 2px;
 }
 
-.mind--blue .stats {
+.hud__side--blue .stats {
   justify-content: flex-end;
 }
 
@@ -787,11 +829,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   gap: 14px;
 }
 
-.editor__model {
-  font-size: 14px;
-  color: var(--muted);
-}
-
 .editor__count {
   margin-left: auto;
 }
@@ -847,9 +884,141 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .editor__options {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 10px;
+}
+
+/* ---------- Selector de modelo ---------- */
+
+.picker {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.picker__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Flecha de "se despliega", dibujada con bordes. */
+.picker__trigger::after {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: -4px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+}
+
+.picker__trigger:hover,
+.picker__trigger[aria-expanded="true"] {
+  border-color: var(--side);
+}
+
+/* Se abre hacia arriba: debajo queda el final de la página. */
+.picker__panel {
+  position: absolute;
+  bottom: calc(100% - 20px);
+  left: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: max(100%, 440px);
+  max-height: 340px;
+  border: 1px solid var(--line);
+  background: #1f2024;
+}
+
+.picker__search {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+}
+
+.picker__search:focus {
+  outline: none;
+}
+
+.picker__search::placeholder {
+  color: var(--faint);
+}
+
+.picker__list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+/* El nombre del modelo nunca se recorta; si falta espacio, cede el id de la derecha. */
+.picker__option .model-tag {
+  flex: none;
+}
+
+.picker__option.is-active {
+  background: var(--line);
+}
+
+.picker__option[aria-selected="true"] .model-tag__name {
+  font-weight: 600;
+}
+
+.picker__hint {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.picker__empty {
+  padding: 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* Proveedor e id del modelo a mano: plegado, para quien lo necesite. */
+.advanced summary {
+  width: fit-content;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.advanced__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .field {
@@ -888,166 +1057,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   gap: 8px 12px;
   font-size: 13px;
   color: var(--amber);
-}
-
-/* ---------- Historial ---------- */
-
-.tally__numbers {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: baseline;
-  gap: 16px;
-}
-
-.tally__cell {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.tally__cell strong {
-  font: 400 24px/1 var(--pixel);
-  color: var(--text);
-}
-
-.tally__cell--red strong {
-  color: var(--red);
-}
-
-.tally__cell--blue {
-  flex-direction: row-reverse;
-}
-
-.tally__cell--blue strong {
-  color: var(--blue);
-}
-
-.tally__bar {
-  display: flex;
-  gap: 2px;
-  height: 6px;
-  margin-top: 10px;
-  background: var(--surface);
-}
-
-.tally__seg {
-  flex: 0 1 0;
-  min-width: 0;
-}
-
-.tally__seg--red {
-  background: var(--red);
-}
-
-.tally__seg--none {
-  background: var(--faint);
-}
-
-.tally__seg--blue {
-  background: var(--blue);
-}
-
-.history__wrap {
-  margin-top: 28px;
-  overflow-x: auto;
-}
-
-.history__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-
-.history__table th {
-  padding: 0 16px 8px 0;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.history__table td {
-  padding: 14px 16px 14px 0;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-}
-
-.history__table th:last-child,
-.history__table td:last-child {
-  padding-right: 0;
-}
-
-.history__date,
-.history__num {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.history__date {
-  color: var(--muted);
-}
-
-.badge {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.badge--red {
-  color: var(--red);
-}
-
-.badge--blue {
-  color: var(--blue);
-}
-
-.badge--none {
-  font-weight: 400;
-  color: var(--muted);
-}
-
-.history__prompt {
-  width: 28%;
-  min-width: 220px;
-}
-
-/* El prompt se muestra recortado a dos líneas; un clic lo abre completo. */
-.snippet {
-  display: block;
-  width: 100%;
-  padding: 0 0 0 10px;
-  border: 0;
-  border-left: 2px solid var(--side);
-  background: none;
-  text-align: left;
-  cursor: pointer;
-}
-
-.snippet__text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-
-.snippet[aria-expanded="true"] .snippet__text {
-  display: block;
-  white-space: pre-wrap;
-}
-
-.history__model {
-  margin: 6px 0 0 12px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.history__empty {
-  padding: 28px 0;
-  text-align: center;
-  color: var(--muted);
 }
 
 /* ---------- Pie y avisos ---------- */

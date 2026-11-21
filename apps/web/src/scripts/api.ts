@@ -1,11 +1,9 @@
 import {
   API_ROUTES,
   AgentConfigSchema,
-  MatchRecordSchema,
   MatchStateSchema,
   ServerDefaultsSchema,
   type AgentConfig,
-  type MatchRecord,
   type MatchState,
   type PromptsResponse,
   type ServerDefaults,
@@ -100,12 +98,6 @@ const promptsParser: Parser<PromptsResponse> = {
   },
 };
 
-const matchesParser: Parser<MatchRecord[]> = {
-  parse(data) {
-    return MatchRecordSchema.array().parse(data);
-  },
-};
-
 export function fetchState(): Promise<MatchState> {
   return request(API_ROUTES.state, MatchStateSchema);
 }
@@ -124,10 +116,6 @@ export function startMatch(): Promise<MatchState> {
 
 export function stopMatch(): Promise<MatchState> {
   return request(API_ROUTES.matchStop, MatchStateSchema, { method: "POST" });
-}
-
-export function fetchMatches(): Promise<MatchRecord[]> {
-  return request(API_ROUTES.matches, matchesParser);
 }
 
 export function fetchDefaults(): Promise<ServerDefaults> {

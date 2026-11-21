@@ -4,9 +4,8 @@ import { initControls, setPhase } from "./controls";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
-import { addRecord, initHistory, refreshHistory } from "./history";
 import { setDefaults } from "./models";
-import { initPlayer } from "./player";
+import { initPlayer, setServerClockOffset, videoDelayMs } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import {
   applyAction,
@@ -73,7 +72,7 @@ function handleEvent(event: ArenaEvent): void {
       break;
     }
     case "damage":
-      applyDamage(event.side, event.health);
+      applyDamage(event.side, event.health, event.amount);
       addFeed({
         at: event.at,
         kind: "damage",
@@ -92,10 +91,6 @@ function handleEvent(event: ArenaEvent): void {
         kind: "system",
         text: `${resultTitle(event.record.result)} ${resultDetail(event.record.result)}`,
       });
-      addRecord(event.record);
-      // Se vuelve a pedir el historial completo un poco después, por si el
-      // servidor aún no terminaba de persistir el registro.
-      window.setTimeout(() => void refreshHistory({ silent: true }), 1500);
       break;
     case "log":
       addFeed({
@@ -104,6 +99,51 @@ function handleEvent(event: ArenaEvent): void {
         text: event.text,
       });
       break;
+  }
+}
+
+// ---------- Telemetría sincronizada con el video ----------
+//
+// Los eventos llegan por websocket al instante, pero la imagen (HLS) va varios segundos
+// atrás. Para que el marcador no "adelante" lo que se ve, cada evento espera en una cola
+// el mismo tiempo que lleva de atraso el video, y recién entonces se aplica.
+
+type Pending = { dueAt: number; event: ArenaEvent };
+
+const DRAIN_MS = 50;
+/** Saltos de atraso menores que esto se suavizan; mayores (cambió la señal) se toman de una vez. */
+const DELAY_SNAP_MS = 1500;
+
+const pending: Pending[] = [];
+let lastDueAt = 0;
+let delay = 0;
+
+function receiveEvent(event: ArenaEvent): void {
+  const now = Date.now();
+  setServerClockOffset(event.at - now);
+
+  // Los prompts pendientes no son parte de la imagen: se aplican al tiro.
+  if (event.type === "prompts") {
+    handleEvent(event);
+    return;
+  }
+
+  const target = videoDelayMs();
+  delay = Math.abs(target - delay) > DELAY_SNAP_MS ? target : delay + (target - delay) * 0.2;
+  // Nunca antes que el evento anterior: el orden de llegada se respeta siempre.
+  const dueAt = Math.max(lastDueAt, now + delay);
+  lastDueAt = dueAt;
+  pending.push({ dueAt, event });
+  drainPending();
+}
+
+function drainPending(force = false): void {
+  const now = Date.now();
+  while (pending.length > 0) {
+    const next = pending[0]!;
+    if (!force && next.dueAt > now) break;
+    pending.shift();
+    handleEvent(next.event);
   }
 }
 
@@ -129,8 +169,13 @@ function init(): void {
   initScoreboard();
   initFeed();
   initPrompts();
-  initHistory();
-  initControls(applyState);
+  // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
+  // para que un estado viejo en espera no la pise después.
+  initControls((state) => {
+    drainPending(true);
+    applyState(state);
+  });
+  window.setInterval(drainPending, DRAIN_MS);
   initPlayer();
 
   renderConnection("connecting");
@@ -139,7 +184,7 @@ function init(): void {
   connectSocket({
     onMessage(raw) {
       const event = parseArenaEvent(raw);
-      if (event) handleEvent(event);
+      if (event) receiveEvent(event);
     },
     onStatus(status) {
       const previous = socketStatus;
@@ -147,10 +192,7 @@ function init(): void {
       renderConnection(status);
       if (status === "open" && previous !== "open") {
         // Tras (re)conectar pudo haber cambiado todo mientras no escuchábamos.
-        if (everOpened) {
-          void loadPrompts();
-          void refreshHistory({ silent: true });
-        }
+        if (everOpened) void loadPrompts();
         everOpened = true;
       }
     },
@@ -159,7 +201,6 @@ function init(): void {
   // Carga inicial por HTTP: funciona aunque el websocket tarde o esté bloqueado.
   pollState();
   void loadPrompts();
-  void refreshHistory();
   // Con esto se sabe qué modelo usa un agente que dejó "por defecto del servidor".
   fetchDefaults()
     .then(setDefaults)

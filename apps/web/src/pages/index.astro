@@ -12,7 +12,8 @@ const sides = [
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
 ] as const;
 
-// Estadísticas de cada agente: un ícono de píxeles y su número (el nombre va en el `title`).
+// Estadísticas de cada agente, bajo su barra de vida: un ícono de píxeles y su número
+// (el nombre va en el `title`).
 const stats = [
   { id: "food", label: "Comida" },
   { id: "damage", label: "Daño hecho" },
@@ -90,6 +91,19 @@ const providers = [
               >
                 <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
               </div>
+              <dl class="stats">
+                {
+                  stats.map((stat) => (
+                    <div title={stat.label}>
+                      <dt>
+                        <PixelIcon name={stat.id} />
+                        <span class="sr-only">{stat.label}</span>
+                      </dt>
+                      <dd id={`${stat.id}-${side.id}`}>–</dd>
+                    </div>
+                  ))
+                }
+              </dl>
               <span class="sr-only" id={`bot-${side.id}`}>{side.bot}</span>
             </div>
           ))
@@ -105,28 +119,20 @@ const providers = [
         <span class="winner__detail" id="winner-detail"></span>
       </div>
 
-      <!-- Qué piensa cada agente ahora mismo, como subtítulos, y el botón de la pelea al centro. -->
+      <!-- Qué piensa cada agente, como subtítulos que aparecen con cada novedad, y el botón de la pelea al centro. -->
       <div class="minds">
         {
           sides.map((side) => (
-            <article class={`mind mind--${side.id}`} data-side={side.id} aria-label={`Agente ${side.label}`}>
+            <article
+              class={`mind mind--${side.id} is-stale`}
+              id={`mind-${side.id}`}
+              data-side={side.id}
+              aria-label={`Agente ${side.label}`}
+            >
               <span class="sr-only">Último pensamiento</span>
               <p class="mind__thought" id={`thought-${side.id}`}>—</p>
               <span class="sr-only">Última acción</span>
               <p class="mind__action" id={`action-${side.id}`}>—</p>
-              <dl class="stats">
-                {
-                  stats.map((stat) => (
-                    <div title={stat.label}>
-                      <dt>
-                        <PixelIcon name={stat.id} />
-                        <span class="sr-only">{stat.label}</span>
-                      </dt>
-                      <dd id={`${stat.id}-${side.id}`}>–</dd>
-                    </div>
-                  ))
-                }
-              </dl>
             </article>
           ))
         }
@@ -153,32 +159,64 @@ const providers = [
               <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} data-side={side.id} autocomplete="off" novalidate>
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
-                  <span class="model-tag editor__model" id={`editor-model-${side.id}`} hidden />
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
                 </div>
 
                 <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
 
                 <div class="editor__options">
-                  <label class="field">
-                    <span class="field__label">Proveedor</span>
-                    <select id={`provider-${side.id}`}>
-                      {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span class="field__label">Modelo</span>
-                    <input
-                      id={`model-${side.id}`}
-                      type="text"
-                      maxlength="100"
-                      placeholder="Por defecto del servidor"
-                      autocomplete="off"
-                      spellcheck="false"
-                    />
-                  </label>
+                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts sobre el catálogo. -->
+                  <div class="picker" id={`picker-${side.id}`}>
+                    <span class="field__label" id={`picker-label-${side.id}`}>Modelo</span>
+                    <button
+                      type="button"
+                      class="picker__trigger"
+                      id={`picker-trigger-${side.id}`}
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-labelledby={`picker-label-${side.id} picker-current-${side.id}`}
+                    >
+                      <span class="model-tag" id={`picker-current-${side.id}`} />
+                    </button>
+                    <div class="picker__panel" id={`picker-panel-${side.id}`} hidden>
+                      <input
+                        class="picker__search"
+                        id={`picker-search-${side.id}`}
+                        type="search"
+                        placeholder="Buscar modelo"
+                        aria-label="Buscar modelo"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <ul class="picker__list" id={`picker-list-${side.id}`} role="listbox" aria-label="Modelos" />
+                    </div>
+                  </div>
                   <button type="submit" class="btn btn--save" id={`save-${side.id}`}>Guardar</button>
                 </div>
+
+                <!-- Los dos campos reales del formulario: el selector de arriba escribe aquí. -->
+                <details class="advanced">
+                  <summary>Avanzado</summary>
+                  <div class="advanced__fields">
+                    <label class="field">
+                      <span class="field__label">Proveedor</span>
+                      <select id={`provider-${side.id}`}>
+                        {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">Id del modelo</span>
+                      <input
+                        id={`model-${side.id}`}
+                        type="text"
+                        maxlength="100"
+                        placeholder="Por defecto del servidor"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                    </label>
+                  </div>
+                </details>
 
                 <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
 
@@ -200,52 +238,6 @@ const providers = [
           <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
         </aside>
       </div>
-
-      <section class="section" aria-labelledby="history-title">
-        <header class="section__head">
-          <h2 class="section__title" id="history-title">Historial</h2>
-          <p class="section__hint" id="tally-summary">Cargando resultados…</p>
-        </header>
-
-        <div class="tally">
-          <div class="tally__numbers">
-            <div class="tally__cell tally__cell--red">
-              <strong id="tally-red">0</strong>
-              <span>victorias Rojo</span>
-            </div>
-            <div class="tally__cell tally__cell--none">
-              <strong id="tally-none">0</strong>
-              <span>sin ganador</span>
-            </div>
-            <div class="tally__cell tally__cell--blue">
-              <strong id="tally-blue">0</strong>
-              <span>victorias Azul</span>
-            </div>
-          </div>
-          <div class="tally__bar" aria-hidden="true">
-            <span class="tally__seg tally__seg--red" id="tally-bar-red"></span>
-            <span class="tally__seg tally__seg--none" id="tally-bar-none"></span>
-            <span class="tally__seg tally__seg--blue" id="tally-bar-blue"></span>
-          </div>
-        </div>
-
-        <div class="history__wrap">
-          <table class="history__table">
-            <thead>
-              <tr>
-                <th scope="col">Fecha</th>
-                <th scope="col">Ganador</th>
-                <th scope="col">Motivo</th>
-                <th scope="col">Duración</th>
-                <th scope="col">Vida final</th>
-                <th scope="col">Prompt Rojo</th>
-                <th scope="col">Prompt Azul</th>
-              </tr>
-            </thead>
-            <tbody id="history-body"></tbody>
-          </table>
-        </div>
-      </section>
     </main>
 
     <footer class="footer">

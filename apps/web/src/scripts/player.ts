@@ -8,6 +8,30 @@ const RETRY_MS = 3000;
 const STALL_MS = 12_000;
 const WATCHDOG_MS = 2000;
 
+/** Lo que tarda la cámara en codificar y MediaMTX en empaquetar, que hls.js no ve. */
+const ENCODE_DELAY_MS = 1200;
+const MAX_VIDEO_DELAY_MS = 15_000;
+
+let delayProbe: (() => number) | null = null;
+let serverClockOffset = 0;
+
+/** Diferencia entre el reloj del servidor y el del navegador (ms), medida al recibir cada evento. */
+export function setServerClockOffset(ms: number): void {
+  serverClockOffset = ms;
+}
+
+/**
+ * Cuánto va atrasada la imagen respecto de la telemetría, en ms. El video (HLS) llega
+ * varios segundos después que los eventos del websocket; main.ts usa este valor para
+ * retrasar el marcador y que un golpe se vea y se descuente al mismo tiempo.
+ * Sin video en pantalla devuelve 0.
+ */
+export function videoDelayMs(): number {
+  if (!delayProbe) return 0;
+  const value = delayProbe();
+  return Number.isFinite(value) ? Math.min(MAX_VIDEO_DELAY_MS, Math.max(0, value)) : 0;
+}
+
 /**
  * Reproductor en vivo. Estrategia simple y robusta: ante cualquier error fatal
  * o congelamiento se destruye todo y se vuelve a empezar cada RETRY_MS, hasta
@@ -30,6 +54,7 @@ export function initPlayer(): void {
     container.dataset.signal = "off";
     void import("./mock").then((mock) => {
       if (!mock.startMockVideo(video)) return;
+      delayProbe = () => mock.MOCK_VIDEO_DELAY_MS;
       video.addEventListener("timeupdate", () => {
         container.dataset.signal = "on";
       });
@@ -55,6 +80,7 @@ export function initPlayer(): void {
   };
 
   const teardown = (): void => {
+    delayProbe = null;
     if (hls) {
       hls.destroy();
       hls = null;
@@ -95,6 +121,18 @@ export function initPlayer(): void {
         maxLiveSyncPlaybackRate: 1.5,
       });
       hls = instance;
+      delayProbe = () => {
+        if (container.dataset.signal !== "on") return 0;
+        // Lo más exacto: la hora de captura del cuadro en pantalla (EXT-X-PROGRAM-DATE-TIME).
+        const playing = instance.playingDate;
+        if (playing) {
+          const byDate = Date.now() + serverClockOffset - playing.getTime();
+          if (byDate > 0 && byDate < MAX_VIDEO_DELAY_MS) return byDate;
+        }
+        // Si el playlist no trae fechas: distancia al borde en vivo + lo que tarda en codificarse.
+        const latency = instance.latency;
+        return Number.isFinite(latency) && latency > 0 ? latency * 1000 + ENCODE_DELAY_MS : 0;
+      };
       instance.on(Hls.Events.MANIFEST_PARSED, () => {
         tryPlay();
       });
@@ -115,6 +153,11 @@ export function initPlayer(): void {
       video.src = HLS_URL;
       video.load();
       tryPlay();
+      delayProbe = () => {
+        if (container.dataset.signal !== "on" || video.seekable.length === 0) return 0;
+        const liveEdge = video.seekable.end(video.seekable.length - 1);
+        return Math.max(0, liveEdge - video.currentTime) * 1000 + ENCODE_DELAY_MS;
+      };
     }
   };
 
