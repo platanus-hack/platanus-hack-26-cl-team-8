@@ -1,0 +1,747 @@
+/*
+ * Leaderboard del torneo (/arena). Usa los tokens y piezas de global.css (model-tag,
+ * section__head, btn, field, data-tip) y suma lo propio de esta página.
+ *
+ *  - Rojo y azul siguen siendo solo los lados del juego (quién partió en cada spawn).
+ *  - La matriz usa un color divergente aparte: verde azulado = la fila gana, naranjo =
+ *    la fila pierde, gris en 50 %. "Sin partidas" va rayado y con "—", nunca gris liso.
+ *  - La referencia (DeepSeek) se marca en ámbar.
+ *  - La página nunca scrollea de lado: tablas y matriz scrollean dentro de su caja.
+ */
+
+.arena-page {
+  --win: rgb(38, 150, 116);
+  --mid: rgb(42, 44, 49);
+  --loss: rgb(196, 98, 52);
+  overflow-x: hidden;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.empty.is-error {
+  color: var(--amber);
+}
+
+/* ---------- Barra superior ---------- */
+
+.arena-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 1440px;
+  height: 56px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.arena-top__brand {
+  color: inherit;
+  text-decoration: none;
+}
+
+.arena-top__crumb {
+  color: var(--faint);
+}
+
+.arena-top__title {
+  font: 400 16px/1 var(--pixel);
+  color: var(--amber);
+}
+
+.arena-top__back {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.arena-top__back:hover {
+  color: var(--text);
+}
+
+@media (max-width: 520px) {
+  .arena-top__brand .brand__title,
+  .arena-top__crumb {
+    display: none;
+  }
+}
+
+/* ---------- Contenido ---------- */
+
+.arena {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 12px var(--gutter) 0;
+}
+
+.arena-pick {
+  --side: var(--text);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 16px;
+}
+
+.arena-pick__field {
+  flex: 1 1 280px;
+  max-width: 560px;
+}
+
+.arena-pick__mock {
+  padding: 4px 8px;
+  border: 1px dashed var(--faint);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.arena-status {
+  margin-top: 24px;
+  color: var(--muted);
+}
+
+.arena-status[data-kind="error"] {
+  color: var(--amber);
+}
+
+.arena-section {
+  margin-top: 72px;
+}
+
+/* position: relative para que los textos .sr-only (absolutos) queden dentro de la caja. */
+.scroll-x,
+.matrix-wrap {
+  position: relative;
+}
+
+.scroll-x {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+/* Dentro de una caja que scrollea, la ayuda flotante se cortaría: en pantallas anchas
+   las tablas no necesitan scroll, así que solo se activa en pantallas angostas. */
+@media (min-width: 1000px) {
+  .scroll-x {
+    overflow-x: visible;
+  }
+}
+
+/* ---------- (1) Cabecera del torneo ---------- */
+
+.summary {
+  margin-top: 36px;
+}
+
+.summary__name {
+  font-size: clamp(24px, 3.4vw, 34px);
+  font-weight: 600;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.summary__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.summary__meta .mono {
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  padding: 3px 8px 4px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.badge[data-stage="calibration"],
+.badge[data-stage="league"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.badge[data-stage="paused"] {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.badge[data-mode="simulated"] {
+  border-style: dashed;
+}
+
+.summary__progress {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px 28px;
+  margin-top: 28px;
+}
+
+.progress {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.progress__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.progress__label {
+  color: var(--muted);
+}
+
+.progress__value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.progress__track {
+  height: 6px;
+  background: var(--surface);
+}
+
+.progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--text);
+}
+
+.progress__note {
+  font-size: 12px;
+  color: var(--amber);
+}
+
+.summary__stop {
+  margin-top: 18px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.provisional {
+  display: grid;
+  gap: 6px;
+  margin-top: 24px;
+  padding: 12px 16px;
+  border-left: 2px solid var(--amber);
+  background: rgba(232, 184, 74, 0.07);
+}
+
+.provisional__title {
+  font: 400 16px/1 var(--pixel);
+  color: var(--amber);
+}
+
+.provisional__why {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+
+/* ---------- Tablas ---------- */
+
+.board {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.board th,
+.board td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.board thead th {
+  padding-top: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.board thead th.num {
+  text-align: right;
+}
+
+.board abbr {
+  text-decoration: none;
+  cursor: help;
+}
+
+.board tbody th {
+  font-weight: 500;
+}
+
+.standings,
+.calib {
+  min-width: 760px;
+}
+
+.board__rank {
+  width: 1%;
+  color: var(--muted);
+}
+
+.board__model {
+  min-width: 200px;
+}
+
+.board__model > * {
+  vertical-align: middle;
+}
+
+.board__model > * + * {
+  margin-left: 8px;
+}
+
+.board__model .model-tag {
+  font-weight: 600;
+}
+
+.board__version {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ref-badge {
+  padding: 1px 6px 2px;
+  background: var(--amber);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.is-reference > td,
+.is-reference > th {
+  background: rgba(232, 184, 74, 0.07);
+}
+
+.standings .is-reference > td:first-child {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.board__rating {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.board__ci > span + span,
+.board__latency .sep,
+.board__wdl .sep {
+  color: var(--faint);
+}
+
+.board__range {
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.board__method {
+  display: block;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.board__method:empty {
+  display: none;
+}
+
+.board__wdl .w {
+  color: var(--win);
+  filter: brightness(1.3);
+}
+
+.board__wdl .l {
+  color: var(--loss);
+  filter: brightness(1.25);
+}
+
+/* Las ayudas de la última columna salen hacia la izquierda. */
+.board td:last-child[data-tip]::after,
+.board td:nth-last-child(2)[data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
+/* ---------- (3) Matriz ---------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend__ramp {
+  width: 160px;
+  height: 10px;
+  background: linear-gradient(to right, var(--loss), var(--mid) 50%, var(--win));
+}
+
+.legend__empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 14px;
+}
+
+.legend__swatch,
+.cell.is-empty {
+  background: repeating-linear-gradient(-45deg, transparent 0 4px, rgba(255, 255, 255, 0.07) 4px 8px), var(--bg);
+}
+
+.legend__swatch {
+  width: 20px;
+  height: 12px;
+  border: 1px dashed var(--faint);
+}
+
+.matrix-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.matrix {
+  border-collapse: separate;
+  border-spacing: 3px;
+  font-size: 13px;
+}
+
+.matrix__corner {
+  font-size: 11px;
+  color: var(--faint);
+  vertical-align: bottom;
+  text-align: right;
+  padding: 0 8px 6px 0;
+}
+
+.matrix__colhead {
+  min-width: 56px;
+  padding: 0 0 6px;
+  font-weight: 500;
+  vertical-align: bottom;
+}
+
+.matrix__colhead .model-tag {
+  display: flex;
+  justify-content: center;
+}
+
+/* En las columnas basta el logo y la posición: el nombre está en la fila. */
+.matrix__colhead .model-tag__name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.matrix__colhead .model-tag__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.matrix__colrank {
+  display: block;
+  margin-bottom: 4px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.matrix__rowhead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 12px 0 0;
+  background: var(--bg);
+  text-align: left;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.matrix__rowhead .model-tag {
+  max-width: 190px;
+  vertical-align: middle;
+}
+
+@media (max-width: 600px) {
+  .matrix__rowhead .model-tag {
+    max-width: 110px;
+  }
+}
+
+.matrix__rank {
+  display: inline-block;
+  width: 1.6em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.matrix .is-reference .model-tag__name {
+  color: var(--amber);
+}
+
+.matrix__cell {
+  padding: 0;
+}
+
+.matrix__cell.is-diagonal {
+  background: transparent;
+  border: 1px solid var(--surface);
+}
+
+.cell {
+  display: grid;
+  place-content: center;
+  width: 100%;
+  min-width: 56px;
+  height: 48px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  background: var(--mid);
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.cell:hover {
+  border-color: rgba(237, 236, 232, 0.6);
+}
+
+.cell[aria-pressed="true"] {
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+
+.cell__score {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+}
+
+.cell__games {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.cell.is-empty {
+  border: 1px dashed var(--faint);
+  color: var(--faint);
+}
+
+/* ---------- (4) Panel de una pareja ---------- */
+
+.pair {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.pair__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.pair__title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pair__title:focus {
+  outline: none;
+}
+
+.pair__table {
+  min-width: 820px;
+  font-size: 13px;
+}
+
+.pair__table .model-tag__name {
+  max-width: 180px;
+}
+
+.pair__side {
+  box-shadow: inset 2px 0 0 var(--side);
+}
+
+.pair__result {
+  white-space: nowrap;
+}
+
+.pair__outcome {
+  font-weight: 600;
+}
+
+.pair__outcome[data-result="draw"] {
+  color: var(--muted);
+}
+
+.pair__reason {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.is-duplicate {
+  opacity: 0.5;
+}
+
+.pair__dup {
+  font-size: 12px;
+  color: var(--amber);
+}
+
+.infra__box {
+  display: grid;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 12px 16px;
+  border-left: 2px dashed var(--amber);
+}
+
+.infra__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.infra {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.infra__item {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.infra__what {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.infra__error {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- (5) Calibración ---------- */
+
+.verdict {
+  display: inline-block;
+  padding: 2px 7px 3px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.verdict[data-verdict="inside"],
+.verdict[data-league="yes"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.verdict[data-verdict="pending"] {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.verdict[data-verdict="outside"],
+.verdict[data-league="no"] {
+  color: var(--muted);
+}
+
+.calib__why {
+  min-width: 240px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.omitted__title {
+  margin: 40px 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.omitted {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.omitted__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+  gap: 4px 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.omitted__line,
+.omitted__id {
+  overflow-wrap: anywhere;
+}
+
+.omitted__id,
+.omitted__why {
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .omitted__item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

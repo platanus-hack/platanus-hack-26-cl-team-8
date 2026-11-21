@@ -6,7 +6,7 @@ import { initCountdown, updateCountdown } from "./countdown";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { addToHistory, initHistory, syncHistory } from "./history";
-import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, roundDetail, roundTitle, truncate } from "./format";
+import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, roundDetail, roundTitle } from "./format";
 import { setDefaults } from "./models";
 import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";

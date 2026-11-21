@@ -99,6 +99,7 @@ const stats = [
           <span class="conn__dot" aria-hidden="true"></span>
           <span class="conn__text" id="conn-text">Conectando…</span>
         </div>
+        <a class="top__arena" href="/arena" data-tip="Torneo de modelos: ranking y quién le gana a quién.">Leaderboard</a>
       </header>
 
       <!-- Marcador: una barra de vida por lado y el reloj al centro. -->
@@ -442,5 +443,23 @@ const stats = [
     <script>
       import "../scripts/main";
     </script>
+
+    <style>
+      /* Enlace discreto al leaderboard del torneo, al final de la barra superior. */
+      .top__arena {
+        font-size: 13px;
+        color: var(--muted);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .top__arena:hover {
+        color: var(--text);
+        text-decoration: underline;
+      }
+      .top__arena[data-tip]::after {
+        left: auto;
+        right: 0;
+      }
+    </style>
   </body>
 </html>

@@ -494,3 +494,41 @@ describe("buildSystemPrompt: genérico (lo del escenario va en el prompt del jug
     expect(buildSystemPrompt(base)).toContain("cómo se evalúa la partida");
   });
 });
+
+describe("buildSystemPrompt: escenario de arena", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: KITS.classic,
+    strategy: "",
+    tickMs: 1500,
+    durationSeconds: 60,
+    comms: "none" as const,
+  };
+
+  it("describe la arena Platanus: muros de vidrio, sin pizza", () => {
+    const text = buildSystemPrompt({ ...base, arena: "platanus" });
+    expect(text).toContain("muros de vidrio");
+    expect(text).not.toContain("pizza");
+  });
+
+  it("describe la pizza: sin muros y con vacío", () => {
+    const text = buildSystemPrompt({ ...base, arena: "pizza-spleef-2" });
+    expect(text).toContain("sin muros");
+    expect(text).toContain("caer ahí mata");
+  });
+
+  it("sin escenario usa ARENA_SCENARIO", () => {
+    const previous = process.env.ARENA_SCENARIO;
+    try {
+      process.env.ARENA_SCENARIO = "pizza-spleef-2";
+      expect(buildSystemPrompt(base)).toContain("plataforma circular");
+      delete process.env.ARENA_SCENARIO;
+      expect(buildSystemPrompt(base)).toContain("muros de vidrio");
+    } finally {
+      if (previous === undefined) delete process.env.ARENA_SCENARIO;
+      else process.env.ARENA_SCENARIO = previous;
+    }
+  });
+});

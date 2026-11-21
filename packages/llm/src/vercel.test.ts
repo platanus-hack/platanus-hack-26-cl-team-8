@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LlmError, createLlmClient } from "./index";
 import { TOOLS } from "./test-helpers";
 import type { ChatMessage } from "./types";
-import { createVercelClient, toModelMessages } from "./vercel";
+import { createVercelClient, gatewayCost, routingOptions, toModelMessages } from "./vercel";
 import type { GenerateOptions, GenerateResult } from "./vercel";
 
 const HISTORY: ChatMessage[] = [
@@ -148,6 +148,90 @@ describe("createVercelClient", () => {
   });
 });
 
+describe("createVercelClient: enrutamiento, costo y errores clasificables", () => {
+  it("pasa gatewayRouting en providerOptions.gateway y mantiene reasoning none", async () => {
+    const stub = stubGenerate({ text: "", toolCalls: [] });
+    const client = createVercelClient({
+      apiKey: "vck_test",
+      model: "deepseek/deepseek-v4.1-flash-1017-fast",
+      gatewayRouting: { order: ["baseten"], only: ["baseten"] },
+      generate: stub.generate,
+    });
+    await client.complete({ messages: HISTORY, tools: TOOLS });
+    expect(stub.calls[0]?.providerOptions).toEqual({ gateway: { order: ["baseten"], only: ["baseten"] } });
+    expect(stub.calls[0]?.reasoning).toBe("none");
+  });
+
+  it("sin enrutamiento (o con listas vacías) no manda providerOptions", async () => {
+    for (const gatewayRouting of [undefined, {}, { order: [], only: [] }]) {
+      const stub = stubGenerate({ text: "", toolCalls: [] });
+      const client = createVercelClient({
+        apiKey: "vck_test",
+        model: "m",
+        generate: stub.generate,
+        ...(gatewayRouting ? { gatewayRouting } : {}),
+      });
+      await client.complete({ messages: HISTORY, tools: TOOLS });
+      expect(stub.calls[0]?.providerOptions).toBeUndefined();
+    }
+    expect(routingOptions({ order: ["a"] })).toEqual({ gateway: { order: ["a"] } });
+  });
+
+  it("lee el costo de providerMetadata.gateway.cost (número o string)", async () => {
+    for (const [cost, expected] of [
+      [0.00042, 0.00042],
+      ["0.0013", 0.0013],
+    ] as const) {
+      const stub = stubGenerate({ text: "", toolCalls: [], providerMetadata: { gateway: { cost } } });
+      const client = createVercelClient({ apiKey: "vck_test", model: "m", generate: stub.generate });
+      const response = await client.complete({ messages: HISTORY, tools: TOOLS });
+      expect(response.costUsd).toBeCloseTo(expected, 10);
+    }
+    expect(gatewayCost(undefined)).toBeUndefined();
+    expect(gatewayCost({ gateway: { cost: "nada" } })).toBeUndefined();
+    expect(gatewayCost({ gateway: { cost: -1 } })).toBeUndefined();
+    expect(gatewayCost({ openai: { cost: 1 } })).toBeUndefined();
+  });
+
+  it("omite costUsd si el gateway no lo informa", async () => {
+    const stub = stubGenerate({ text: "", toolCalls: [] });
+    const client = createVercelClient({ apiKey: "vck_test", model: "m", generate: stub.generate });
+    const response = await client.complete({ messages: HISTORY, tools: TOOLS });
+    expect("costUsd" in response).toBe(false);
+  });
+
+  it("marca 429 y 5xx como reintentables y 4xx como definitivos", async () => {
+    const cases: Array<[unknown, number | null, boolean]> = [
+      [Object.assign(new Error("Too Many Requests"), { statusCode: 429 }), 429, true],
+      [Object.assign(new Error("Bad Gateway"), { statusCode: 502 }), 502, true],
+      [Object.assign(new Error("Bad Request"), { statusCode: 400, isRetryable: false }), 400, false],
+      [Object.assign(new Error("fetch failed"), { name: "TypeError" }), null, true],
+      // RetryError del SDK: el status viene en el último error.
+      [
+        Object.assign(new Error("Failed after 2 attempts"), {
+          name: "AI_RetryError",
+          lastError: Object.assign(new Error("rate"), { statusCode: 429, responseBody: "limit" }),
+        }),
+        429,
+        true,
+      ],
+    ];
+    for (const [thrown, status, retryable] of cases) {
+      const client = createVercelClient({
+        apiKey: "vck_test",
+        model: "m",
+        generate: async () => {
+          throw thrown;
+        },
+      });
+      const error = (await client.complete({ messages: [{ role: "user", content: "x" }], tools: [] }).catch((e) => e)) as LlmError;
+      expect(error).toBeInstanceOf(LlmError);
+      expect(error.status).toBe(status);
+      expect(error.retryable).toBe(retryable);
+    }
+  });
+});
+
 describe("createLlmClient con vercel", () => {
   it("exige VERCEL_API_KEY", () => {
     expect(() => createLlmClient({ provider: "vercel", apiKeys: {} })).toThrow(/VERCEL_API_KEY/);
@@ -156,5 +240,24 @@ describe("createLlmClient con vercel", () => {
   it("usa el modelo por defecto del gateway", () => {
     const client = createLlmClient({ provider: "vercel", apiKeys: { vercel: "vck_test" } });
     expect(client.model).toBe("deepseek/deepseek-v4.1-flash-1017-fast");
+  });
+
+  it("acepta gatewayRouting", () => {
+    const client = createLlmClient({
+      provider: "vercel",
+      apiKeys: { vercel: "vck_test" },
+      gatewayRouting: { order: ["baseten"], only: ["baseten"] },
+    });
+    expect(client.provider).toBe("vercel");
+  });
+});
+
+describe("LlmError.retryable", () => {
+  it("se deduce del status si no se indica", () => {
+    expect(new LlmError("x", 429, "").retryable).toBe(true);
+    expect(new LlmError("x", 503, "").retryable).toBe(true);
+    expect(new LlmError("x", null, "").retryable).toBe(true);
+    expect(new LlmError("x", 401, "").retryable).toBe(false);
+    expect(new LlmError("x", 401, "", undefined, true).retryable).toBe(true);
   });
 });

@@ -1,15 +1,29 @@
-import type { CommsMode, Horizon, Kit, RuleId, ScenarioId, Side } from "@phack/protocol";
+import type { CommsMode, Horizon, Kit, ScenarioId, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 import type { Observation } from "./observation";
 import type { ContextProfile } from "./context-profile";
 import type { SeriesView } from "./rounds";
 
-/** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
+import type { LlmErrorReport } from "./decision";
+
+/**
+ * Una llamada al LLM que terminó con respuesta (las fallidas se informan con onLlmError;
+ * las cortadas por stop no se informan). Se emite después de ejecutar la acción.
+ */
 export type DecisionReport = {
   /** Lo que tardó la llamada al LLM, en ms (reloj de pared). */
   ms: number;
   /** Tokens de esa llamada; falta si el proveedor no los informó. */
   usage?: TokenUsage;
+  /** Costo real en USD informado por el proveedor; falta si no lo informó. */
+  costUsd?: number;
+  /**
+   * Latencia de la decisión: desde que el agente arma la observación hasta que entrega
+   * la acción válida (ya aplicada al cuerpo). Falta si la decisión fue inválida.
+   */
+  decisionMs?: number;
+  /** true si no hubo acción válida (sin tool, tool desconocida o argumentos inválidos). */
+  invalid?: boolean;
   /** Tamaño del contexto enviado; los tokens reales siguen viniendo en usage. */
   contextProfile?: ContextProfile;
   /** La observación que recibió el LLM en esa llamada. */
@@ -21,6 +35,8 @@ export type DecisionReport = {
   response: { text: string; toolCalls: { name: string; args: Record<string, unknown> }[] };
 };
 
+export type { LlmErrorReport };
+
 export type FighterEvents = {
   /**
    * `heldItem`: nombre de Minecraft del ítem en la mano principal ("" = mano vacía).
@@ -28,6 +44,8 @@ export type FighterEvents = {
    */
   onStatus(s: { connected: boolean; alive: boolean; health: number; absorption: number; food: number; heldItem: string }): void;
   onDecision(d: DecisionReport): void;
+  /** Falló una llamada al LLM (no se informa si la cortó stop). El agente mantiene la acción actual. */
+  onLlmError?(e: LlmErrorReport): void;
   onThought(text: string): void;
   /**
    * Una llamada a herramienta empezó (o no se pudo usar) y este es su resultado. Con varias

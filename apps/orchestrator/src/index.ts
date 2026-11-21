@@ -15,6 +15,7 @@ import { buildServer } from "./server";
 import { SpeechService, clampSpeed } from "./speech";
 import { MatchStore, PromptStore, SettingsStore } from "./store";
 import { TranscriptStore } from "./transcript";
+import { createTournamentReader } from "./tournament";
 import { errorMessage, sleep, type LogFn } from "./util";
 
 const log: LogFn = (level, text) => {
@@ -113,6 +114,7 @@ async function main(): Promise<void> {
 
   const presets = new PresetRunner({ prompts, settings, match, hub, log });
 
+  const tournaments = createTournamentReader(dataDir);
   const app = await buildServer({
     presets,
     archiveHistory: () => history.archive(),
@@ -132,6 +134,7 @@ async function main(): Promise<void> {
     models,
     vercelKeyConfigured: env.VERCEL_API_KEY.trim() !== "",
     speech,
+    tournaments,
   });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
