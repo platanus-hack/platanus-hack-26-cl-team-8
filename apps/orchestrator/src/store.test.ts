@@ -102,14 +102,25 @@ describe("parsePrompts con proveedores que ya no existen", () => {
     });
   });
 
-  it("con cualquier otro proveedor eliminado se conserva el prompt y el lado queda sin proveedor", () => {
+  it("openrouter pasa a vercel con su modelo, que ya tiene el formato del gateway", () => {
+    const raw = JSON.stringify({ red: { side: "red", prompt: "rojo custom", provider: "openrouter", model: "openai/gpt-4o" } });
+    expect(parsePrompts(raw).red).toEqual({
+      side: "red",
+      prompt: "rojo custom",
+      provider: "vercel",
+      model: "openai/gpt-4o",
+      kit: "classic",
+    });
+  });
+
+  it("con cualquier otro proveedor eliminado se conserva el prompt y el lado queda sin proveedor ni modelo", () => {
     const raw = JSON.stringify({
       red: { side: "red", prompt: "rojo custom", provider: "openai", model: "gpt-6-luna" },
-      blue: { side: "blue", prompt: "azul custom", provider: "inventado" },
+      blue: { side: "blue", prompt: "azul custom", provider: "anthropic", model: "claude-haiku-5-5", kit: "tank" },
     });
     const prompts = parsePrompts(raw);
-    expect(prompts.red).toEqual({ side: "red", prompt: "rojo custom", model: "gpt-6-luna", kit: "classic" });
-    expect(prompts.blue).toEqual({ side: "blue", prompt: "azul custom", kit: "classic" });
+    expect(prompts.red).toEqual({ side: "red", prompt: "rojo custom", kit: "classic" });
+    expect(prompts.blue).toEqual({ side: "blue", prompt: "azul custom", kit: "tank" });
   });
 });
 
@@ -131,14 +142,32 @@ describe("migrateStoredConfig", () => {
     expect(migrateStoredConfig("texto")).toBe("texto");
   });
 
-  it("convierte gateway en vercel y borra los demás proveedores eliminados", () => {
+  it("convierte gateway y openrouter en vercel conservando el modelo", () => {
     expect(migrateStoredConfig({ prompt: "p", provider: "gateway", model: "a/b" })).toEqual({
       prompt: "p",
       provider: "vercel",
       model: "a/b",
     });
-    for (const provider of ["openai", "anthropic", "openrouter", "basura", 7]) {
-      expect(migrateStoredConfig({ prompt: "p", provider, model: "m" })).toEqual({ prompt: "p", model: "m" });
+    // Los modelos de OpenRouter ya tienen el formato del gateway.
+    expect(migrateStoredConfig({ side: "red", prompt: "p", provider: "openrouter", model: "openai/gpt-4o-mini" })).toEqual({
+      side: "red",
+      prompt: "p",
+      provider: "vercel",
+      model: "openai/gpt-4o-mini",
+    });
+    expect(migrateStoredConfig({ prompt: "p", provider: "openrouter" })).toEqual({ prompt: "p", provider: "vercel" });
+  });
+
+  it("para el historial conserva el modelo aunque borre el proveedor", () => {
+    expect(migrateStoredConfig({ prompt: "p", provider: "anthropic", model: "claude-haiku-5-5" }, true)).toEqual({
+      prompt: "p",
+      model: "claude-haiku-5-5",
+    });
+  });
+
+  it("con los demás proveedores eliminados borra el proveedor y también el modelo", () => {
+    for (const provider of ["openai", "anthropic", "basura", 7]) {
+      expect(migrateStoredConfig({ prompt: "p", provider, model: "gpt-4o", kit: "tank" })).toEqual({ prompt: "p", kit: "tank" });
     }
   });
 

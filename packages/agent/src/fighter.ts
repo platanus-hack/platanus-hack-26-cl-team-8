@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
 import { ARENA } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
+import { CommsInbox, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
 import { clampToArena, distance3, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
@@ -44,6 +45,7 @@ import {
   type WaterPlace,
 } from "./tools";
 import type { DecisionReport, Fighter, FighterOptions } from "./types";
+import { countedAbsorption, storeAttributes } from "./vitals";
 
 // mineflayer y mineflayer-pathfinder son CommonJS puro. Se cargan con createRequire
 // (en vez de import ESM) para no depender de la detección de exports con nombre de
@@ -60,10 +62,6 @@ type GoalKind = "none" | "follow" | "point" | "center";
 type HeldState = "held" | "pending" | "missing";
 
 const CONNECT_TIMEOUT_MS = 30_000;
-/** Máximo de razonamientos o mensajes del rival que se juntan entre dos decisiones. */
-const INBOX_MAX = 4;
-/** Largo máximo de cada uno al pasarlo a la observación. */
-const INBOX_TEXT_MAX = 300;
 const LLM_TIMEOUT_MS = 20_000;
 const BODY_TICK_MS = 100;
 const MELEE_REACH = 3.2;
@@ -89,13 +87,12 @@ const EQUIP_TIMEOUT_MS = 1000;
 const PEARL_AIM_TIMEOUT_MS = 1000;
 /** Una perla vuela menos de 1 segundo; pasado este plazo se da por perdida. */
 const PEARL_FLIGHT_TIMEOUT_MS = 1500;
-/** Un teletransporte forzado solo puede ser el aterrizaje de una perla lanzada hace menos que esto. */
-const PEARL_LANDING_WINDOW_MS = 2000;
 /**
- * ... y solo si movió al bot más que esto (bloques). El servidor también corrige la
- * posición por otros motivos (el `tp` de la preparación, un tirón por lag) sin moverlo tanto.
+ * Un teletransporte forzado solo puede ser el aterrizaje de una perla lanzada hace menos que
+ * esto. Dentro del plazo, el primero cuenta como aterrizaje aunque sea corto: con un muro a
+ * 1 o 2 bloques la perla cae casi donde está el bot.
  */
-const PEARL_MIN_JUMP = 2;
+const PEARL_LANDING_WINDOW_MS = 2000;
 /** Con el rival más cerca que esto la perla no sirve: se llega antes caminando. */
 const PEARL_MIN_DISTANCE = 4;
 /** Sobre esta altura respecto del piso no se lanza: la perla podría pasar el muro. */
@@ -213,9 +210,24 @@ function readAbsorption(entity: Entity): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1024 ? value : 0;
 }
 
+/** La respuesta del LLM tal cual, para el registro: todas las llamadas, aunque no se ejecuten. */
+function rawResponse(response: LlmResponse): DecisionReport["response"] {
+  const calls: unknown[] = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+  return {
+    text: typeof response.text === "string" ? response.text : "",
+    toolCalls: calls.map((call) => {
+      const { name, args } = (typeof call === "object" && call !== null ? call : {}) as { name?: unknown; args?: unknown };
+      return {
+        name: typeof name === "string" ? name : "",
+        args: typeof args === "object" && args !== null && !Array.isArray(args) ? (args as Record<string, unknown>) : {},
+      };
+    }),
+  };
+}
+
 class MineflayerFighter implements Fighter {
   private bot: Bot | null = null;
-  private readonly systemPrompt: string;
+  readonly systemPrompt: string;
   /** Herramientas del kit: lo único que se le ofrece al LLM y lo único que se ejecuta. */
   private readonly toolNames: ToolName[];
   private readonly toolDefs: ToolDef[];
@@ -227,7 +239,13 @@ class MineflayerFighter implements Fighter {
   private connected = false;
   private ended = false;
   private alive = false;
-  private lastHealth = 20;
+  /**
+   * Vida más corazones amarillos en la última lectura: el daño se mide contra esto, porque
+   * lo que absorben los corazones amarillos no baja `bot.health`.
+   */
+  private lastHealthTotal = 20;
+  /** Corazones amarillos que se informaron en el último onStatus. */
+  private lastAbsorption = 0;
   /** Último ítem en la mano que se informó en onStatus (para no repetir estados iguales). */
   private lastHeldItem = "";
   private connectPromise: Promise<void> | null = null;
@@ -240,9 +258,11 @@ class MineflayerFighter implements Fighter {
   private loopPromise: Promise<void> | null = null;
   private wakeSleep: (() => void) | null = null;
   private startedAt = Date.now();
-  /** Lo que llegó del rival y todavía no vio el LLM (se vacía al armar la observación). */
-  private rivalThoughts: string[] = [];
-  private rivalMessages: string[] = [];
+  /**
+   * Lo que llegó del rival y la conversación. Una línea sale de la bandeja recién cuando
+   * responde el LLM que la vio: si la llamada falla, va de nuevo en la próxima observación.
+   */
+  private readonly inbox = new CommsInbox();
 
   // Cuerpo (máquina de estados que corre cada BODY_TICK_MS)
   private bodyTimer: ReturnType<typeof setInterval> | null = null;
@@ -272,8 +292,6 @@ class MineflayerFighter implements Fighter {
   private oneShotStartedAt = 0;
   /** Ticks de física de mineflayer vistos hasta ahora (cada uno envía posición y mirada al servidor). */
   private physicsTicks = 0;
-  /** Posición propia en el último tick de física: con ella se mide cuánto movió un teletransporte. */
-  private tickPosition: Vec3Like | null = null;
 
   // Perla de ender: equipar -> apuntar -> esperar un tick de física -> lanzar -> esperar el aterrizaje.
   private pearlTarget: PearlTarget = "rival";
@@ -324,12 +342,8 @@ class MineflayerFighter implements Fighter {
     // Cada modo solo deja pasar lo suyo (el orquestador ya filtra; esto es la segunda llave).
     if (kind === "thought" && this.opts.comms !== "thoughts") return;
     if (kind === "message" && this.opts.comms !== "chat") return;
-    const clean = text.trim().replace(/\s+/g, " ").slice(0, INBOX_TEXT_MAX);
-    if (clean.length === 0) return;
-    const box = kind === "thought" ? this.rivalThoughts : this.rivalMessages;
-    box.push(clean);
-    // Si el agente se demora en decidir, se queda con lo más nuevo.
-    if (box.length > INBOX_MAX) box.splice(0, box.length - INBOX_MAX);
+    // Solo limpieza técnica (ver cleanMessage): llega tal cual lo escribió el rival.
+    this.inbox.hear(kind, text);
   }
 
   // ------------------------------------------------------------------
@@ -497,7 +511,7 @@ class MineflayerFighter implements Fighter {
       this.guard("spawn", () => {
         this.connected = true;
         this.alive = true;
-        if (typeof bot.health === "number" && Number.isFinite(bot.health)) this.lastHealth = bot.health;
+        if (typeof bot.health === "number" && Number.isFinite(bot.health)) this.lastHealthTotal = this.healthTotal(bot);
         if (!this.spawnedOnce) {
           this.spawnedOnce = true;
           this.setupMovements(bot);
@@ -512,19 +526,27 @@ class MineflayerFighter implements Fighter {
 
     bot.on("health", () => {
       this.guard("health", () => {
-        const health = bot.health;
-        if (typeof health !== "number" || !Number.isFinite(health)) return;
-        if (this.alive && health < this.lastHealth && !this.stopped) {
-          const amount = round1(this.lastHealth - health);
-          const rounded = round1(health);
-          // La caída de la perla propia es una sola baja de vida, justo después de
-          // aterrizar: la ventana se consume con ella para no quitarle golpes al rival.
-          const bySelf = Date.now() < this.selfDamageUntil;
-          this.selfDamageUntil = 0;
-          this.safe(() => this.opts.events.onDamageTaken(amount, rounded, bySelf));
-        }
-        this.lastHealth = health;
+        this.checkDamage(bot);
         this.emitStatus();
+      });
+    });
+
+    // Los corazones amarillos llegan en los metadatos de la entidad propia, no en "health":
+    // un golpe que solo los gasta no cambia `bot.health` y se detecta aquí.
+    bot.on("entityUpdate", (entity) => {
+      if (entity !== bot.entity) return;
+      this.guard("entityUpdate", () => {
+        this.checkDamage(bot);
+        if (round1(this.ownAbsorption(bot)) !== this.lastAbsorption) this.emitStatus();
+      });
+    });
+
+    // Se acabó el efecto de absorción: sus corazones amarillos dejan de contar sin que sea daño.
+    bot.on("entityEffectEnd", (entity) => {
+      if (entity !== bot.entity) return;
+      this.guard("entityEffectEnd", () => {
+        if (typeof bot.health === "number" && Number.isFinite(bot.health)) this.lastHealthTotal = this.healthTotal(bot);
+        if (round1(this.ownAbsorption(bot)) !== this.lastAbsorption) this.emitStatus();
       });
     });
 
@@ -546,13 +568,10 @@ class MineflayerFighter implements Fighter {
     });
 
     // Cada tick de física mineflayer envía al servidor la posición y la mirada. El contador
-    // le dice a la perla que su mirada ya salió, y la posición guardada permite medir después
-    // cuánto movió al bot un teletransporte. Sin `guard`: corre 20 veces por segundo y no
-    // hace nada que pueda fallar.
+    // le dice a la perla que su mirada ya salió. Sin `guard`: corre 20 veces por segundo y
+    // no hace nada que pueda fallar.
     bot.on("physicsTick", () => {
       this.physicsTicks++;
-      const position = bot.entity?.position;
-      if (position) this.tickPosition = { x: position.x, y: position.y, z: position.z };
     });
 
     // El servidor movió al bot a la fuerza. El listener es global (no del modo "pearl")
@@ -562,16 +581,14 @@ class MineflayerFighter implements Fighter {
     bot.on("forcedMove", () => {
       this.guard("forcedMove", () => {
         const now = Date.now();
-        const position = bot.entity.position;
-        const moved = this.tickPosition ? distance3(this.tickPosition, position) : 0;
-        this.tickPosition = { x: position.x, y: position.y, z: position.z };
         // Siempre: la ruta del pathfinder se calculó desde otro lugar. El modo en curso
         // vuelve a pedir la suya en su próximo tick.
         this.clearGoal(bot);
 
-        // Solo es el aterrizaje de una perla propia si se lanzó hace poco y el salto fue grande.
+        // Con una perla propia en vuelo, el primer movimiento forzado es su aterrizaje, sin
+        // importar cuánto movió al bot (una perla contra un muro cercano cae casi al lado).
         const pearlInFlight = this.pearlFlightUntil > 0 && now < this.pearlFlightUntil;
-        if (!pearlInFlight || moved <= PEARL_MIN_JUMP) return;
+        if (!pearlInFlight) return;
         this.pearlFlightUntil = 0;
         this.pearlLandedAt = now;
         this.selfDamageUntil = now + SELF_DAMAGE_WINDOW_MS;
@@ -581,7 +598,8 @@ class MineflayerFighter implements Fighter {
     // mineflayer guarda los atributos de una entidad bajo `prop.key`, pero hasta 1.20.4 ese
     // campo del paquete se llama `name` (recién es `key` desde 1.20.5): quedan todos bajo
     // "undefined" y la física nunca ve el modificador de velocidad, así que Velocidad I no
-    // movería más rápido al bot. Aquí se guardan los atributos propios con su nombre real.
+    // movería más rápido al bot. Aquí se guardan los atributos propios con su nombre (ver
+    // storeAttributes).
     bot._client.on("entity_update_attributes", (packet: unknown) => {
       this.guard("entity_update_attributes", () => this.storeOwnAttributes(bot, packet));
     });
@@ -614,8 +632,8 @@ class MineflayerFighter implements Fighter {
 
   /**
    * Guarda en la entidad propia los atributos de un paquete `entity_update_attributes`,
-   * con la misma forma que usa mineflayer ({ value, modifiers }) pero bajo su nombre real
-   * ("minecraft:generic.movement_speed"), que es donde los busca la física.
+   * con la misma forma que usa mineflayer ({ value, modifiers }), bajo el nombre que manda
+   * el servidor y bajo el que busca la física (ver storeAttributes).
    */
   private storeOwnAttributes(bot: Bot, packet: unknown): void {
     const own = bot.entity as unknown as { id?: unknown; attributes?: Record<string, unknown> } | undefined;
@@ -624,13 +642,48 @@ class MineflayerFighter implements Fighter {
     if (entityId !== own.id || !Array.isArray(properties)) return;
     const attributes = own.attributes ?? {};
     own.attributes = attributes;
-    for (const property of properties as unknown[]) {
-      if (typeof property !== "object" || property === null) continue;
-      const { key, name, value, modifiers } = property as Record<string, unknown>;
-      const id = typeof key === "string" ? key : name;
-      if (typeof id !== "string" || typeof value !== "number") continue;
-      attributes[id] = { value, modifiers: Array.isArray(modifiers) ? modifiers : [] };
+    storeAttributes(attributes, properties as unknown[]);
+  }
+
+  /**
+   * Corazones amarillos propios que cuentan como vida (ver countedAbsorption). Si no se
+   * sabe qué número tiene el efecto de absorción, se cuentan los que haya.
+   */
+  private ownAbsorption(bot: Bot): number {
+    const entity = bot.entity;
+    if (!entity) return 0;
+    const absorption = readAbsorption(entity);
+    const effectId = (bot.registry as unknown as { effectsByName?: Record<string, { id?: unknown }> }).effectsByName
+      ?.Absorption?.id;
+    if (typeof effectId !== "number") return absorption;
+    const effects = (entity as unknown as { effects?: Record<number, unknown> }).effects;
+    return countedAbsorption(absorption, effects?.[effectId] !== undefined);
+  }
+
+  /** Vida más los corazones amarillos que cuentan. */
+  private healthTotal(bot: Bot): number {
+    const health = typeof bot.health === "number" && Number.isFinite(bot.health) ? bot.health : 0;
+    return health + this.ownAbsorption(bot);
+  }
+
+  /**
+   * Informa el daño recibido desde la última lectura, medido sobre vida + corazones
+   * amarillos: un golpe que solo gasta corazones amarillos también es daño del rival.
+   */
+  private checkDamage(bot: Bot): void {
+    const health = bot.health;
+    if (typeof health !== "number" || !Number.isFinite(health)) return;
+    const total = this.healthTotal(bot);
+    if (this.alive && total < this.lastHealthTotal && !this.stopped) {
+      const amount = round1(this.lastHealthTotal - total);
+      const rounded = round1(health);
+      // La caída de la perla propia es una sola baja de vida, justo después de
+      // aterrizar: la ventana se consume con ella para no quitarle golpes al rival.
+      const bySelf = Date.now() < this.selfDamageUntil;
+      this.selfDamageUntil = 0;
+      this.safe(() => this.opts.events.onDamageTaken(amount, rounded, bySelf));
     }
+    this.lastHealthTotal = total;
   }
 
   // ------------------------------------------------------------------
@@ -666,10 +719,13 @@ class MineflayerFighter implements Fighter {
     const food = bot && typeof bot.food === "number" && Number.isFinite(bot.food) ? bot.food : 0;
     const heldItem = heldItemName(bot);
     this.lastHeldItem = heldItem;
+    const absorption = bot && this.alive ? round1(this.ownAbsorption(bot)) : 0;
+    this.lastAbsorption = absorption;
     const status = {
       connected: this.connected,
       alive: this.alive,
       health: this.alive ? round1(health) : 0,
+      absorption,
       food: round1(food),
       heldItem,
     };
@@ -710,7 +766,8 @@ class MineflayerFighter implements Fighter {
     const bot = this.bot;
     if (!bot || !this.connected || !this.alive) return;
 
-    const observation = this.observe(bot);
+    const heard = this.inbox.snapshot();
+    const observation = this.observe(bot, heard);
     const observationJson = JSON.stringify(observation);
     const messages: ChatMessage[] = [
       { role: "system", content: this.systemPrompt },
@@ -732,10 +789,16 @@ class MineflayerFighter implements Fighter {
       clearTimeout(timeout);
       if (this.llmAbort === abort) this.llmAbort = null;
     }
+    // El LLM respondió: lo que vio del rival ya no se repite.
+    this.inbox.confirm(heard.upTo);
     if (this.stopped) return;
 
-    // Latencia y tokens de la llamada: se informan antes de actuar, una vez por respuesta.
-    const report: DecisionReport = { ms: Date.now() - llmStartedAt };
+    // Latencia, tokens, lo que vio y lo que respondió: se informan antes de actuar, una vez por respuesta.
+    const report: DecisionReport = {
+      ms: Date.now() - llmStartedAt,
+      observation,
+      response: rawResponse(response),
+    };
     const usage = validUsage(response.usage);
     if (usage) report.usage = usage;
     this.safe(() => this.opts.events.onDecision(report));
@@ -753,7 +816,10 @@ class MineflayerFighter implements Fighter {
       const thought = parsed.reason ?? text.trim();
       if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
       const said = this.opts.comms === "chat" ? parsed.say : null;
-      if (said) this.safe(() => this.opts.events.onMessage(said));
+      if (said) {
+        this.inbox.said(said);
+        this.safe(() => this.opts.events.onMessage(said));
+      }
 
       try {
         firstResult = this.executeTool(first.name, parsed);
@@ -774,7 +840,7 @@ class MineflayerFighter implements Fighter {
     this.history = trimHistory([...this.history, ...turn], MAX_HISTORY_MESSAGES);
   }
 
-  private observe(bot: Bot): Observation {
+  private observe(bot: Bot, heard: InboxSnapshot): Observation {
     const opponent = this.opponent(bot);
     const held = bot.heldItem;
     return buildObservation({
@@ -794,8 +860,10 @@ class MineflayerFighter implements Fighter {
       lastActionResult: this.lastResult,
       pearlReadyAt: this.pearlReadyAt,
       buildReadyAt: this.buildReadyAt,
-      rivalThoughts: this.rivalThoughts.splice(0),
-      rivalMessages: this.rivalMessages.splice(0),
+      rivalThoughts: heard.rivalThoughts,
+      rivalMessages: heard.rivalMessages,
+      // La conversación solo existe en modo "chat".
+      conversation: this.opts.comms === "chat" ? heard.conversation : [],
     });
   }
 

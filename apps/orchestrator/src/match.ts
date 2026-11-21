@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Fighter, FighterEvents, FighterOptions } from "@phack/agent";
+import type { DecisionReport, Fighter, FighterEvents, FighterOptions } from "@phack/agent";
 import type { Env } from "@phack/env";
 import type { ApiKeys, LlmClient } from "@phack/llm";
 import {
@@ -11,6 +11,7 @@ import {
   SIDES,
   kitOf,
   type AgentStatus,
+  type ArenaEvent,
   type Kit,
   type MatchSettings,
   type MatchRecord,
@@ -19,6 +20,7 @@ import {
   type PromptsResponse,
   type Provider,
   type Side,
+  type TranscriptEntry,
 } from "@phack/protocol";
 import { buildArena, clearPlacedBlocks, prepareFighter, runCountdown } from "./arena";
 import { extractCustomKit } from "./customkit";
@@ -26,7 +28,15 @@ import { buildExplanationMessages, cleanExplanation, fallbackExplanation, should
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
 import { SIDE_LABEL, decideTimeoutResult, describeResult, otherSide, resultForDeath } from "./result";
-import { errorMessage, sleep as realSleep, truncate, withTimeout, type LogLevel, type SleepFn } from "./util";
+import {
+  cutCodePoints,
+  errorMessage,
+  sleep as realSleep,
+  truncate,
+  withTimeout,
+  type LogLevel,
+  type SleepFn,
+} from "./util";
 
 const CONNECT_TIMEOUT_MS = 45_000;
 const STOP_TIMEOUT_MS = 10_000;
@@ -63,6 +73,8 @@ export type MatchDeps = {
   };
   createFighter: (opts: FighterOptions) => Fighter;
   createLlmClient: (opts: { provider: Provider; model?: string; apiKeys: ApiKeys }) => LlmClient;
+  /** Transcripción de cada pelea (DATA_DIR/transcripts). append no espera ni lanza. */
+  transcripts: { append(matchId: string, entry: TranscriptEntry): void };
   /** Lista de modelos permitidos (ver models.ts): segundo control, al iniciar la pelea. */
   models: { isAllowed(id: string): boolean };
   /** Registro para humanos (consola del servidor). */
@@ -94,7 +106,25 @@ type MatchContext = {
   thoughtPending: Record<Side, boolean>;
   /** Suma y cantidad de las latencias del LLM, para el promedio (avgDecisionMs). */
   latency: Record<Side, { totalMs: number; count: number }>;
+  /** true cuando ya se escribió la entrada "start" de la transcripción. */
+  startRecorded: boolean;
+  /**
+   * Lo que se anotó antes de "start" (la fase "preparing", el armado de los kits
+   * personalizados): se escribe justo después de "start", en el mismo orden.
+   */
+  beforeStart: TranscriptEntry[];
+  /** Último estado de cada agente anotado en la transcripción (para no repetir iguales). */
+  lastStatus: Record<Side, StatusEntry | null>;
+  /**
+   * Corazones amarillos que informó cada agente. No van en el estado público: solo sirven
+   * para desempatar por vida al acabarse el tiempo.
+   */
+  absorption: Record<Side, number>;
 };
+
+type StatusEntry = Extract<TranscriptEntry, { type: "status" }>;
+/** Eventos de la pelea que van a la web y, tal cual, a la transcripción. */
+type FightEvent = Extract<ArenaEvent, { type: "thought" | "message" | "action" | "damage" | "death" }>;
 
 function emptyStatus(side: Side): AgentStatus {
   return {
@@ -183,6 +213,10 @@ export class MatchManager {
       timer: null,
       thoughtPending: { red: false, blue: false },
       latency: { red: { totalMs: 0, count: 0 }, blue: { totalMs: 0, count: 0 } },
+      startRecorded: false,
+      beforeStart: [],
+      lastStatus: { red: null, blue: null },
+      absorption: { red: 0, blue: 0 },
     };
     this.ctx = ctx;
     this.state = {
@@ -198,6 +232,7 @@ export class MatchManager {
       result: null,
     };
     this.deps.hub.flushState();
+    this.record(ctx, { type: "phase", at: ctx.createdAt, phase: "preparing" });
     void this.run(ctx);
     return this.getState();
   }
@@ -225,11 +260,11 @@ export class MatchManager {
   private async run(ctx: MatchContext): Promise<void> {
     const { rcon, env } = this.deps;
     try {
-      this.log("info", "Preparando la pelea…");
+      this.log(ctx, "info", "Preparando la pelea…");
 
-      const llms: Record<Side, LlmClient> = { red: this.makeLlm("red"), blue: this.makeLlm("blue") };
+      const llms: Record<Side, LlmClient> = { red: this.makeLlm(ctx, "red"), blue: this.makeLlm(ctx, "blue") };
       // Los kits personalizados se arman en paralelo (cada uno con el LLM de su lado).
-      const [redKit, blueKit] = await Promise.all(SIDES.map((side) => this.resolveKit(side, llms[side])));
+      const [redKit, blueKit] = await Promise.all(SIDES.map((side) => this.resolveKit(ctx, side, llms[side])));
       this.assertNotEnded(ctx);
       const kits: Record<Side, Kit> = { red: redKit as Kit, blue: blueKit as Kit };
       for (const side of SIDES) {
@@ -254,6 +289,8 @@ export class MatchManager {
           events: this.makeEvents(ctx, side),
         });
       }
+      // La transcripción parte con lo que de verdad pelea: modelos, kits y prompts de sistema.
+      this.recordStart(ctx);
       // El kit ya resuelto (también el personalizado) llega a la web con el próximo estado.
       this.deps.hub.markStateDirty();
       this.assertNotEnded(ctx);
@@ -261,7 +298,7 @@ export class MatchManager {
       await buildArena(rcon, this.sleep);
       this.assertNotEnded(ctx);
 
-      this.log("info", "Conectando a los agentes al servidor de Minecraft…");
+      this.log(ctx, "info", "Conectando a los agentes al servidor de Minecraft…");
       const connects = SIDES.map((side) => {
         const fighter = ctx.fighters[side];
         return fighter ? fighter.connect() : Promise.reject(new Error("Agente no creado"));
@@ -278,7 +315,7 @@ export class MatchManager {
       this.assertNotEnded(ctx);
 
       for (const side of SIDES) {
-        await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log("warn", text));
+        await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log(ctx, "warn", text));
         this.assertNotEnded(ctx);
       }
 
@@ -292,6 +329,15 @@ export class MatchManager {
       await runCountdown(this.sleep, countdownEndsAt, () => ctx.ended);
       this.assertNotEnded(ctx);
 
+      // Un agente que se desconectó durante la preparación o la cuenta regresiva no puede
+      // pelear: al pasar a "running" se le daría por vivo y con vida completa.
+      const gone = SIDES.find((side) => !this.state.agents[side].connected);
+      if (gone) {
+        this.log(ctx, "error", `${SIDE_LABEL[gone]} se desconectó del servidor antes de empezar la pelea`);
+        await this.finish(ctx, { winner: null, reason: "error" });
+        return;
+      }
+
       const now = Date.now();
       const durationMs = env.MATCH_DURATION_SECONDS * 1000;
       // La cuenta regresiva se borra en la misma actualización que cambia la fase.
@@ -299,21 +345,23 @@ export class MatchManager {
       this.state.countdownEndsAt = null;
       this.state.startedAt = now;
       this.state.endsAt = now + durationMs;
+      this.record(ctx, { type: "phase", at: now, phase: "running" });
       for (const side of SIDES) {
         // Recién curados y teletransportados: se parte con vida completa.
         this.state.agents[side].alive = true;
         this.state.agents[side].health = 20;
         this.state.agents[side].damageDealt = 0;
+        ctx.absorption[side] = 0;
       }
       ctx.timer = setTimeout(() => {
         void this.onTimeout(ctx);
       }, durationMs);
       for (const side of SIDES) ctx.fighters[side]?.start();
       this.deps.hub.flushState();
-      this.log("info", "¡Comienza la pelea!");
+      this.log(ctx, "info", "¡Comienza la pelea!");
     } catch (err) {
       if (ctx.ended || err instanceof CancelledError) return;
-      this.log("error", `No se pudo completar la pelea: ${errorMessage(err)}`);
+      this.log(ctx, "error", `No se pudo completar la pelea: ${errorMessage(err)}`);
       await this.finish(ctx, { winner: null, reason: "error" });
     }
   }
@@ -323,16 +371,16 @@ export class MatchManager {
    * de su prompt; si no se puede (LLM simulado, falla, demora o el prompt no pide nada
    * válido), pelea con el kit por defecto y se avisa en el registro. Nunca lanza.
    */
-  private async resolveKit(side: Side, llm: LlmClient): Promise<Kit> {
+  private async resolveKit(ctx: MatchContext, side: Side, llm: LlmClient): Promise<Kit> {
     const config = this.state.configs[side];
     if (config.kit !== "custom") return kitOf(config);
     const fallback = KITS[DEFAULT_KIT];
     const fail = (reason: string): Kit => {
-      this.log("warn", `[${SIDE_LABEL[side]}] No se pudo armar el kit personalizado (${reason}): pelea con el kit ${fallback.name}`);
+      this.log(ctx, "warn", `[${SIDE_LABEL[side]}] No se pudo armar el kit personalizado (${reason}): pelea con el kit ${fallback.name}`);
       return fallback;
     };
     if (llm.provider === "mock") return fail("el LLM simulado no sabe leer el inventario del prompt");
-    this.log("info", `[${SIDE_LABEL[side]}] Armando el kit personalizado a partir del prompt…`);
+    this.log(ctx, "info", `[${SIDE_LABEL[side]}] Armando el kit personalizado a partir del prompt…`);
     const abort = new AbortController();
     try {
       const outcome = await withTimeout(
@@ -342,7 +390,7 @@ export class MatchManager {
       );
       if (!outcome.ok) return fail(outcome.reason);
       if (outcome.ignored.length > 0) {
-        this.log("warn", `[${SIDE_LABEL[side]}] Del kit personalizado se descartó: ${truncate(outcome.ignored.join("; "), 400)}`);
+        this.log(ctx, "warn", `[${SIDE_LABEL[side]}] Del kit personalizado se descartó: ${truncate(outcome.ignored.join("; "), 400)}`);
       }
       return outcome.kit;
     } catch (err) {
@@ -352,11 +400,112 @@ export class MatchManager {
     }
   }
 
+  // ---------- Transcripción ----------
+
+  /**
+   * Entrada "start": con qué se peleó. Se escribe una sola vez y siempre primero; lo que
+   * se anotó antes queda en espera y va justo después. Si falló la creación de un agente,
+   * su prompt de sistema va vacío.
+   */
+  private recordStart(ctx: MatchContext): void {
+    if (ctx.startRecorded) return;
+    ctx.startRecorded = true;
+    const { env } = this.deps;
+    const systemPrompt = (side: Side): string => {
+      try {
+        const text = ctx.fighters[side]?.systemPrompt;
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
+      }
+    };
+    this.deps.transcripts.append(ctx.id, {
+      type: "start",
+      at: ctx.createdAt,
+      matchId: ctx.id,
+      configs: structuredClone(this.state.configs),
+      settings: structuredClone(this.state.settings),
+      systemPrompts: { red: systemPrompt("red"), blue: systemPrompt("blue") },
+      tickMs: env.AGENT_TICK_MS,
+      durationSeconds: env.MATCH_DURATION_SECONDS,
+    });
+    for (const entry of ctx.beforeStart.splice(0)) this.deps.transcripts.append(ctx.id, entry);
+  }
+
+  /** Anota una entrada en la transcripción de `ctx` (aunque ya haya empezado otra pelea). */
+  private record(ctx: MatchContext, entry: TranscriptEntry): void {
+    if (!ctx.startRecorded) {
+      ctx.beforeStart.push(entry);
+      return;
+    }
+    this.deps.transcripts.append(ctx.id, entry);
+  }
+
+  /** Lo que pasa en la pelea va a la web y a la transcripción por el mismo camino. */
+  private emit(ctx: MatchContext, event: FightEvent): void {
+    this.deps.hub.broadcast(event);
+    this.record(ctx, event);
+  }
+
+  /** Una respuesta del LLM: lo que vio, lo que respondió tal cual y cuánto costó. */
+  private recordDecision(ctx: MatchContext, side: Side, d: DecisionReport): void {
+    const entry: Extract<TranscriptEntry, { type: "decision" }> = {
+      type: "decision",
+      at: Date.now(),
+      side,
+      ms: Number.isFinite(d.ms) ? d.ms : 0,
+    };
+    if (d.usage) {
+      entry.tokensIn = count(d.usage.inputTokens);
+      entry.tokensOut = count(d.usage.outputTokens);
+    }
+    if (typeof d.observation === "object" && d.observation !== null) entry.observation = { ...d.observation };
+    if (typeof d.response === "object" && d.response !== null) {
+      const toolCalls = Array.isArray(d.response.toolCalls) ? d.response.toolCalls : [];
+      entry.response = {
+        text: typeof d.response.text === "string" ? d.response.text : "",
+        toolCalls: toolCalls.map((call) => ({ name: call.name, args: call.args })),
+      };
+    }
+    this.record(ctx, entry);
+  }
+
+  /** Anota el estado de un agente solo si cambió algo desde el último anotado. */
+  private recordStatus(
+    ctx: MatchContext,
+    side: Side,
+    s: { connected: boolean; alive: boolean; health: number; food: number; heldItem: string },
+  ): void {
+    const prev = ctx.lastStatus[side];
+    if (
+      prev &&
+      prev.connected === s.connected &&
+      prev.alive === s.alive &&
+      prev.health === s.health &&
+      prev.food === s.food &&
+      prev.heldItem === s.heldItem
+    ) {
+      return;
+    }
+    const entry: StatusEntry = {
+      type: "status",
+      at: Date.now(),
+      side,
+      connected: s.connected,
+      alive: s.alive,
+      health: s.health,
+      food: s.food,
+      heldItem: s.heldItem,
+    };
+    ctx.lastStatus[side] = entry;
+    this.record(ctx, entry);
+  }
+
   private assertNotEnded(ctx: MatchContext): void {
     if (ctx.ended) throw new CancelledError();
   }
 
-  private makeLlm(side: Side): LlmClient {
+  private makeLlm(ctx: MatchContext, side: Side): LlmClient {
     const { env, models } = this.deps;
     const config = this.state.configs[side];
     const provider: Provider = config.provider ?? env.LLM_PROVIDER;
@@ -368,6 +517,7 @@ export class MatchManager {
     // prompts guardados antes de que existiera y modelos que salieron de la lista después.
     if (provider !== "mock" && config.model && !models.isAllowed(config.model)) {
       this.log(
+        ctx,
         "warn",
         `[${SIDE_LABEL[side]}] El modelo "${config.model}" no está en la lista de permitidos: se usa el modelo por defecto del servidor`,
       );
@@ -395,16 +545,18 @@ export class MatchManager {
     return {
       onStatus: (s) => {
         if (!live()) return;
+        this.recordStatus(ctx, side, s);
         const a = agent();
         a.connected = s.connected;
         a.alive = s.alive;
         a.health = s.health;
         a.food = s.food;
         a.heldItem = s.heldItem;
+        ctx.absorption[side] = Number.isFinite(s.absorption) && s.absorption > 0 ? s.absorption : 0;
         hub.markStateDirty();
         if (this.state.phase !== "running") return;
         if (!s.connected) {
-          this.log("error", `${SIDE_LABEL[side]} se desconectó del servidor en plena pelea`);
+          this.log(ctx, "error", `${SIDE_LABEL[side]} se desconectó del servidor en plena pelea`);
           void this.finish(ctx, { winner: null, reason: "error" });
         } else if (!s.alive && s.health <= 0) {
           // Respaldo por si el agente no alcanza a emitir onDeath.
@@ -417,15 +569,18 @@ export class MatchManager {
         a.lastThought = truncate(text, 500);
         a.decisions += 1;
         ctx.thoughtPending[side] = true;
-        hub.broadcast({ type: "thought", at: Date.now(), side, text: truncate(text, 2000) });
+        this.emit(ctx, { type: "thought", at: Date.now(), side, text: truncate(text, 2000) });
         hub.markStateDirty();
         // Modo "leen la mente": el rival recibe este razonamiento en su próxima observación.
         if (this.state.settings.comms === "thoughts") ctx.fighters[otherSide(side)]?.hear("thought", text);
       },
       onMessage: (text) => {
         if (!live() || this.state.settings.comms !== "chat") return;
-        const message = truncate(text, MAX_AGENT_MESSAGE_LENGTH);
-        hub.broadcast({ type: "message", at: Date.now(), side, text: message });
+        // Solo el tope de largo, por si acaso: el agente ya lo entrega limpio y recortado
+        // igual (por punto de código), así que un mensaje nunca se corta dos veces. Sin
+        // filtros por contenido, por frecuencia ni por repetición.
+        const message = cutCodePoints(text, MAX_AGENT_MESSAGE_LENGTH);
+        this.emit(ctx, { type: "message", at: Date.now(), side, text: message });
         ctx.fighters[otherSide(side)]?.hear("message", message);
       },
       onAction: (tool, args, result) => {
@@ -435,10 +590,12 @@ export class MatchManager {
         if (ctx.thoughtPending[side]) ctx.thoughtPending[side] = false;
         else a.decisions += 1;
         a.lastAction = formatAction(tool, args, result);
-        hub.broadcast({ type: "action", at: Date.now(), side, tool, args, result: truncate(result, 1000) });
+        this.emit(ctx, { type: "action", at: Date.now(), side, tool, args, result: truncate(result, 1000) });
         hub.markStateDirty();
       },
       onDecision: (d) => {
+        if (!live()) return;
+        this.recordDecision(ctx, side, d);
         // Igual que el daño: solo cuenta lo que el LLM gastó durante el duelo.
         if (!fighting()) return;
         const a = agent();
@@ -462,7 +619,7 @@ export class MatchManager {
           const rival = this.state.agents[otherSide(side)];
           rival.damageDealt = Math.round((rival.damageDealt + Math.max(0, amount)) * 100) / 100;
         }
-        hub.broadcast({ type: "damage", at: Date.now(), side, amount, health });
+        this.emit(ctx, { type: "damage", at: Date.now(), side, amount, health });
         hub.markStateDirty();
       },
       onDeath: () => {
@@ -471,7 +628,7 @@ export class MatchManager {
       },
       onLog: (level, text) => {
         if (this.ctx !== ctx) return;
-        this.log(level, `[${SIDE_LABEL[side]}] ${text}`);
+        this.log(ctx, level, `[${SIDE_LABEL[side]}] ${text}`);
       },
     };
   }
@@ -481,14 +638,17 @@ export class MatchManager {
     const a = this.state.agents[side];
     a.alive = false;
     a.health = 0;
-    this.deps.hub.broadcast({ type: "death", at: Date.now(), side });
+    this.emit(ctx, { type: "death", at: Date.now(), side });
     void this.finish(ctx, resultForDeath(side));
   }
 
   private async onTimeout(ctx: MatchContext): Promise<void> {
     if (ctx.ended) return;
     const { red, blue } = this.state.agents;
-    await this.finish(ctx, decideTimeoutResult(red, blue));
+    await this.finish(
+      ctx,
+      decideTimeoutResult({ ...red, absorption: ctx.absorption.red }, { ...blue, absorption: ctx.absorption.blue }),
+    );
   }
 
   /** Único camino de salida de una pelea. Nunca lanza. */
@@ -497,7 +657,10 @@ export class MatchManager {
     ctx.ended = true;
     if (ctx.timer) clearTimeout(ctx.timer);
     ctx.timer = null;
+    // Si falló antes de crear a los agentes, "start" va igual primero.
+    this.recordStart(ctx);
 
+    let record: MatchRecord | null = null;
     try {
       const endedAt = Date.now();
       const reachedRunning = this.state.startedAt !== null;
@@ -507,9 +670,10 @@ export class MatchManager {
       this.state.countdownEndsAt = null;
       this.state.result = result;
       this.deps.hub.flushState();
+      this.record(ctx, { type: "phase", at: endedAt, phase: "finished" });
 
       // Foto final ANTES de desconectar (al reaparecer el perdedor vuelve a 20 de vida).
-      const record: MatchRecord = {
+      record = {
         id: ctx.id,
         startedAt,
         endedAt,
@@ -522,7 +686,8 @@ export class MatchManager {
 
       // "Por qué ganó": se pide ya (en paralelo con la desconexión) y se adjunta después,
       // así nunca retrasa el cierre de la pelea.
-      const explanation = reachedRunning && shouldExplain(result) ? this.explain(record) : null;
+      const final = record;
+      const explanation = reachedRunning && shouldExplain(result) ? this.explain(final) : null;
 
       const stops = SIDES.map(async (side) => {
         const fighter = ctx.fighters[side];
@@ -531,7 +696,7 @@ export class MatchManager {
       const settled = await Promise.allSettled(stops);
       for (const outcome of settled) {
         if (outcome.status === "rejected") {
-          this.log("warn", `Problema al detener un agente: ${errorMessage(outcome.reason)}`);
+          this.log(ctx, "warn", `Problema al detener un agente: ${errorMessage(outcome.reason)}`);
         }
       }
 
@@ -540,19 +705,21 @@ export class MatchManager {
       // falló o se detuvo al prepararse, el evento "state" con fase "finished" y el
       // mensaje de log de abajo ya informan el resultado.
       if (reachedRunning) {
-        await this.deps.history.append(record);
-        this.deps.hub.broadcast({ type: "match_end", at: Date.now(), record });
-        if (explanation) void this.attachExplanation(record.id, explanation);
+        await this.deps.history.append(final);
+        this.deps.hub.broadcast({ type: "match_end", at: Date.now(), record: final });
+        if (explanation) void this.attachExplanation(ctx, explanation);
         // Los bloques que colocaron los peleadores se borran sin esperar: un RCON lento no
         // debe retrasar el cierre (y la próxima pelea igual reconstruye la arena).
         void clearPlacedBlocks(this.deps.rcon).catch((err: unknown) => {
           this.deps.log("warn", `No se pudieron borrar los bloques colocados en la arena: ${errorMessage(err)}`);
         });
       }
-      this.log(result.reason === "error" ? "error" : "info", describeResult(result));
+      this.log(ctx, result.reason === "error" ? "error" : "info", describeResult(result));
     } catch (err) {
-      this.log("error", `Error al cerrar la pelea: ${errorMessage(err)}`);
+      this.log(ctx, "error", `Error al cerrar la pelea: ${errorMessage(err)}`);
     } finally {
+      // Toda pelea cierra su transcripción, también las que no llegaron a empezar.
+      if (record) this.record(ctx, { type: "end", at: Date.now(), record });
       ctx.finalized = true;
       if (!this.shuttingDown) {
         this.idleTimer = setTimeout(() => {
@@ -599,9 +766,11 @@ export class MatchManager {
   }
 
   /** Adjunta la explicación al resultado en vivo (si sigue siendo esa pelea) y al historial. */
-  private async attachExplanation(id: string, pending: Promise<string>): Promise<void> {
+  private async attachExplanation(ctx: MatchContext, pending: Promise<string>): Promise<void> {
+    const id = ctx.id;
     try {
       const explanation = await pending;
+      this.record(ctx, { type: "explanation", at: Date.now(), text: explanation });
       // Si ya empezó otra pelea, el estado en vivo es de esa: solo se corrige el historial.
       if (this.state.id === id && this.state.result) {
         this.state.result = { ...this.state.result, explanation };
@@ -614,9 +783,14 @@ export class MatchManager {
     }
   }
 
-  /** Mensaje para humanos: va a la consola y a todos los clientes web. */
-  private log(level: LogLevel, text: string): void {
+  /**
+   * Mensaje para humanos: va a la consola, a todos los clientes web y a la transcripción
+   * de `ctx` (la pelea de la que habla, aunque ya haya empezado otra).
+   */
+  private log(ctx: MatchContext, level: LogLevel, text: string): void {
+    const at = Date.now();
     this.deps.log(level, text);
-    this.deps.hub.broadcast({ type: "log", at: Date.now(), level, text });
+    this.deps.hub.broadcast({ type: "log", at, level, text });
+    this.record(ctx, { type: "log", at, level, text });
   }
 }

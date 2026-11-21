@@ -1,5 +1,6 @@
 import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
+import { cleanMessage } from "./comms";
 import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isLavaBucket, isPearl, isShield, isWaterBucket } from "./items";
 
 export const TOOL_NAMES = [
@@ -217,7 +218,7 @@ export const TOOL_DEFS: ToolDef[] = [
 
 const sayProperty = {
   type: "string",
-  description: `Opcional: lo que le dices en voz alta al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Él lo lee; la acción se ejecuta igual.`,
+  description: `Opcional: texto libre para el otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
 };
 
 /**
@@ -243,7 +244,7 @@ export type ParsedToolArgs = {
   target: PearlTarget;
   shape: BuildShape;
   where: WaterPlace;
-  /** Modo "chat": lo que el agente le dice al rival, ya recortado; null si no dijo nada. */
+  /** Modo "chat": lo que el agente le dice al rival, con limpieza técnica (cleanMessage); null si no dijo nada. */
   say: string | null;
 };
 
@@ -266,8 +267,7 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   // Como con la perla: solo el valor alternativo cambia algo; lo demás es el por defecto.
   const shape: BuildShape = word("shape") === "tower" ? "tower" : "wall";
   const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
-  const rawSay = source["say"];
-  const sayText = typeof rawSay === "string" ? rawSay.trim().replace(/\s+/g, " ") : "";
-  const say = sayText.length > 0 ? sayText.slice(0, MAX_AGENT_MESSAGE_LENGTH) : null;
+  // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
+  const say = cleanMessage(source["say"]);
   return { reason, seconds, target, shape, where, say };
 }

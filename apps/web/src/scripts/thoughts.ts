@@ -5,6 +5,9 @@
  * con la acción que eligió (ícono y frase de actions.ts). El resultado de la acción no
  * se muestra aquí: queda en la ayuda de la ficha y en la lista de eventos.
  *
+ * Lo que el agente le DICE al otro (modo "chat") va en la misma columna, en el orden en
+ * que pasó, pero como un globo: es lo único que el rival también recibe.
+ *
  * Los pensamientos y las acciones llegan por la cola sincronizada de main.ts, así que
  * aparecen cuando la imagen llega a ese instante. Lo que aquí depende del tiempo (a qué
  * pensamiento se une una acción, cuándo se muestra "pensando") se mide con el reloj de
@@ -43,6 +46,8 @@ type Entry = {
   chip: HTMLElement | null;
   /** Frase de la ficha; "" si no tiene. */
   chipLabel: string;
+  /** La entrada es algo que el agente dijo en voz alta, no un pensamiento. */
+  said: boolean;
 };
 
 /** Pensamiento que se está escribiendo letra a letra. */
@@ -157,22 +162,30 @@ function pulse(node: HTMLElement): void {
   );
 }
 
+/**
+ * La entrada más nueva que es un pensamiento o una ficha. Lo dicho en voz alta se salta:
+ * el mensaje llega entre el pensamiento y su acción, y la ficha es del pensamiento.
+ */
 function newest(target: Column): Entry | undefined {
-  return target.entries[target.entries.length - 1];
-}
-
-/** El pensamiento más nuevo de la columna, saltándose las entradas que son solo una ficha. */
-function newestThought(target: Column): Entry | undefined {
   for (let index = target.entries.length - 1; index >= 0; index -= 1) {
     const entry = target.entries[index]!;
-    if (entry.text !== "") return entry;
+    if (!entry.said) return entry;
   }
   return undefined;
 }
 
-function addEntry(target: Column, at: number, text: string): Entry {
-  const node = el("li", "thought");
-  const entry: Entry = { node, at, text, chip: null, chipLabel: "" };
+/** El pensamiento más nuevo de la columna, saltándose las fichas sueltas y lo dicho en voz alta. */
+function newestThought(target: Column): Entry | undefined {
+  for (let index = target.entries.length - 1; index >= 0; index -= 1) {
+    const entry = target.entries[index]!;
+    if (entry.text !== "" && !entry.said) return entry;
+  }
+  return undefined;
+}
+
+function addEntry(target: Column, at: number, text: string, said = false): Entry {
+  const node = el("li", said ? "thought thought--said" : "thought");
+  const entry: Entry = { node, at, text, chip: null, chipLabel: "", said };
   if (text !== "") {
     const holder = el("p", "thought__text");
     node.append(holder);
@@ -219,6 +232,14 @@ function addThought(target: Column, raw: string, at: number): void {
     return;
   }
   addEntry(target, at, text);
+}
+
+/** Lo dicho en voz alta siempre suma una entrada: si el agente se repite, se ve repetido. */
+function addMessage(target: Column, raw: string, at: number): void {
+  const text = raw.trim();
+  if (text === "") return;
+  target.newsAt = at;
+  addEntry(target, at, text, true);
 }
 
 function addAction(target: Column, view: ActionView, at: number): void {
@@ -289,6 +310,15 @@ export function pushThought(side: Side, text: string, at: number): void {
   const target = columns[side];
   target.live = true;
   addThought(target, text, at);
+  refreshThinking();
+}
+
+/** Evento "message": `at` es la hora del servidor en que el agente lo dijo. */
+export function pushMessage(side: Side, text: string, at: number): void {
+  if (!columns) return;
+  const target = columns[side];
+  target.live = true;
+  addMessage(target, text, at);
   refreshThinking();
 }
 

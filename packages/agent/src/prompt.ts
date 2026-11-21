@@ -1,4 +1,5 @@
 import { ARENA, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
+import { CONVERSATION_MAX } from "./comms";
 import {
   ALWAYS_EDIBLE,
   attackCooldownMs,
@@ -192,7 +193,8 @@ function commsSection(comms: CommsMode): string[] {
         "COMUNICACIÓN",
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
-        "- Puedes proponer tratos, negociar, persuadir, amenazar, mentir o ignorarlo; él puede hacer lo mismo contigo, así que no te creas todo. Nada obliga a nadie a cumplir lo que promete.",
+        `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
+        "- Es texto libre: qué decir, cómo, en qué idioma y cuándo lo decides tú. El sistema lo entrega tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
         '- Tu "reason" es privado: el otro agente no lo ve (el público sí, y también ve los mensajes).',
       ];
   }

@@ -41,6 +41,8 @@ import {
   type PromptsResponse,
   type ServerDefaults,
   type Side,
+  type TranscriptEntry,
+  formatTranscript,
 } from "@phack/protocol";
 
 const MATCH_DURATION_MS = 180_000;
@@ -223,7 +225,8 @@ function buildState(phase: MatchPhase): MatchState {
   if (phase === "idle") {
     const offline = { connected: false, lastThought: "", lastAction: "" };
     return {
-      id: "mock-idle",
+      // Como un servidor recién encendido: todavía no hubo ninguna pelea.
+      id: "",
       phase,
       startedAt: null,
       endsAt: null,
@@ -412,8 +415,42 @@ const KEEP_SHOOTING = "Su vida baja más rápido que la mía: mantengo la distan
 let loopTimer: number | undefined;
 let loopStep = 0;
 
+// ---------- Transcripción ----------
+
+/** Lo que la maqueta ha emitido, para el enlace "Ver transcripción". */
+const transcript: TranscriptEntry[] = [];
+const MAX_TRANSCRIPT = 2000;
+const SKIP_IN_TRANSCRIPT = new Set(["state", "prompts", "settings", "match_end"]);
+
+function record(event: Record<string, unknown>, at: number): void {
+  if (SKIP_IN_TRANSCRIPT.has(String(event.type))) return;
+  transcript.push({ ...event, at } as TranscriptEntry);
+  if (transcript.length > MAX_TRANSCRIPT) transcript.shift();
+}
+
+/** La transcripción en texto, con el mismo formato que entrega el servidor. */
+export function mockTranscriptText(): string {
+  const start = transcript[0]?.at ?? Date.now();
+  return formatTranscript([
+    {
+      type: "start",
+      at: start,
+      matchId: "maqueta",
+      configs: { red: { ...prompts.red }, blue: { ...prompts.blue } },
+      settings: { ...settings },
+      systemPrompts: { red: prompts.red.prompt, blue: prompts.blue.prompt },
+      tickMs: LOOP_MS,
+      durationSeconds: MATCH_DURATION_MS / 1000,
+    },
+    { type: "phase", at: start, phase: "running" },
+    ...transcript,
+  ]);
+}
+
 function send(event: Record<string, unknown> & { type: ArenaEvent["type"] }): void {
-  emit?.({ ...event, at: Date.now() } as ArenaEvent);
+  const at = Date.now();
+  record(event, at);
+  emit?.({ ...event, at } as ArenaEvent);
 }
 
 const LOOP_MESSAGES: Record<Side, string[]> = {
@@ -632,6 +669,7 @@ export function connectMockSocket(handlers: SocketHandlers): void {
   handlers.onStatus("open");
   const now = Date.now();
   for (const seed of feedFor(phase)) {
+    record(seed.event, now - seed.ago);
     handlers.onMessage(JSON.stringify({ ...seed.event, at: now - seed.ago }));
   }
   // El estado va al final y con la hora actual: con él la página estima el reloj del

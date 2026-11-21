@@ -163,9 +163,33 @@ export function describeModel(id: string, name?: string): ModelInfo {
 
 // ---------- Dibujo ----------
 
+let iconCopies = 0;
+
+/**
+ * Algunos logos traen degradados con un id fijo. Cada copia del logo repetiría ese id, y
+ * `url(#id)` apunta a la primera copia de la página: si esa está oculta (un selector
+ * cerrado), las demás quedan sin color. Cada copia lleva sus propios ids.
+ */
+function uniqueIds(svg: Element): void {
+  const withId = Array.from(svg.querySelectorAll("[id]"));
+  if (withId.length === 0) return;
+  iconCopies += 1;
+  const renamed = new Map(withId.map((node) => [node.id, `${node.id}-c${iconCopies}`]));
+  for (const node of withId) node.id = renamed.get(node.id) ?? node.id;
+  for (const node of [svg, ...Array.from(svg.querySelectorAll("*"))]) {
+    for (const attribute of Array.from(node.attributes)) {
+      if (!attribute.value.includes("#")) continue;
+      let value = attribute.value;
+      for (const [from, to] of renamed) value = value.split(`#${from}`).join(`#${to}`);
+      if (value !== attribute.value) node.setAttribute(attribute.name, value);
+    }
+  }
+}
+
 function iconNode(svg: string): Element | null {
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
   if (parsed.nodeName !== "svg") return null;
+  uniqueIds(parsed);
   parsed.setAttribute("aria-hidden", "true");
   parsed.removeAttribute("style");
   parsed.querySelector("title")?.remove();

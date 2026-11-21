@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createLlmClient } from "./index";
-import { buildArgs, decide, MOCK_TOOL_NAMES, readObservation, readStyle, type MockObservation } from "./mock";
+import { buildArgs, decide, MOCK_TOOL_NAMES, mockSay, readObservation, readStyle, type MockObservation } from "./mock";
 import { TOOLS } from "./test-helpers";
 import type { ChatMessage, ToolCall, ToolDef } from "./types";
 
@@ -23,6 +23,7 @@ function seen(partial: Partial<MockObservation>): MockObservation {
     absorption: 0,
     inventory: {},
     currentAction: null,
+    rivalMessages: [],
     ...partial,
   };
 }
@@ -288,6 +289,7 @@ describe("piezas de la política mock", () => {
       absorption: 3.5,
       inventory: { ender_pearl: 3, cooked_beef: 4 },
       currentAction: "attack",
+      rivalMessages: [],
     });
   });
 
@@ -324,5 +326,66 @@ describe("piezas de la política mock", () => {
     expect(buildArgs(wait)).toEqual({ seconds: 0.5 });
     expect(buildArgs(TOOLS[0]!)).toEqual({});
     expect(buildArgs(PEARL)).toEqual({ target: "rival" });
+  });
+});
+
+describe("el mock habla (modo chat)", () => {
+  /** Las herramientas como las arma @phack/agent en modo "chat": todas con "say". */
+  const withSay: ToolDef[] = TOOLS.map((t) => ({
+    ...t,
+    parameters: { ...t.parameters, properties: { ...(t.parameters.properties as object), say: { type: "string" } } },
+  }));
+  const near = { distance: 2, health: 20, opponentHealth: 20 };
+
+  async function says(client: ReturnType<typeof mock>, obs: Record<string, unknown>, tools = withSay) {
+    const res = await client.complete({ messages: observation(obs), tools });
+    return res.toolCalls[0]?.args["say"];
+  }
+
+  it("contesta cuando el rival le dijo algo", async () => {
+    const client = mock();
+    for (let i = 0; i < 6; i++) {
+      const said = await says(client, { ...near, rivalMessages: ["¿tregua?"] });
+      expect(typeof said).toBe("string");
+      expect((said as string).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("sin nada que contestar habla más o menos un turno de cada cuatro", async () => {
+    const client = mock();
+    const lines: unknown[] = [];
+    for (let i = 0; i < 8; i++) lines.push(await says(client, { ...near, rivalMessages: [] }));
+    expect(lines.filter((line) => typeof line === "string")).toHaveLength(2);
+    expect(lines[0]).toBeUndefined();
+    expect(lines[1]).toBeTypeOf("string");
+    expect(lines[5]).toBeTypeOf("string");
+  });
+
+  it("nunca manda say si la tool no lo declara", async () => {
+    const client = mock();
+    for (let i = 0; i < 6; i++) {
+      expect(await says(client, { ...near, rivalMessages: ["hola"] }, TOOLS)).toBeUndefined();
+    }
+  });
+
+  it("readObservation lee rivalMessages y descarta lo que no es texto", () => {
+    const obs = readObservation(observation({ rivalMessages: ["hola", 3, "  ", "chao"] }));
+    expect(obs.rivalMessages).toEqual(["hola", "chao"]);
+    expect(readObservation(observation({ rivalMessages: "hola" })).rivalMessages).toEqual([]);
+  });
+
+  it("es determinista: la frase depende solo del turno y de si hay algo que contestar", () => {
+    const quiet = seen({ distance: 2 });
+    const spoken = seen({ distance: 2, rivalMessages: ["ven"] });
+    for (let turn = 0; turn < 40; turn++) {
+      for (const tool of MOCK_TOOL_NAMES) {
+        const line = mockSay(quiet, tool, turn);
+        expect(line).toBe(mockSay(quiet, tool, turn));
+        expect(line === null).toBe(turn % 4 !== 1);
+        const reply = mockSay(spoken, tool, turn);
+        expect(reply).toBe(mockSay({ ...spoken, rivalMessages: ["otra cosa"] }, tool, turn));
+        expect(reply).not.toBeNull();
+      }
+    }
   });
 });
