@@ -465,40 +465,91 @@ textarea {
   margin-right: auto;
 }
 
-/* Barra de vida: 10 bloques, como los 10 corazones de Minecraft. */
-.hp {
-  height: 18px;
-  background: rgba(0, 0, 0, 0.55);
-  /* Los cortes entre bloques son transparentes: se ve el video a través. */
-  mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0,
-    #000 calc(10% - 3px),
-    transparent calc(10% - 3px),
-    transparent 10%
-  );
+/*
+ * Vida en corazones, con el dibujo del HUD de Minecraft (9x9 píxeles): una fila de
+ * casilleros y, encima de cada uno, el corazón rojo recortado en la fracción que le toca
+ * (scoreboard.ts). Como en el juego, cada corazón pisa un píxel del anterior. --px es
+ * cuánto mide en pantalla un píxel del dibujo: siempre entero, para que se vea nítido.
+ */
+.hearts {
+  --px: 3px;
+  display: flex;
 }
 
-.hp__fill {
-  width: 0;
-  height: 100%;
-  background: var(--side);
-  /* Corta: la barra baja junto con el golpe que se ve, sin quedarse atrás de la imagen. */
-  transition: width 0.15s ease-out;
+.heart {
+  position: relative;
+  flex: none;
+  width: calc(9 * var(--px));
+  height: calc(9 * var(--px));
 }
 
-/* Azul es el espejo de Rojo: se llena desde la derecha hacia el centro. */
-.hud__side--blue .hp {
+.heart + .heart {
+  margin-left: calc(-1 * var(--px));
+}
+
+/* Azul es el espejo de Rojo: sus corazones parten desde el borde derecho. */
+.hud__side--blue .hearts {
+  flex-direction: row-reverse;
+}
+
+.hud__side--blue .heart + .heart {
+  margin-left: 0;
+  margin-right: calc(-1 * var(--px));
+}
+
+/*
+ * El espejo llega hasta adentro de cada corazón: en Azul el rojo se vacía desde el lado
+ * del centro, así medio corazón conserva la mitad de afuera (la derecha), igual que la
+ * fila entera. El recorte se calcula como en Rojo y aquí solo se da vuelta el dibujo.
+ */
+.hud__side--blue .heart__fill {
   transform: scaleX(-1);
 }
 
-.hud__side.is-hit .hp__fill {
-  animation: hit 0.4s ease-out;
+.heart__sprite {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-@keyframes hit {
+/* El rojo se recorta desde la derecha; el recorte se anima y la vida cambia sin saltos. */
+.heart__fill {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.3s ease-out;
+}
+
+/* Con dos corazones o menos tiemblan, alternados, igual que en el juego. */
+.hearts[data-level="low"] .heart {
+  animation: heart-shake 0.3s steps(2, end) infinite;
+}
+
+.hearts[data-level="low"] .heart:nth-child(even) {
+  animation-delay: -0.15s;
+}
+
+@keyframes heart-shake {
+  50% {
+    transform: translateY(calc(-1 * var(--px)));
+  }
+}
+
+/* Golpe recibido: el rojo se aclara un instante, como el parpadeo del juego. */
+.hud__side.is-hit .heart__fill {
+  animation: heart-hit 0.4s steps(2, end);
+}
+
+@keyframes heart-hit {
   from {
-    background: #fff;
+    filter: brightness(1.5) saturate(0.55);
+  }
+}
+
+/* Desde 1280 px de ancho los 15 corazones caben con píxeles de 4 px. */
+@media (min-width: 1280px) {
+  .hearts {
+    --px: 4px;
   }
 }
 

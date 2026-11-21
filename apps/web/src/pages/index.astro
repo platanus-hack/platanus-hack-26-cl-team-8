@@ -2,12 +2,16 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
-import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST, TIMER_LABELS } from "@phack/protocol";
+import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST, MAX_HEALTH, TIMER_LABELS } from "@phack/protocol";
+import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
 // Los ids generados aquí (fighter-red, prompt-blue, ...) son el contrato con
 // src/scripts/*.ts. Todo el contenido dinámico se escribe con textContent.
+// Un corazón por cada 2 puntos de vida.
+const hearts = Array.from({ length: Math.ceil(MAX_HEALTH / 2) });
+
 const sides = [
   { id: "red", label: "Rojo", bot: "AgenteRojo" },
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
@@ -87,21 +91,31 @@ const stats = [
                 <h2 class="hud__name">{side.label}</h2>
                 <span class="model-tag hud__model" id={`fighter-model-${side.id}`} hidden />
                 <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
-                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip="Vida, de 0 a 20: cada bloque de la barra son 2 puntos.">
+                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip={`Vida, de 0 a ${MAX_HEALTH}: cada corazón son 2 puntos.`}>
                 –
               </span>
               </div>
+              <!-- Vida en corazones, con el mismo dibujo del juego: cada uno son 2 puntos. scoreboard.ts recorta el rojo. -->
               <div
-                class="hp"
+                class="hearts"
                 id={`hp-${side.id}`}
                 role="meter"
                 aria-label={`Vida de ${side.label}`}
                 aria-valuemin="0"
-                aria-valuemax="20"
+                aria-valuemax={MAX_HEALTH}
                 aria-valuenow="0"
-                data-level="high"
+                data-level="ok"
               >
-                <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
+                {
+                  hearts.map(() => (
+                    <span class="heart">
+                      <HeartSprite kind="container" />
+                      <span class="heart__fill">
+                        <HeartSprite kind="full" />
+                      </span>
+                    </span>
+                  ))
+                }
               </div>
               <dl class="stats">
                 <div class="slot" id={`held-${side.id}`} data-tip="En la mano: nada.">

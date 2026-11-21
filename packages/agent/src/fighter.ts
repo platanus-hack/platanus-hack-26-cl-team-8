@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA } from "@phack/protocol";
+import { ARENA, MAX_HEALTH } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
 import { CommsInbox, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
@@ -1737,7 +1737,7 @@ class MineflayerFighter implements Fighter {
         } catch {
           // nada
         }
-        this.enterWait(bot, `bebiste la poción (vida ${round1(bot.health)}/20)`);
+        this.enterWait(bot, `bebiste la poción (vida ${round1(bot.health)}/${MAX_HEALTH})`);
       }
       return;
     }
@@ -1866,7 +1866,7 @@ class MineflayerFighter implements Fighter {
         } catch {
           // nada
         }
-        this.enterWait(bot, `terminaste de comer (comida ${round1(bot.food)}/20, vida ${round1(bot.health)}/20)`);
+        this.enterWait(bot, `terminaste de comer (comida ${round1(bot.food)}/20, vida ${round1(bot.health)}/${MAX_HEALTH})`);
       }
       return;
     }

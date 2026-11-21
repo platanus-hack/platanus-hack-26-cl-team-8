@@ -1,4 +1,4 @@
-import { AGENT_USERNAMES, ARENA, type Side } from "@phack/protocol";
+import { AGENT_USERNAMES, ARENA, MAX_HEALTH, type Side } from "@phack/protocol";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
 import type { Kit, KitItem } from "@phack/protocol";
@@ -204,6 +204,8 @@ export async function prepareFighter(
   }
 
   await sendAll(rcon, [
+    // Primero la vida máxima y después la cura: al revés quedaría con la vida de antes.
+    `attribute ${username} minecraft:generic.max_health base set ${MAX_HEALTH}`,
     `effect give ${username} minecraft:instant_health 1 10 true`,
     `effect give ${username} minecraft:saturation 1 10 true`,
   ]);

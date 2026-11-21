@@ -1,4 +1,4 @@
-import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
+import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, MAX_HEALTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
@@ -288,7 +288,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       ? "- La partida no tiene límite de tiempo: sigue hasta que alguno de los dos muera o hasta que la detengan desde afuera. No hay reaparición."
       : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
     "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
-    "- La vida y la comida van de 0 a 20.",
+    `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
     "- Cada respuesta tuya puede llamar una herramienta, varias o ninguna.",

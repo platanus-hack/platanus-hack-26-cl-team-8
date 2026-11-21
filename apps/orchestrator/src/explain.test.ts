@@ -85,8 +85,8 @@ describe("buildExplanationMessages", () => {
     expect(user).toContain(
       'Azul (modelo por defecto, kit Clásico): prompt "Eres defensivo: mantén distancia y usa el arco."',
     );
-    expect(user).toContain("Vida final 13,5/20, daño hecho 20, 30 decisiones, 812 ms promedio");
-    expect(user).toContain("Vida final 0/20, daño hecho 6,5, 22 decisiones, 1400 ms promedio");
+    expect(user).toContain("Vida final 13,5/30, daño hecho 20, 30 decisiones, 812 ms promedio");
+    expect(user).toContain("Vida final 0/30, daño hecho 6,5, 22 decisiones, 1400 ms promedio");
     expect(user.endsWith("Explica por qué ganó Rojo.")).toBe(true);
   });
 
@@ -148,7 +148,7 @@ describe("fallbackExplanation", () => {
       ),
     );
     expect(text).toBe(
-      "Rojo ganó por KO a los 42 s: hizo 20 de daño contra 6,5 de Azul y terminó con 13,5/20 de vida, " +
+      "Rojo ganó por KO a los 42 s: hizo 20 de daño contra 6,5 de Azul y terminó con 13,5/30 de vida, " +
         "decidiendo más rápido (700 ms frente a 1400 ms).",
     );
   });
@@ -157,7 +157,7 @@ describe("fallbackExplanation", () => {
     const text = fallbackExplanation(
       record({ winner: "blue", reason: "kill" }, { alive: false, health: 0, avgDecisionMs: 900 }, { damageDealt: 20, avgDecisionMs: 1000 }),
     );
-    expect(text).toBe("Azul ganó por KO a los 42 s: hizo 20 de daño contra 0 de Rojo y terminó con 20/20 de vida.");
+    expect(text).toBe("Azul ganó por KO a los 42 s: hizo 20 de daño contra 0 de Rojo y terminó con 20/30 de vida.");
   });
 
   it("tiempo con ganador por vida", () => {
@@ -165,17 +165,17 @@ describe("fallbackExplanation", () => {
       record({ winner: "blue", reason: "timeout_health" }, { health: 9, damageDealt: 6 }, { health: 14, damageDealt: 11 }),
     );
     expect(text).toBe(
-      "Se acabó el tiempo y Azul ganó por vida: terminó con 14/20 frente a 9/20 de Rojo, tras hacer 11 de daño contra 6.",
+      "Se acabó el tiempo y Azul ganó por vida: terminó con 14/30 frente a 9/30 de Rojo, tras hacer 11 de daño contra 6.",
     );
   });
 
   it("empate con y sin daño", () => {
     expect(fallbackExplanation(record({ winner: null, reason: "draw" }))).toBe(
-      "Empate: en 42 s ninguno logró dañar al otro y ambos terminaron con 20/20 de vida.",
+      "Empate: en 42 s ninguno logró dañar al otro y ambos terminaron con 20/30 de vida.",
     );
     expect(
       fallbackExplanation(record({ winner: null, reason: "draw" }, { health: 15, damageDealt: 5 }, { health: 15, damageDealt: 5 })),
-    ).toBe("Empate: al acabarse el tiempo ambos quedaron con 15/20 de vida (Rojo hizo 5 de daño y Azul 5).");
+    ).toBe("Empate: al acabarse el tiempo ambos quedaron con 15/30 de vida (Rojo hizo 5 de daño y Azul 5).");
   });
 
   it("peleas detenidas o con error también dan una frase válida", () => {

@@ -695,12 +695,19 @@ export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
 export const MatchPhaseSchema = z.enum(["idle", "preparing", "running", "finished"]);
 export type MatchPhase = z.infer<typeof MatchPhaseSchema>;
 
+/**
+ * Vida máxima de cada agente: 15 corazones, 50 % más que los 10 de un jugador de
+ * Minecraft. El orquestador se la da al preparar la pelea (atributo generic.max_health)
+ * y de aquí la toman el prompt del agente y la barra de corazones de la web.
+ */
+export const MAX_HEALTH = 30;
+
 export const AgentStatusSchema = z.object({
   side: SideSchema,
   username: z.string(),
   connected: z.boolean(),
   alive: z.boolean(),
-  /** 0..20 */
+  /** 0..MAX_HEALTH */
   health: z.number(),
   /** 0..20 */
   food: z.number(),
