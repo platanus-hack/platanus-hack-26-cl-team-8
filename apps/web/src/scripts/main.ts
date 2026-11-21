@@ -1,12 +1,12 @@
 import { parseArenaEvent, type ArenaEvent, type MatchPhase, type MatchState } from "@phack/protocol";
-import { fetchDefaults, fetchState } from "./api";
+import { actionLine, describeAction } from "./actions";
+import { fetchDefaults, fetchMatches, fetchState } from "./api";
 import { initControls, setPhase } from "./controls";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
-import { addRecord, initHistory, refreshHistory } from "./history";
 import { setDefaults } from "./models";
-import { initPlayer } from "./player";
+import { initPlayer, setServerClockOffset, videoDelayMs } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import {
   applyAction,
@@ -15,27 +15,38 @@ import {
   applyThought,
   initScoreboard,
   renderState,
+  showExplanation,
   showResult,
   syncClock,
 } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
+import { initSound, playEnd, playHit, playKnockout, playStart } from "./sound";
 
 const STATE_POLL_MS = 5000;
-const MAX_ARGS_LENGTH = 160;
 
 let socketStatus: SocketStatus = "connecting";
 let lastPhase: MatchPhase | null = null;
 
-function describeAction(tool: string, args: Record<string, unknown>, result: string): string {
-  let argsText = "";
-  try {
-    const json = JSON.stringify(args);
-    if (json !== undefined && json !== "{}") argsText = truncate(json, MAX_ARGS_LENGTH);
-  } catch {
-    argsText = "…";
+/**
+ * El "por qué ganó" lo escribe el servidor unos segundos después del final y lo guarda
+ * con la pelea. Se consulta unas pocas veces hasta que aparece; si no llega, no pasa nada.
+ */
+async function awaitExplanation(matchId: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 2500));
+    // Ya partió otra pelea: ese resultado no está en pantalla.
+    if (lastPhase === "preparing" || lastPhase === "running") return;
+    try {
+      const record = (await fetchMatches()).find((item) => item.id === matchId);
+      const text = record?.result.explanation;
+      if (text) {
+        showExplanation(text);
+        return;
+      }
+    } catch {
+      // Se reintenta en la próxima vuelta.
+    }
   }
-  const call = `${tool}(${argsText})`;
-  return result.trim() === "" ? call : `${call} → ${result}`;
 }
 
 function applyState(state: MatchState): void {
@@ -46,6 +57,7 @@ function applyState(state: MatchState): void {
     if (state.phase === "preparing") {
       addFeed({ at: Date.now(), kind: "system", text: "Preparando la arena para una nueva pelea…" });
     } else if (state.phase === "running") {
+      playStart();
       addFeed({ at: Date.now(), kind: "system", text: "¡Comienza la pelea!" });
     }
   }
@@ -67,13 +79,14 @@ function handleEvent(event: ArenaEvent): void {
       addFeed({ at: event.at, kind: "thought", side: event.side, text: event.text });
       break;
     case "action": {
-      const text = describeAction(event.tool, event.args, event.result);
-      applyAction(event.side, text);
-      addFeed({ at: event.at, kind: "action", side: event.side, text });
+      const view = describeAction(event.tool, event.args, event.result);
+      applyAction(event.side, view);
+      addFeed({ at: event.at, kind: "action", side: event.side, text: actionLine(view), title: view.raw });
       break;
     }
     case "damage":
-      applyDamage(event.side, event.health);
+      playHit();
+      applyDamage(event.side, event.health, event.amount);
       addFeed({
         at: event.at,
         kind: "damage",
@@ -82,20 +95,20 @@ function handleEvent(event: ArenaEvent): void {
       });
       break;
     case "death":
+      playKnockout();
       applyDeath(event.side);
       addFeed({ at: event.at, kind: "death", side: event.side, text: `${SIDE_LABEL[event.side]} ha caído en combate.` });
       break;
     case "match_end":
+      // En un K.O. ya sonó la caída; en los demás finales suena la campana.
+      if (event.record.result.reason !== "kill") playEnd();
       showResult(event.record.result);
+      if (!event.record.result.explanation) void awaitExplanation(event.record.id);
       addFeed({
         at: event.at,
         kind: "system",
         text: `${resultTitle(event.record.result)} ${resultDetail(event.record.result)}`,
       });
-      addRecord(event.record);
-      // Se vuelve a pedir el historial completo un poco después, por si el
-      // servidor aún no terminaba de persistir el registro.
-      window.setTimeout(() => void refreshHistory({ silent: true }), 1500);
       break;
     case "log":
       addFeed({
@@ -107,6 +120,51 @@ function handleEvent(event: ArenaEvent): void {
   }
 }
 
+// ---------- Telemetría sincronizada con el video ----------
+//
+// Los eventos llegan por websocket al instante, pero la imagen (HLS) va varios segundos
+// atrás. Para que el marcador no "adelante" lo que se ve, cada evento espera en una cola
+// el mismo tiempo que lleva de atraso el video, y recién entonces se aplica.
+
+type Pending = { dueAt: number; event: ArenaEvent };
+
+const DRAIN_MS = 50;
+/** Saltos de atraso menores que esto se suavizan; mayores (cambió la señal) se toman de una vez. */
+const DELAY_SNAP_MS = 1500;
+
+const pending: Pending[] = [];
+let lastDueAt = 0;
+let delay = 0;
+
+function receiveEvent(event: ArenaEvent): void {
+  const now = Date.now();
+  setServerClockOffset(event.at - now);
+
+  // Los prompts pendientes no son parte de la imagen: se aplican al tiro.
+  if (event.type === "prompts") {
+    handleEvent(event);
+    return;
+  }
+
+  const target = videoDelayMs();
+  delay = Math.abs(target - delay) > DELAY_SNAP_MS ? target : delay + (target - delay) * 0.2;
+  // Nunca antes que el evento anterior: el orden de llegada se respeta siempre.
+  const dueAt = Math.max(lastDueAt, now + delay);
+  lastDueAt = dueAt;
+  pending.push({ dueAt, event });
+  drainPending();
+}
+
+function drainPending(force = false): void {
+  const now = Date.now();
+  while (pending.length > 0) {
+    const next = pending[0]!;
+    if (!force && next.dueAt > now) break;
+    pending.shift();
+    handleEvent(next.event);
+  }
+}
+
 function renderConnection(status: SocketStatus): void {
   const indicator = byId("conn");
   indicator.dataset.state = status;
@@ -114,6 +172,11 @@ function renderConnection(status: SocketStatus): void {
     byId("conn-text"),
     status === "open" ? "Conectado" : status === "connecting" ? "Conectando…" : "Sin conexión, reintentando…",
   );
+  // Con todo bien solo se ve el punto verde: la ayuda dice qué significa.
+  indicator.dataset.tip =
+    status === "open"
+      ? "Conectado a la arena: los datos llegan en vivo."
+      : "Sin conexión con la arena. La página sigue intentando.";
   document.body.dataset.conn = status;
 }
 
@@ -129,9 +192,15 @@ function init(): void {
   initScoreboard();
   initFeed();
   initPrompts();
-  initHistory();
-  initControls(applyState);
+  // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
+  // para que un estado viejo en espera no la pise después.
+  initControls((state) => {
+    drainPending(true);
+    applyState(state);
+  });
+  window.setInterval(drainPending, DRAIN_MS);
   initPlayer();
+  initSound();
 
   renderConnection("connecting");
   let everOpened = false;
@@ -139,7 +208,7 @@ function init(): void {
   connectSocket({
     onMessage(raw) {
       const event = parseArenaEvent(raw);
-      if (event) handleEvent(event);
+      if (event) receiveEvent(event);
     },
     onStatus(status) {
       const previous = socketStatus;
@@ -147,10 +216,7 @@ function init(): void {
       renderConnection(status);
       if (status === "open" && previous !== "open") {
         // Tras (re)conectar pudo haber cambiado todo mientras no escuchábamos.
-        if (everOpened) {
-          void loadPrompts();
-          void refreshHistory({ silent: true });
-        }
+        if (everOpened) void loadPrompts();
         everOpened = true;
       }
     },
@@ -159,7 +225,6 @@ function init(): void {
   // Carga inicial por HTTP: funciona aunque el websocket tarde o esté bloqueado.
   pollState();
   void loadPrompts();
-  void refreshHistory();
   // Con esto se sabe qué modelo usa un agente que dejó "por defecto del servidor".
   fetchDefaults()
     .then(setDefaults)

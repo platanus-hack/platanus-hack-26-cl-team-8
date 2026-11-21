@@ -94,6 +94,22 @@ describe("adaptador openai", () => {
     expect(res).toEqual({ text: "", toolCalls: [] });
   });
 
+  it("lee el consumo de tokens de usage.prompt_tokens / completion_tokens", async () => {
+    stubFetch([{ body: { ...OK_REPLY, usage: { prompt_tokens: 812, completion_tokens: 37, total_tokens: 849 } } }]);
+    const client = createLlmClient({ provider: "openai", apiKeys: { openai: "sk-test" } });
+    const res = await client.complete({ messages: HISTORY, tools: TOOLS });
+    expect(res.usage).toEqual({ inputTokens: 812, outputTokens: 37 });
+  });
+
+  it("omite usage si falta o trae basura", async () => {
+    const client = createLlmClient({ provider: "openai", apiKeys: { openai: "sk-test" } });
+    for (const usage of [undefined, null, "mucho", { prompt_tokens: "812", completion_tokens: 3 }, { prompt_tokens: -1, completion_tokens: 3 }, { prompt_tokens: 5 }]) {
+      stubFetch([{ body: { ...OK_REPLY, usage } }]);
+      const res = await client.complete({ messages: HISTORY, tools: TOOLS });
+      expect("usage" in res).toBe(false);
+    }
+  });
+
   it("reintenta una vez ante 429 y luego responde", async () => {
     const calls = stubFetch([{ status: 429, body: "rate limit" }, { body: OK_REPLY }]);
     const client = createLlmClient({ provider: "openai", apiKeys: { openai: "sk-test" } });

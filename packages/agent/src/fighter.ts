@@ -1,14 +1,14 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
 import { ARENA } from "@phack/protocol";
-import type { ChatMessage, LlmResponse } from "@phack/llm";
+import type { ChatMessage, LlmResponse, TokenUsage } from "@phack/llm";
 import { computeAim, estimateVelocity, type VelocitySample } from "./aim";
 import { distance3, retreatTarget, round1, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
 import { isToolName, parseToolArgs, TOOL_DEFS, type ParsedToolArgs, type ToolName } from "./tools";
-import type { Fighter, FighterOptions } from "./types";
+import type { DecisionReport, Fighter, FighterOptions } from "./types";
 
 // mineflayer y mineflayer-pathfinder son CommonJS puro. Se cargan con createRequire
 // (en vez de import ESM) para no depender de la detección de exports con nombre de
@@ -73,6 +73,20 @@ function errorText(err: unknown): string {
   }
 }
 
+/** Nombre del ítem en la mano principal ("" si está vacía o el bot aún no tiene inventario). */
+function heldItemName(bot: Bot | null): string {
+  const name = bot?.heldItem?.name;
+  return typeof name === "string" ? name : "";
+}
+
+/** El cliente LLM puede ser cualquiera: solo se reenvía un consumo con números válidos. */
+function validUsage(usage: unknown): TokenUsage | undefined {
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const { inputTokens, outputTokens } = usage as Record<string, unknown>;
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  return ok(inputTokens) && ok(outputTokens) ? { inputTokens, outputTokens } : undefined;
+}
+
 function toError(err: unknown): Error {
   return err instanceof Error ? err : new Error(errorText(err));
 }
@@ -104,6 +118,8 @@ class MineflayerFighter implements Fighter {
   private ended = false;
   private alive = false;
   private lastHealth = 20;
+  /** Último ítem en la mano que se informó en onStatus (para no repetir estados iguales). */
+  private lastHeldItem = "";
   private connectPromise: Promise<void> | null = null;
   private settleConnect: ((err?: Error) => void) | null = null;
   private stopPromise: Promise<void> | null = null;
@@ -335,6 +351,16 @@ class MineflayerFighter implements Fighter {
       });
     });
 
+    // Equipar espada/arco, empezar a comer o gastar la última comida cambian la mano.
+    // mineflayer emite este evento con cada actualización del slot (también si solo cambia
+    // la cantidad), así que se informa solo cuando cambia el NOMBRE del ítem. Antes del
+    // "spawn" no se informa: el inventario llega antes y el estado diría "desconectado".
+    bot.on("heldItemChanged", () => {
+      this.guard("heldItemChanged", () => {
+        if (this.connected && heldItemName(bot) !== this.lastHeldItem) this.emitStatus();
+      });
+    });
+
     bot.on("death", () => {
       this.guard("death", () => {
         this.alive = false;
@@ -389,11 +415,14 @@ class MineflayerFighter implements Fighter {
     const bot = this.bot;
     const health = bot && typeof bot.health === "number" && Number.isFinite(bot.health) ? bot.health : 0;
     const food = bot && typeof bot.food === "number" && Number.isFinite(bot.food) ? bot.food : 0;
+    const heldItem = heldItemName(bot);
+    this.lastHeldItem = heldItem;
     const status = {
       connected: this.connected,
       alive: this.alive,
       health: this.alive ? round1(health) : 0,
       food: round1(food),
+      heldItem,
     };
     this.safe(() => this.opts.events.onStatus(status));
   }
@@ -443,6 +472,7 @@ class MineflayerFighter implements Fighter {
     const abort = new AbortController();
     this.llmAbort = abort;
     const timeout = setTimeout(() => abort.abort(), LLM_TIMEOUT_MS);
+    const llmStartedAt = Date.now();
     let response: LlmResponse;
     try {
       response = await this.opts.llm.complete({ messages, tools: TOOL_DEFS, signal: abort.signal });
@@ -454,6 +484,12 @@ class MineflayerFighter implements Fighter {
       if (this.llmAbort === abort) this.llmAbort = null;
     }
     if (this.stopped) return;
+
+    // Latencia y tokens de la llamada: se informan antes de actuar, una vez por respuesta.
+    const report: DecisionReport = { ms: Date.now() - llmStartedAt };
+    const usage = validUsage(response.usage);
+    if (usage) report.usage = usage;
+    this.safe(() => this.opts.events.onDecision(report));
 
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
     const text = typeof response.text === "string" ? response.text : "";

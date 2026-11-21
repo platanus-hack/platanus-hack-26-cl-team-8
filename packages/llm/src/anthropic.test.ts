@@ -95,6 +95,36 @@ describe("adaptador anthropic", () => {
     });
   });
 
+  it("lee usage.input_tokens / output_tokens y suma los tokens de caché", async () => {
+    const client = createLlmClient({ provider: "anthropic", apiKeys: { anthropic: "ak-test" } });
+    stubFetch([{ body: { ...OK_REPLY, usage: { input_tokens: 900, output_tokens: 55 } } }]);
+    expect((await client.complete({ messages: HISTORY, tools: TOOLS })).usage).toEqual({
+      inputTokens: 900,
+      outputTokens: 55,
+    });
+    stubFetch([
+      {
+        body: {
+          ...OK_REPLY,
+          usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 800, cache_creation_input_tokens: null },
+        },
+      },
+    ]);
+    expect((await client.complete({ messages: HISTORY, tools: TOOLS })).usage).toEqual({
+      inputTokens: 810,
+      outputTokens: 5,
+    });
+  });
+
+  it("omite usage si falta o trae basura", async () => {
+    const client = createLlmClient({ provider: "anthropic", apiKeys: { anthropic: "ak-test" } });
+    for (const usage of [undefined, 42, { input_tokens: 10 }, { input_tokens: Number.NaN, output_tokens: 1 }]) {
+      stubFetch([{ body: { ...OK_REPLY, usage } }]);
+      const res = await client.complete({ messages: HISTORY, tools: TOOLS });
+      expect("usage" in res).toBe(false);
+    }
+  });
+
   it("omite system y tools cuando no hay", async () => {
     const calls = stubFetch([{ body: { content: [{ type: "text", text: "hola" }] } }]);
     const client = createLlmClient({ provider: "anthropic", apiKeys: { anthropic: "ak-test" } });

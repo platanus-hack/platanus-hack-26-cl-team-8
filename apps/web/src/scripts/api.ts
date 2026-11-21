@@ -100,12 +100,6 @@ const promptsParser: Parser<PromptsResponse> = {
   },
 };
 
-const matchesParser: Parser<MatchRecord[]> = {
-  parse(data) {
-    return MatchRecordSchema.array().parse(data);
-  },
-};
-
 export function fetchState(): Promise<MatchState> {
   return request(API_ROUTES.state, MatchStateSchema);
 }
@@ -126,8 +120,9 @@ export function stopMatch(): Promise<MatchState> {
   return request(API_ROUTES.matchStop, MatchStateSchema, { method: "POST" });
 }
 
+/** Últimas peleas guardadas. La web solo lo usa para leer el "por qué ganó" de la más reciente. */
 export function fetchMatches(): Promise<MatchRecord[]> {
-  return request(API_ROUTES.matches, matchesParser);
+  return request(API_ROUTES.matches, { parse: (data) => MatchRecordSchema.array().parse(data) });
 }
 
 export function fetchDefaults(): Promise<ServerDefaults> {

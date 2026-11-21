@@ -12,11 +12,32 @@ const sides = [
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
 ] as const;
 
-// Estadísticas de cada agente: un ícono de píxeles y su número (el nombre va en el `title`).
+// Estadísticas de cada agente, bajo su barra de vida: un ícono de píxeles y su número.
+// `tip` es el texto de ayuda que aparece al pasar el mouse (ver "Ayuda al pasar el mouse"
+// en global.css); `label` es el nombre para lectores de pantalla.
 const stats = [
-  { id: "food", label: "Comida" },
-  { id: "damage", label: "Daño hecho" },
-  { id: "decisions", label: "Decisiones" },
+  { id: "food", icon: "food", label: "Comida", tip: "Comida, de 0 a 20. Con la barra alta el agente recupera vida solo; comer la repone." },
+  { id: "damage", icon: "damage", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
+  { id: "decisions", icon: "decisions", label: "Decisiones", tip: "Decisiones: cuántas veces el modelo eligió qué hacer." },
+  { id: "speed", icon: "clock", label: "Tiempo por decisión", tip: "Lo que tarda el modelo en decidir, en promedio. Un modelo lento pierde turnos." },
+  { id: "cost", icon: "emerald", label: "Costo del modelo", tip: "Lo que ha costado el modelo en esta pelea." },
+] as const;
+
+// Lo que un agente puede tener en la mano (scoreboard.ts elige cuál se ve).
+const heldItems = [
+  { id: "sword", icon: "damage" },
+  { id: "bow", icon: "bow" },
+  { id: "food", icon: "steak" },
+] as const;
+
+// Ícono de cada herramienta del agente (ver scripts/actions.ts).
+const actionIcons = [
+  { tool: "approach", icon: "forward" },
+  { tool: "attack", icon: "damage" },
+  { tool: "retreat", icon: "back" },
+  { tool: "shoot", icon: "bow" },
+  { tool: "eat", icon: "steak" },
+  { tool: "wait", icon: "pause" },
 ] as const;
 
 const providers = [
@@ -60,7 +81,18 @@ const providers = [
           <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
           <h1 class="brand__title">Arena de prompts</h1>
         </div>
-        <span class="live" aria-hidden="true">En vivo</span>
+        <span class="live" aria-hidden="true" data-tip="La transmisión de la arena está llegando.">En vivo</span>
+        <button
+          type="button"
+          class="sound"
+          id="btn-sound"
+          aria-pressed="false"
+          aria-label="Sonido"
+          data-tip="Sonido apagado. Haz clic para oír los golpes y la campana."
+        >
+          <span data-sound="on"><PixelIcon name="sound-on" /></span>
+          <span data-sound="off"><PixelIcon name="sound-off" /></span>
+        </button>
         <div class="conn" id="conn" data-state="connecting" role="status">
           <span class="conn__dot" aria-hidden="true"></span>
           <span class="conn__text" id="conn-text">Conectando…</span>
@@ -76,7 +108,9 @@ const providers = [
                 <h2 class="hud__name">{side.label}</h2>
                 <span class="model-tag hud__model" id={`fighter-model-${side.id}`} hidden />
                 <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
-                <span class="hud__hp" id={`hp-value-${side.id}`}>–</span>
+                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip="Vida, de 0 a 20: cada bloque de la barra son 2 puntos.">
+                –
+              </span>
               </div>
               <div
                 class="hp"
@@ -90,36 +124,19 @@ const providers = [
               >
                 <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
               </div>
-              <span class="sr-only" id={`bot-${side.id}`}>{side.bot}</span>
-            </div>
-          ))
-        }
-        <div class="hud__clock">
-          <div class="clock" id="clock" aria-label="Tiempo restante">--:--</div>
-          <span class="phase" id="phase">Conectando…</span>
-        </div>
-      </div>
-
-      <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
-        <strong class="winner__title" id="winner-title"></strong>
-        <span class="winner__detail" id="winner-detail"></span>
-      </div>
-
-      <!-- Qué piensa cada agente ahora mismo, como subtítulos, y el botón de la pelea al centro. -->
-      <div class="minds">
-        {
-          sides.map((side) => (
-            <article class={`mind mind--${side.id}`} data-side={side.id} aria-label={`Agente ${side.label}`}>
-              <span class="sr-only">Último pensamiento</span>
-              <p class="mind__thought" id={`thought-${side.id}`}>—</p>
-              <span class="sr-only">Última acción</span>
-              <p class="mind__action" id={`action-${side.id}`}>—</p>
               <dl class="stats">
+                <div class="slot" id={`held-${side.id}`} data-item="none" data-tip="En la mano: nada">
+                  <dt class="sr-only">En la mano</dt>
+                  <dd>
+                    {heldItems.map((item) => <span data-item={item.id}><PixelIcon name={item.icon} /></span>)}
+                    <span class="sr-only" id={`held-name-${side.id}`}>nada</span>
+                  </dd>
+                </div>
                 {
                   stats.map((stat) => (
-                    <div title={stat.label}>
+                    <div data-tip={stat.tip} id={`stat-${stat.id}-${side.id}`}>
                       <dt>
-                        <PixelIcon name={stat.id} />
+                        <PixelIcon name={stat.icon} />
                         <span class="sr-only">{stat.label}</span>
                       </dt>
                       <dd id={`${stat.id}-${side.id}`}>–</dd>
@@ -127,6 +144,42 @@ const providers = [
                   ))
                 }
               </dl>
+              <span class="sr-only" id={`bot-${side.id}`}>{side.bot}</span>
+            </div>
+          ))
+        }
+        <div class="hud__clock">
+          <div class="clock" id="clock" aria-label="Tiempo restante" data-tip="Tiempo que le queda a la pelea. Si se acaba, gana quien tenga más vida.">
+            --:--
+          </div>
+          <span class="phase" id="phase">Conectando…</span>
+        </div>
+      </div>
+
+      <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
+        <strong class="winner__title" id="winner-title"></strong>
+        <span class="winner__detail" id="winner-detail"></span>
+        <p class="winner__why" id="winner-why" hidden></p>
+      </div>
+
+      <!-- Qué piensa cada agente, como subtítulos que aparecen con cada novedad, y el botón de la pelea al centro. -->
+      <div class="minds">
+        {
+          sides.map((side) => (
+            <article
+              class={`mind mind--${side.id} is-stale`}
+              id={`mind-${side.id}`}
+              data-side={side.id}
+              aria-label={`Agente ${side.label}`}
+            >
+              <span class="sr-only">Último pensamiento</span>
+              <p class="mind__thought" id={`thought-${side.id}`}>—</p>
+              <span class="sr-only">Última acción</span>
+              <p class="mind__action" id={`action-${side.id}`} data-tool="">
+                {actionIcons.map((action) => <span data-tool={action.tool}><PixelIcon name={action.icon} /></span>)}
+                <span id={`action-label-${side.id}`}>—</span>
+                <span class="mind__result" id={`action-result-${side.id}`}></span>
+              </p>
             </article>
           ))
         }
@@ -153,32 +206,64 @@ const providers = [
               <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} data-side={side.id} autocomplete="off" novalidate>
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
-                  <span class="model-tag editor__model" id={`editor-model-${side.id}`} hidden />
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
                 </div>
 
                 <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
 
                 <div class="editor__options">
-                  <label class="field">
-                    <span class="field__label">Proveedor</span>
-                    <select id={`provider-${side.id}`}>
-                      {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span class="field__label">Modelo</span>
-                    <input
-                      id={`model-${side.id}`}
-                      type="text"
-                      maxlength="100"
-                      placeholder="Por defecto del servidor"
-                      autocomplete="off"
-                      spellcheck="false"
-                    />
-                  </label>
+                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts sobre el catálogo. -->
+                  <div class="picker" id={`picker-${side.id}`}>
+                    <span class="field__label" id={`picker-label-${side.id}`}>Modelo</span>
+                    <button
+                      type="button"
+                      class="picker__trigger"
+                      id={`picker-trigger-${side.id}`}
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                      aria-labelledby={`picker-label-${side.id} picker-current-${side.id}`}
+                    >
+                      <span class="model-tag" id={`picker-current-${side.id}`} />
+                    </button>
+                    <div class="picker__panel" id={`picker-panel-${side.id}`} hidden>
+                      <input
+                        class="picker__search"
+                        id={`picker-search-${side.id}`}
+                        type="search"
+                        placeholder="Buscar modelo"
+                        aria-label="Buscar modelo"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <ul class="picker__list" id={`picker-list-${side.id}`} role="listbox" aria-label="Modelos" />
+                    </div>
+                  </div>
                   <button type="submit" class="btn btn--save" id={`save-${side.id}`}>Guardar</button>
                 </div>
+
+                <!-- Los dos campos reales del formulario: el selector de arriba escribe aquí. -->
+                <details class="advanced">
+                  <summary>Avanzado</summary>
+                  <div class="advanced__fields">
+                    <label class="field">
+                      <span class="field__label">Proveedor</span>
+                      <select id={`provider-${side.id}`}>
+                        {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span class="field__label">Id del modelo</span>
+                      <input
+                        id={`model-${side.id}`}
+                        type="text"
+                        maxlength="100"
+                        placeholder="Por defecto del servidor"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                    </label>
+                  </div>
+                </details>
 
                 <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
 
@@ -200,52 +285,6 @@ const providers = [
           <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
         </aside>
       </div>
-
-      <section class="section" aria-labelledby="history-title">
-        <header class="section__head">
-          <h2 class="section__title" id="history-title">Historial</h2>
-          <p class="section__hint" id="tally-summary">Cargando resultados…</p>
-        </header>
-
-        <div class="tally">
-          <div class="tally__numbers">
-            <div class="tally__cell tally__cell--red">
-              <strong id="tally-red">0</strong>
-              <span>victorias Rojo</span>
-            </div>
-            <div class="tally__cell tally__cell--none">
-              <strong id="tally-none">0</strong>
-              <span>sin ganador</span>
-            </div>
-            <div class="tally__cell tally__cell--blue">
-              <strong id="tally-blue">0</strong>
-              <span>victorias Azul</span>
-            </div>
-          </div>
-          <div class="tally__bar" aria-hidden="true">
-            <span class="tally__seg tally__seg--red" id="tally-bar-red"></span>
-            <span class="tally__seg tally__seg--none" id="tally-bar-none"></span>
-            <span class="tally__seg tally__seg--blue" id="tally-bar-blue"></span>
-          </div>
-        </div>
-
-        <div class="history__wrap">
-          <table class="history__table">
-            <thead>
-              <tr>
-                <th scope="col">Fecha</th>
-                <th scope="col">Ganador</th>
-                <th scope="col">Motivo</th>
-                <th scope="col">Duración</th>
-                <th scope="col">Vida final</th>
-                <th scope="col">Prompt Rojo</th>
-                <th scope="col">Prompt Azul</th>
-              </tr>
-            </thead>
-            <tbody id="history-body"></tbody>
-          </table>
-        </div>
-      </section>
     </main>
 
     <footer class="footer">

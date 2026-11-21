@@ -11,11 +11,18 @@ import type { AgentConfig, Provider, ServerDefaults } from "@phack/protocol";
 // se insertan como SVG; todo texto que viene del usuario se sigue escribiendo con textContent.
 import claudeIcon from "@lobehub/icons-static-svg/icons/claude-color.svg?raw";
 import deepseekIcon from "@lobehub/icons-static-svg/icons/deepseek-color.svg?raw";
+import cohereIcon from "@lobehub/icons-static-svg/icons/cohere-color.svg?raw";
 import geminiIcon from "@lobehub/icons-static-svg/icons/gemini-color.svg?raw";
 import grokIcon from "@lobehub/icons-static-svg/icons/grok.svg?raw";
+import kimiIcon from "@lobehub/icons-static-svg/icons/kimi-color.svg?raw";
 import metaIcon from "@lobehub/icons-static-svg/icons/meta-color.svg?raw";
+import minimaxIcon from "@lobehub/icons-static-svg/icons/minimax-color.svg?raw";
 import mistralIcon from "@lobehub/icons-static-svg/icons/mistral-color.svg?raw";
+import novaIcon from "@lobehub/icons-static-svg/icons/nova-color.svg?raw";
+import nvidiaIcon from "@lobehub/icons-static-svg/icons/nvidia-color.svg?raw";
 import openaiIcon from "@lobehub/icons-static-svg/icons/openai.svg?raw";
+import qwenIcon from "@lobehub/icons-static-svg/icons/qwen-color.svg?raw";
+import zhipuIcon from "@lobehub/icons-static-svg/icons/zhipu-color.svg?raw";
 import { el } from "./dom";
 
 type Brand = { name: string; icon: string };
@@ -28,6 +35,13 @@ const BRANDS = {
   xai: { name: "xAI", icon: grokIcon },
   mistral: { name: "Mistral", icon: mistralIcon },
   deepseek: { name: "DeepSeek", icon: deepseekIcon },
+  alibaba: { name: "Alibaba", icon: qwenIcon },
+  zai: { name: "Z.ai", icon: zhipuIcon },
+  moonshot: { name: "Moonshot", icon: kimiIcon },
+  minimax: { name: "MiniMax", icon: minimaxIcon },
+  nvidia: { name: "NVIDIA", icon: nvidiaIcon },
+  amazon: { name: "Amazon", icon: novaIcon },
+  cohere: { name: "Cohere", icon: cohereIcon },
 } satisfies Record<string, Brand>;
 
 type BrandId = keyof typeof BRANDS;
@@ -44,6 +58,14 @@ const CREATOR_BRAND: Record<string, BrandId> = {
   mistral: "mistral",
   mistralai: "mistral",
   deepseek: "deepseek",
+  spacexai: "xai",
+  alibaba: "alibaba",
+  zai: "zai",
+  moonshotai: "moonshot",
+  minimax: "minimax",
+  nvidia: "nvidia",
+  amazon: "amazon",
+  cohere: "cohere",
 };
 
 /** Para ids sin prefijo (API directa de un laboratorio): se reconoce por el nombre. */
@@ -140,6 +162,25 @@ export function resolveModel(config: Pick<AgentConfig, "provider" | "model">): M
   return { name: prettyModel(model), detail, brand: brandFor(provider, model) };
 }
 
+/** Los valores por defecto del servidor, si ya llegaron. */
+export function getDefaults(): ServerDefaults | null {
+  return defaults;
+}
+
+/**
+ * Proveedor con el que se pide un modelo del catálogo de Vercel AI Gateway (ids
+ * "creador/modelo"): el del servidor si ya es de ese tipo; si no, "vercel".
+ */
+export function gatewayProvider(): Provider {
+  const provider = defaults?.provider;
+  return provider === "vercel" || provider === "gateway" || provider === "openrouter" ? provider : "vercel";
+}
+
+/** Un modelo del catálogo, para listarlo: nombre oficial si se conoce, y su marca. */
+export function describeModel(id: string, name?: string): ModelInfo {
+  return { name: name?.trim() || prettyModel(id), detail: id, brand: brandFor(undefined, id) };
+}
+
 // ---------- Dibujo ----------
 
 function iconNode(svg: string): Element | null {
@@ -161,7 +202,9 @@ export function renderModelTag(target: HTMLElement, info: ModelInfo | null): voi
   target.hidden = info === null;
   if (!info) return;
 
-  target.title = info.detail;
+  // Ayuda al pasar el mouse: qué proveedor e id exacto hay detrás del nombre.
+  if (info.detail !== "") target.dataset.tip = `Modelo de este agente: ${info.detail}`;
+  else delete target.dataset.tip;
   const icon = info.brand ? iconNode(info.brand.icon) : null;
   if (icon) {
     const holder = el("span", "model-tag__icon");

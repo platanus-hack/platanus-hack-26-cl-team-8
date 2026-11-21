@@ -5,7 +5,7 @@ import { createOpenAiCompatibleClient } from "./openai";
 import type { ApiKeys, LlmClient } from "./types";
 import { createVercelClient } from "./vercel";
 
-export type { ApiKeys, ChatMessage, LlmClient, LlmRequest, LlmResponse, ToolCall, ToolDef } from "./types";
+export type { ApiKeys, ChatMessage, LlmClient, LlmRequest, LlmResponse, TokenUsage, ToolCall, ToolDef } from "./types";
 export { LlmError, httpConfig } from "./http";
 export { parseToolArgs } from "./util";
 export { MOCK_TOOL_NAMES } from "./mock";

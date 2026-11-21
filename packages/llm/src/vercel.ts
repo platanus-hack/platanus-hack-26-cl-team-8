@@ -2,7 +2,7 @@ import { createGateway, generateText, jsonSchema, tool } from "ai";
 import type { ModelMessage, ToolSet } from "ai";
 import { LlmError, httpConfig } from "./http";
 import type { ChatMessage, LlmClient, LlmRequest, LlmResponse, ToolCall, ToolDef } from "./types";
-import { parseToolArgs } from "./util";
+import { parseToolArgs, toTokenUsage } from "./util";
 
 /**
  * Proveedor "vercel": Vercel AI Gateway a través del AI SDK (`ai`).
@@ -29,6 +29,12 @@ export type GenerateOptions = {
 export type GenerateResult = {
   text: string;
   toolCalls: ReadonlyArray<{ toolCallId: string; toolName: string; input: unknown; invalid?: boolean }>;
+  /**
+   * Subconjunto de `LanguageModelUsage` del SDK (`result.usage`, suma de todos los pasos;
+   * aquí hay uno solo porque las tools no tienen `execute`). Los campos pueden venir
+   * undefined si el proveedor no informa el consumo.
+   */
+  usage?: { inputTokens?: number | undefined; outputTokens?: number | undefined };
 };
 
 export type GenerateFn = (options: GenerateOptions) => Promise<GenerateResult>;
@@ -148,7 +154,10 @@ export function createVercelClient(opts: VercelOptions): LlmClient {
       const toolCalls: ToolCall[] = result.toolCalls
         .filter((call) => call.invalid !== true)
         .map((call) => ({ id: call.toolCallId, name: call.toolName, args: parseToolArgs(call.input) }));
-      return { text: result.text ?? "", toolCalls };
+      const response: LlmResponse = { text: result.text ?? "", toolCalls };
+      const usage = toTokenUsage(result.usage?.inputTokens, result.usage?.outputTokens);
+      if (usage) response.usage = usage;
+      return response;
     },
   };
 }

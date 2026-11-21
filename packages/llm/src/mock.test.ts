@@ -27,6 +27,11 @@ describe("proveedor mock", () => {
     vi.unstubAllGlobals();
   });
 
+  it("no informa consumo de tokens", async () => {
+    const res = await mock().complete({ messages: observation({ distance: 2, health: 20, opponentHealth: 20 }), tools: TOOLS });
+    expect("usage" in res).toBe(false);
+  });
+
   it("ataca si el rival está cerca", async () => {
     expect(await pick(observation({ distance: 2, health: 20, opponentHealth: 20 }))).toBe("attack");
   });

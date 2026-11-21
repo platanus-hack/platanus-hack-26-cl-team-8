@@ -7,6 +7,12 @@
  *   damage     espada de hierro en diagonal
  *   decisions  letrero de madera con dos flechas opuestas: elegir un camino
  *
+ *   bow, steak arco y carne: junto con la espada, lo que un agente puede tener en la mano
+ *   clock      reloj de oro: cuánto tarda el modelo en decidir
+ *   emerald    esmeralda (la moneda del juego): cuánto cuesta el modelo
+ *   forward, back, pause   acercarse, alejarse y esperar (para las acciones)
+ *   sound-on, sound-off    botón de sonido
+ *
  * Cada ícono es una lista de filas; cada letra es un color de su paleta y "." es
  * transparente. Para retocar un ícono basta editar las filas.
  */
@@ -63,6 +69,150 @@ const ICONS: Record<string, Icon> = {
       "....kkk....",
     ],
   },
+  bow: {
+    palette: { k: OUTLINE, b: "#9a6a36", s: "#e9edf2" },
+    rows: [
+      "....kkk....",
+      "...kbbkk...",
+      "..kbbkksk..",
+      ".kbbk.ksk..",
+      ".kbk..ksk..",
+      ".kbk..ksk..",
+      ".kbk..ksk..",
+      ".kbbk.ksk..",
+      "..kbbkksk..",
+      "...kbbkk...",
+      "....kkk....",
+    ],
+  },
+  steak: {
+    palette: { k: OUTLINE, m: "#a35d30", l: "#edd3ad", d: "#6f3b1b" },
+    rows: [
+      "...........",
+      "...kkkkk...",
+      "..kllmmmk..",
+      ".klmmdmmmk.",
+      "klmmmmmdmmk",
+      "kmmdmmmmmmk",
+      "kmmmmdmmmk.",
+      ".kmmmmmmk..",
+      "..kkmmkk...",
+      "....kk.....",
+      "...........",
+    ],
+  },
+  clock: {
+    palette: { k: OUTLINE, g: "#e3b53e", w: "#f5f0e3" },
+    rows: [
+      "...kkkkk...",
+      "..kgggggk..",
+      ".kgwwwwwgk.",
+      "kgwwwkwwwgk",
+      "kgwwwkwwwgk",
+      "kgwwwkkkwgk",
+      "kgwwwwwwwgk",
+      "kgwwwwwwwgk",
+      ".kgwwwwwgk.",
+      "..kgggggk..",
+      "...kkkkk...",
+    ],
+  },
+  emerald: {
+    palette: { k: OUTLINE, e: "#3fcf6e", l: "#aaf5c4", d: "#1f8f48" },
+    rows: [
+      "....kkk....",
+      "...keeek...",
+      "..kelleek..",
+      ".keleeeeek.",
+      ".keleeeedk.",
+      ".keeeeeedk.",
+      ".keeeeeddk.",
+      ".keeeeeddk.",
+      "..keeeddk..",
+      "...keddk...",
+      "....kkk....",
+    ],
+  },
+  forward: {
+    palette: { w: "#edece8" },
+    rows: [
+      "...........",
+      "...........",
+      ".w....w....",
+      ".ww...ww...",
+      ".www..www..",
+      ".wwww.wwww.",
+      ".www..www..",
+      ".ww...ww...",
+      ".w....w....",
+      "...........",
+      "...........",
+    ],
+  },
+  back: {
+    palette: { w: "#edece8" },
+    rows: [
+      "...........",
+      "...........",
+      "....w....w.",
+      "...ww...ww.",
+      "..www..www.",
+      ".wwww.wwww.",
+      "..www..www.",
+      "...ww...ww.",
+      "....w....w.",
+      "...........",
+      "...........",
+    ],
+  },
+  pause: {
+    palette: { w: "#edece8" },
+    rows: [
+      "...........",
+      "...........",
+      "..www.www..",
+      "..www.www..",
+      "..www.www..",
+      "..www.www..",
+      "..www.www..",
+      "..www.www..",
+      "..www.www..",
+      "...........",
+      "...........",
+    ],
+  },
+  "sound-on": {
+    palette: { w: "#edece8" },
+    rows: [
+      "...........",
+      "....w......",
+      "...ww..w...",
+      ".wwww...w..",
+      ".wwww.w.w..",
+      ".wwww.w.w..",
+      ".wwww.w.w..",
+      ".wwww...w..",
+      "...ww..w...",
+      "....w......",
+      "...........",
+    ],
+  },
+  "sound-off": {
+    palette: { w: "#edece8" },
+    rows: [
+      "...........",
+      "....w......",
+      "...ww......",
+      ".wwww.w...w",
+      ".wwww..w.w.",
+      ".wwww...w..",
+      ".wwww..w.w.",
+      ".wwww.w...w",
+      "...ww......",
+      "....w......",
+      "...........",
+    ],
+  },
 };
 
 interface Props {
@@ -87,6 +237,12 @@ icon.rows.forEach((row, y) => {
 });
 ---
 
-<svg class="pixel-icon" viewBox={`0 0 ${size} ${size}`} shape-rendering="crispEdges" aria-hidden="true">
+<svg
+  class="pixel-icon"
+  data-icon={Astro.props.name}
+  viewBox={`0 0 ${size} ${size}`}
+  shape-rendering="crispEdges"
+  aria-hidden="true"
+>
   {runs.map((run) => <rect x={run.x} y={run.y} width={run.width} height="1" fill={run.fill} />)}
 </svg>
