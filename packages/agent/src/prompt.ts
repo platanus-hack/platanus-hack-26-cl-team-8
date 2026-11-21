@@ -1,5 +1,6 @@
 import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
+import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
   ALWAYS_EDIBLE,
   attackCooldownMs,
@@ -114,7 +115,7 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
     }
     case "move":
-      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta tu próxima decisión.';
+      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta que la reemplaces o termine su duración.';
     case "drink":
     case "throw": {
       const kind = tool === "drink" ? "potion" : "splash_potion";
@@ -277,6 +278,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     input.strategy.trim().length > 0 ? input.strategy.trim() : "(sin instrucciones: decide tú qué quieres hacer)";
   const seconds = Math.round((input.tickMs / 1000) * 10) / 10;
   const side = ARENA.radius * 2 + 1;
+  const openEnded = kitToolNames(input.kit).filter(isOpenEnded).join(", ");
   return [
     `Eres "${input.username}", el agente ${SIDE_NAMES[input.side]}. Estás encerrado en una arena de Minecraft junto a otro agente, "${input.opponentUsername}". Cada uno es un modelo de lenguaje que sigue las instrucciones de su propio entrenador; no sabes cuáles son las del otro.`,
     "",
@@ -289,12 +291,15 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "- La vida y la comida van de 0 a 20.",
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
-    "- Responde SIEMPRE llamando exactamente a UNA herramienta. Si llamas varias, solo se ejecuta la primera.",
+    "- Cada respuesta tuya puede llamar una herramienta, varias o ninguna.",
+    `- Si llamas varias, se ejecutan en orden: cada una empieza cuando termina la anterior. Las que no terminan solas (${openEnded}) duran lo que diga su argumento "seconds"; sin él, ${QUEUE_STEP_DEFAULT_MS / 1000} segundos si hay otra acción después, o hasta que la reemplaces si es la última.`,
+    "- Si no llamas ninguna, no cambia nada: tu cuerpo sigue con lo que estaba haciendo y con lo que quedaba en cola.",
+    '- Una respuesta que llama herramientas reemplaza lo que quedaba en cola de la anterior. Lo que queda en cola viene en el campo "queuedActions" de tu observación.',
     "- Repetir la misma herramienta continúa la acción en curso (build con blocks distintos reemplaza el plano); elegir otra la interrumpe (por ejemplo, cortar 'eat' a medias hace que no comas nada).",
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
-    'Todas aceptan un argumento opcional "reason": una frase corta en español explicando tu decisión (el público la ve en vivo).',
+    'Todas aceptan un argumento opcional "reason" con lo que piensas al decidir: texto libre, el público lo ve en vivo.',
     "",
     ...kitSection(input.kit),
     "",
@@ -305,8 +310,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. Puedes consultar world.breakable para conocer los bloques modificables observados.',
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
     '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
-    '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa si conviene continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
-    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Expresa en reason solo la decisión y su motivo breve; no necesitas narrar tu deliberación.',
+    '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
+    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. reason es texto libre con lo que piensas al elegir esta acción.',
     "",
     ...commsSection(input.comms),
     "",

@@ -100,7 +100,15 @@ export function formatTranscript(entries: TranscriptEntry[]): string {
       case "decision": {
         const context = seen(entry.observation);
         const took = `decide en ${short(entry.ms / 1000)} s`;
-        line(entry.at, entry.side, context ? `ve: ${context}; ${took}` : took);
+        // Lo que no es "una herramienta" se dice: una respuesta puede traer varias o ninguna.
+        const calls = entry.response?.toolCalls.map((call) => call.name) ?? null;
+        const shape =
+          calls === null || calls.length === 1
+            ? ""
+            : calls.length === 0
+              ? "; no llama ninguna herramienta"
+              : `; llama ${calls.length} herramientas: ${calls.join(", ")}`;
+        line(entry.at, entry.side, `${context ? `ve: ${context}; ${took}` : took}${shape}`);
         break;
       }
       case "thought":

@@ -275,6 +275,16 @@ Qué decir, cómo, en qué idioma y cuándo lo decide cada agente. El sistema lo
 - **El prompt de sistema cuenta la mecánica, no aconseja.** Explica `say`, `rivalMessages`, `conversation` y que `reason` es privado. No sugiere qué decir, cómo leer lo que oye ni si creerle.
 - El proveedor `mock` no tiene modelo detrás: contesta con una frase fija cuando el rival le dijo algo y, si no, habla más o menos un turno de cada cuatro. Sirve para ver el modo `chat` sin claves.
 
+## Qué puede hacer un agente en cada respuesta
+
+Cada respuesta del modelo puede llamar una herramienta, varias o ninguna:
+
+- **Varias**: se ejecutan en orden, cada una cuando termina la anterior (hasta 8 por respuesta). Las que no terminan solas (`approach`, `attack`, `retreat`, `move`, `shoot`, `shield`, `wait`) duran lo que diga su argumento `seconds`; sin él, 2 segundos si hay otra después, o hasta que se reemplacen si es la última. Lo que queda en cola va en `queuedActions` de la observación.
+- **Ninguna**: no cambia nada. El cuerpo sigue con lo que hacía y con lo que quedaba en cola; el texto de la respuesta, si hay, se muestra como pensamiento.
+- Una respuesta que llama herramientas reemplaza lo que quedaba en cola de la anterior.
+
+El `reason` de cada herramienta es texto libre: no se le pide largo ni idioma. El marcador cuenta una decisión por respuesta del modelo, haga lo que haga. En la transcripción con `?format=text`, las respuestas sin herramienta o con varias quedan anotadas.
+
 ## Límite de tiempo
 
 En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.

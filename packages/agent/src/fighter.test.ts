@@ -59,7 +59,9 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-async function start(actions: { name: string; args: Record<string, unknown> }[], tickMs = 1000) {
+type ScriptedAction = { name: string; args: Record<string, unknown> };
+
+async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 1000) {
   vi.useFakeTimers();
   const bot = new SimulatedBot();
   driver.createBot.mockReturnValue(bot);
@@ -75,7 +77,8 @@ async function start(actions: { name: string; args: Record<string, unknown> }[],
         const observation = request.messages.at(-1);
         if (observation?.role === "user") received.push(JSON.parse(observation.content));
         const action = actions[turn++] ?? { name: "wait", args: {} };
-        return { text: "", toolCalls: [{ id: String(turn), ...action }] };
+        const calls = Array.isArray(action) ? action : [action];
+        return { text: "", toolCalls: calls.map((call, index) => ({ id: `${turn}_${index}`, ...call })) };
       },
     },
     events: { onStatus: vi.fn(), onDecision: vi.fn(), onThought: vi.fn(), onAction: vi.fn(), onDamageTaken: vi.fn(), onDeath: vi.fn(), onMessage: vi.fn(), onLog: vi.fn() },
@@ -91,6 +94,24 @@ async function start(actions: { name: string; args: Record<string, unknown> }[],
 }
 
 describe("agente: observar, decidir y construir", () => {
+  it("termina el plano y sigue la cola aunque lleguen respuestas sin herramientas", async () => {
+    const { bot, received, events } = await start([
+      [
+        { name: "build", args: { blocks: [{ x: 2, y: 65, z: 0, material: "oak_planks" }, { x: 2, y: 66, z: 0, material: "red_wool" }] } },
+        { name: "wait", args: { reason: "plano terminado" } },
+      ],
+      ...Array.from({ length: 15 }, () => []),
+    ], 100);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(received.some((observation) => Array.isArray(observation.queuedActions) && observation.queuedActions.includes("wait"))).toBe(true);
+    expect(bot.cells.get("2,65,0")).toBe("oak_planks");
+    expect(bot.cells.get("2,66,0")).toBe("red_wool");
+    expect(received.at(-1)?.construction).toMatchObject({ status: "complete", completed: 2, total: 2 });
+    expect(vi.mocked(events.onAction).mock.calls.map(([name]) => name)).toEqual(["build", "wait"]);
+    expect(events.onThought).toHaveBeenCalledWith("plano terminado");
+    expect(events.onLog).not.toHaveBeenCalledWith("warn", expect.anything());
+  });
+
   it("entrega contexto por radio al LLM y ejecuta un plano de varios materiales", async () => {
     const { bot, received, events } = await start([{ name: "build", args: { blocks: [{ x: 2, y: 65, z: 0, material: "oak_planks" }, { x: 2, y: 66, z: 0, material: "red_wool" }] } }]);
     expect(received[0]?.world).toMatchObject({ coverage: { radius: 8 } });

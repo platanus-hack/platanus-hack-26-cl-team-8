@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_TOOL_NAMES } from "@phack/llm";
 import { buildCustomKit, KIT_LIST, KITS, MAX_AGENT_MESSAGE_LENGTH, type Kit } from "@phack/protocol";
+import { OPEN_ENDED_TOOLS } from "./plan";
 import {
   eatRefusal,
   isToolName,
@@ -126,6 +127,24 @@ describe("kitToolDefs", () => {
   it("entrega las definiciones de las herramientas del kit y ninguna más", () => {
     for (const kit of KIT_LIST) {
       expect(kitToolDefs(kit).map((def) => def.name)).toEqual(kitToolNames(kit));
+    }
+  });
+
+  it('las herramientas que no terminan solas aceptan "seconds"; las demás no', () => {
+    for (const def of TOOL_DEFS) {
+      const properties = (def.parameters as { properties: Record<string, { description?: string }> }).properties;
+      if (OPEN_ENDED_TOOLS.includes(def.name)) {
+        expect(properties.seconds?.description).toMatch(/^Opcional: cuántos segundos .+; al cumplirse empieza tu siguiente acción en cola/);
+      } else {
+        expect(properties).not.toHaveProperty("seconds");
+      }
+    }
+  });
+
+  it('"reason" es texto libre con lo que piensa', () => {
+    for (const def of TOOL_DEFS) {
+      const properties = (def.parameters as { properties: Record<string, { description?: string }> }).properties;
+      expect(properties.reason?.description).toBe("Opcional: lo que piensas al elegir esta acción. Texto libre; el público lo ve.");
     }
   });
 

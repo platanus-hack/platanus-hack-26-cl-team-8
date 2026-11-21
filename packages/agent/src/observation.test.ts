@@ -150,6 +150,19 @@ describe("buildObservation: lo que llega del rival", () => {
   });
 });
 
+describe("buildObservation: cola de acciones", () => {
+  it("queuedActions solo aparece si queda alguna en cola, en orden", () => {
+    expect(buildObservation(base)).not.toHaveProperty("queuedActions");
+    expect(buildObservation({ ...base, queuedActions: [] })).not.toHaveProperty("queuedActions");
+    const queued = ["eat", "attack"];
+    const obs = buildObservation({ ...base, queuedActions: queued });
+    expect(obs.queuedActions).toEqual(["eat", "attack"]);
+    queued.push("wait");
+    expect(obs.queuedActions).toEqual(["eat", "attack"]);
+    expect(JSON.parse(JSON.stringify(obs)).queuedActions).toEqual(["eat", "attack"]);
+  });
+});
+
 describe("buildObservation: terreno", () => {
   it("altura, bloques en medio y encierro solo aparecen cuando dicen algo", () => {
     const flat = buildObservation({ ...base, terrain: { height: 0.02, blocksBetween: 0, enclosed: false } });
