@@ -17,8 +17,11 @@ export const ARENA = {
     red: { x: -8, y: 65, z: 0, yaw: -90 },
     blue: { x: 8, y: 65, z: 0, yaw: 90 },
   },
-  /** Posición de la cámara espectadora: elevada, mirando al centro. */
-  camera: { x: 0, y: 78, z: -18 },
+  /**
+   * Posición de la cámara espectadora: elevada, mirando al centro. Va en +Z para que el
+   * lado rojo (x negativo) quede a la izquierda de la imagen, igual que en la web.
+   */
+  camera: { x: 0, y: 78, z: 18 },
 } as const;
 
 // ---------- Agentes ----------

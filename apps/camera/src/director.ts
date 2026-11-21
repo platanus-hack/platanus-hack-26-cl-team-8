@@ -57,3 +57,72 @@ export function orbitPosition(base: Vec, center: Vec, elapsedSeconds: number, pe
     z: center.z + radius * Math.sin(angle),
   };
 }
+
+export type FramingOptions = {
+  /** Relación de aspecto del video (ancho / alto). */
+  aspect: number;
+  /** Zoom máximo: FOV vertical mínimo, en grados. */
+  minFov: number;
+  /** Zoom mínimo: FOV vertical máximo, en grados. */
+  maxFov: number;
+  /** FOV cuando no hay nadie a quien encuadrar. */
+  idleFov: number;
+  /** Aire alrededor de los sujetos (1 = justo al borde de la imagen). */
+  margin: number;
+};
+
+const toDegrees = (radians: number): number => (radians * 180) / Math.PI;
+
+/**
+ * FOV vertical (grados) para que todos los `subjects` quepan en la imagen de una cámara
+ * ubicada en `camera` que mira hacia `aim`. Mientras más juntos están los peleadores,
+ * menor el FOV: la cámara hace zoom sobre el intercambio de golpes.
+ *
+ * Proyecta cada punto sobre los ejes derecha/arriba de la cámara y pide el mayor de los
+ * ángulos necesarios, convirtiendo el horizontal a vertical con la relación de aspecto.
+ */
+export function framingFov(camera: Vec, aim: Vec, subjects: readonly Vec[], options: FramingOptions): number {
+  if (subjects.length === 0) return options.idleFov;
+
+  // Base de la cámara: forward hacia el objetivo, right horizontal, up perpendicular.
+  let fx = aim.x - camera.x;
+  let fy = aim.y - camera.y;
+  let fz = aim.z - camera.z;
+  const fLen = Math.hypot(fx, fy, fz);
+  if (fLen === 0) return options.idleFov;
+  fx /= fLen;
+  fy /= fLen;
+  fz /= fLen;
+  // right = forward × (0,1,0)
+  let rx = -fz;
+  let rz = fx;
+  const rLen = Math.hypot(rx, rz);
+  if (rLen === 0) return options.idleFov; // cámara mirando recto hacia abajo
+  rx /= rLen;
+  rz /= rLen;
+  // up = right × forward
+  const ux = -rz * fy;
+  const uy = rz * fx - rx * fz;
+  const uz = rx * fy;
+
+  let needTan = 0;
+  for (const s of subjects) {
+    const dx = s.x - camera.x;
+    const dy = s.y - camera.y;
+    const dz = s.z - camera.z;
+    const depth = dx * fx + dy * fy + dz * fz;
+    if (depth <= 0.1) return options.maxFov; // detrás o encima de la cámara
+    const horizontal = Math.abs(dx * rx + dz * rz) / depth;
+    const vertical = Math.abs(dx * ux + dy * uy + dz * uz) / depth;
+    needTan = Math.max(needTan, vertical, horizontal / options.aspect);
+  }
+  const fov = 2 * toDegrees(Math.atan(needTan * options.margin));
+  return Math.min(options.maxFov, Math.max(options.minFov, fov));
+}
+
+/** Igual que `smoothToward`, para un solo número (se usa con el FOV). */
+export function smoothScalar(current: number, target: number, dtSeconds: number, tauSeconds: number): number {
+  if (tauSeconds <= 0) return target;
+  if (dtSeconds <= 0) return current;
+  return current + (target - current) * (1 - Math.exp(-dtSeconds / tauSeconds));
+}

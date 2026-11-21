@@ -10,7 +10,7 @@ Un sitio web transmite la pelea en vivo (video + telemetría en tiempo real), de
 
 Todo corre en un servidor casero con Docker Compose y se publica a internet con un Cloudflare Tunnel.
 
-> **Importante:** este repo fue generado sin ejecutar nada. Lee la sección [Estado: código generado sin ejecutar](#estado-código-generado-sin-ejecutar) antes de asumir que algo funciona.
+> **Estado:** el stack completo corre en el servidor casero (pelea real con LLM, video en vivo y web). Qué se probó y qué no está en [Estado](#estado).
 
 ## Arquitectura
 
@@ -165,14 +165,14 @@ El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado
 
 | Síntoma | Qué revisar |
 |---|---|
-| `pnpm local:install` no resuelve una versión | Las versiones se eligieron sin poder instalarlas. Corrige el rango en el `package.json` que indique el error. Cuando instale, **commitea el `pnpm-lock.yaml`**. |
+| `pnpm local:install` falla | Usa pnpm 10 o superior y Node 22+. Las versiones están fijadas en `pnpm-lock.yaml`; si agregas una dependencia, commitea el lockfile actualizado. |
 | El orquestador repite errores de RCON | Minecraft aún está arrancando (`pnpm local:logs`), o `RCON_PASSWORD` cambió después de crear el contenedor. |
 | "Connection throttled" al entrar el segundo agente | No se aplicó `infra/minecraft/config/bukkit.yml`. Revisa los logs de `minecraft`. |
 | La web carga pero dice "desconectado" | El orquestador no está corriendo o falló al arrancar: mira la salida de `pnpm dev`. |
 | Puerto ocupado (`8888` suele ser Jupyter) | `pnpm local:check` dice cuál. Cierra el otro programa o cambia el puerto en `docker-compose.dev.yml` (y `DEV_HLS_TARGET` para la web). |
 | Quieres partir de cero | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v` borra el mundo de Minecraft. |
 
-Este repo se escribió sin ejecutarlo: quien lo corra primero va a encontrar errores. El orden recomendado para ir arreglándolos está en [Estado: código generado sin ejecutar](#estado-código-generado-sin-ejecutar).
+Qué está probado y qué no: ver [Estado](#estado).
 
 ## Inicio rápido (servidor, todo en Docker)
 
@@ -264,51 +264,33 @@ La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarg
 
 `scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
 
-## Estado: código generado sin ejecutar
+## Estado
 
-Todo este repo (código, Dockerfiles, compose, scripts) fue **escrito sin ejecutar absolutamente nada**: no se corrió `pnpm install`, ni `tsc`, ni tests, ni `docker build`, ni un solo contenedor. No existe `pnpm-lock.yaml`. Las APIs de terceros se revisaron leyendo documentación, no probándolas. **Hay que asumir que la primera ejecución va a fallar en algún punto**; lo razonable es avanzar en este orden, arreglando cada paso antes de seguir.
+Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 29, 12 CPU, 16 GB), con el stack completo de `docker-compose.yml`:
 
-### Checklist de la primera ejecución (en orden)
+| Qué | Resultado |
+|---|---|
+| `pnpm install --frozen-lockfile` + `pnpm typecheck` | Limpio en todos los paquetes (la cámara no se incluyó en el typecheck). |
+| `pnpm test` | 98 tests pasan (`libs/env`, `packages/llm`, `packages/agent`, `apps/orchestrator`). |
+| Imágenes Docker | Construyen las tres: `orchestrator`, `web` y `camera` (con `gl` y `canvas`). |
+| Minecraft | Paper 1.20.4 en modo offline, RCON, `bukkit.yml` sincronizado, chunks de la arena con `forceload`. |
+| Pelea en modo `mock` | Completa: los dos agentes entran, pelean, uno gana por KO y queda en el historial. |
+| Pelea con LLM real | Completa con `LLM_PROVIDER=vercel` y `deepseek/deepseek-v4.1-flash-1017-fast`: cada agente decide con tool calls y explica su razón. |
+| Web | Sitio, API y websocket a través de Caddy en el puerto 8080. |
+| Video | La cámara publica a ~30 fps (usa unos 2 núcleos de CPU), MediaMTX entrega HLS y la arena se ve bien. |
 
-Hazlo en el servidor, no en un equipo que no aguante la carga.
+### Lo que no se ha probado
 
-1. **`pnpm install`** en la raíz. Puede fallar por versiones de dependencias que no existen (se eligieron de memoria). Corrige los rangos y **commitea el `pnpm-lock.yaml`** que se genere.
-2. **`pnpm typecheck`**. Espera errores de tipos, sobre todo en las fronteras entre paquetes (`@phack/llm`, `@phack/agent`, `@phack/protocol`) y en los usos de mineflayer.
-3. **`pnpm test`** (solo hay tests de lógica pura, si es que hay).
-4. **`docker compose config`**: valida la sintaxis y la interpolación del compose.
-5. **`docker compose up -d minecraft`** y esperar a `healthy`. Revisar en los logs que sea Paper 1.20.4, mundo plano, y que los comandos de `RCON_CMDS_STARTUP` no den error. Probar `docker compose exec minecraft rcon-cli list`.
-6. **`docker compose up -d mediamtx`** y revisar que el log no reclame por claves desconocidas en `infra/mediamtx/mediamtx.yml` (la imagen es `latest`; las claves cambian entre versiones).
-7. **`docker compose up -d --build orchestrator`**. Probar `/api/health` y `/api/state` desde dentro de la red, y que los agentes logren entrar al servidor.
-8. **`docker compose up -d --build web`** y abrir `http://<servidor>:8080`: sitio, `/api/health` a través de Caddy, y el websocket.
-9. **`docker compose up -d --build camera`**. Es el paso más difícil (ver abajo). Verificar `/live/arena/index.m3u8`.
-10. **`bash scripts/smoke.sh`** con `LLM_PROVIDER=mock` y `MATCH_DURATION_SECONDS=30`.
-11. Recién entonces: poner una clave real de LLM, y después el túnel (`--profile tunnel`).
+- **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel.
+- **Los otros proveedores** (`openai`, `anthropic`, `openrouter`) contra sus APIs reales. Solo tienen tests con `fetch` simulado.
+- **`scripts/deploy.sh` tal cual**: asume que el usuario SSH puede usar `docker` sin `sudo`.
+- **El typecheck de `apps/camera`** y la cámara fuera de Docker.
+- **Empates y victorias por tiempo**: todas las peleas de prueba terminaron por KO en menos de 30 segundos.
 
-### Qué es más probable que haya que arreglar
+### Limitaciones conocidas
 
-De más a menos probable:
-
-1. **Cámara: dependencias nativas.** Renderizar Minecraft sin pantalla dentro de Docker depende de módulos nativos (`canvas`, `gl` / headless-gl) que necesitan librerías del sistema (Mesa, Xvfb, Cairo, Pango, toolchain de compilación) y de `ffmpeg`. Lo típico: que `pnpm install` no compile `gl`/`canvas` en la imagen, que pnpm 10 bloquee sus scripts de build (ver `onlyBuiltDependencies` en `pnpm-workspace.yaml`), que falte un display virtual, o que el render por software sea demasiado lento para los FPS pedidos (bajar `CAMERA_WIDTH`/`CAMERA_HEIGHT`/`CAMERA_FPS`). Si la cámara no funciona, **el resto del sistema sigue funcionando**: la web muestra telemetría sin video.
-2. **Cámara: parámetros de ffmpeg y HLS.** MediaMTX corta segmentos en keyframes: la cámara debe emitir H.264 con un keyframe por segundo (GOP = FPS) o la latencia se dispara. Si LL-HLS da problemas en algún reproductor, cambiar `hlsVariant` a `fmp4` en `infra/mediamtx/mediamtx.yml`.
-3. **Versiones de dependencias y lockfile.** Ver paso 1 del checklist.
-4. **Agentes (mineflayer).** Conexión en modo offline a 1.20.4, pathfinding, combate y detección de daño/muerte están escritos contra la documentación, sin probar. Es donde más pueden aparecer errores de comportamiento (no de compilación).
-5. **Orquestador ↔ RCON.** Los comandos para construir la arena, teletransportar, dar kits y cambiar modos de juego no se han probado contra un servidor real. La arena está en `y=64` (ver `ARENA` en `packages/protocol`), muy por encima del suelo del mundo plano: es una plataforma flotante que el orquestador debe construir. El compose deja los chunks de la arena cargados con `forceload` para que `/fill` funcione aunque no haya jugadores.
-6. **Argumentos de build de la web.** El compose pasa `PUBLIC_API_BASE` y `PUBLIC_HLS_URL` como `build.args`. Si `apps/web` usa otros nombres de `PUBLIC_*`, hay que alinearlos en `docker-compose.yml` y `.env.example` (con los valores por defecto, mismo origen, no debería importar).
-7. **Imagen de la web.** El healthcheck de `web` asume una imagen final basada en `caddy:alpine` (usa `wget`) con el sitio en `/srv`. El compose monta `infra/caddy/Caddyfile` sobre `/etc/caddy/Caddyfile`, así que manda el Caddyfile del repo.
-8. **Infra escrita contra documentación:** nombres de variables de `itzg/minecraft-server` (en especial `COPY_CONFIG_DEST=/data` para el `bukkit.yml` que desactiva el `connection-throttle`; sin eso el segundo agente puede ser rechazado con "Connection throttled"), y la sintaxis del Caddyfile.
-9. **Cloudflare + LL-HLS.** Si el video se ve bien en `:8080` pero mal a través del túnel, probar `hlsVariant: fmp4`.
-
-Lo que **sí** se verificó contra la documentación oficial al escribir la infraestructura: nombres de las variables de `itzg/minecraft-server`, el punto de montaje `/config`, `RCON_CMDS_STARTUP`, y las claves de `mediamtx.yml` de la rama principal de MediaMTX.
-
-### Correcciones de la revisión estática que siguen sin probar
-
-Tres revisiones por lectura encontraron problemas que se corrigieron, **también sin ejecutar nada**. Cada punto de esta lista es una suposición razonable, no un hecho comprobado:
-
-- **Node 22 en el orquestador.** La imagen pasó de `node:20-slim` a `node:22-slim` porque mineflayer y minecraft-protocol actuales declaran `node >= 22`. No se comprobó que fastify, tsx y el resto corran bien en 22 (deberían), ni que mineflayer fallara realmente en 20. `apps/web` sigue en Node 20.
-- **Muerte falsa al empezar la pelea siguiente.** Tras un KO el perdedor se desconectaba antes de reaparecer y el servidor lo guardaba muerto. Ahora el agente espera 400 ms antes de salir si está muerto (mineflayer reaparece solo) y el orquestador ignora daño y muertes fuera de la fase `running`, además de reiniciar el daño infligido al comenzar. No se verificó que 400 ms alcancen ni que Paper conserve al jugador muerto entre sesiones.
-- **Anthropic.** `max_tokens` subió a 4096 y se envía `output_config: { effort: "low" }`, porque `claude-haiku-5-5` piensa por defecto y esos tokens cuentan contra el tope. Si un modelo rechaza el parámetro con un 400, el cliente reintenta sin él. El historial se reenvía **sin** los bloques de razonamiento; no se confirmó que la API lo acepte siempre. Si la primera pelea real devuelve un 400 por eso, hay que conservar esos bloques o desactivar el razonamiento para ese modelo.
-- **OpenAI.** Con el proveedor `openai` se envía `reasoning_effort: "none"` junto con las tools, porque la documentación de `gpt-6-luna` dice que Chat Completions solo admite function calling así. Si el modelo elegido no conoce el parámetro (400), se reintenta sin él. Con OpenRouter **no** se envía: el modelo por defecto `openai/gpt-6-luna` podría no devolver tool calls por esa vía; si pasa, elige otro modelo o pásalo en `packages/llm/src/openai.ts`. La detección del 400 busca el nombre del parámetro en el cuerpo del error, lo que tampoco se probó contra las APIs reales.
-- **LLM mock.** El turno ahora usa un contador por cliente (antes se estancaba al recortarse el historial). La vida del rival puede llegar siempre como `null` desde mineflayer; en ese caso el mock defensivo solo alterna entre golpear y alejarse, nunca "remata".
-- **Peleas que fallan al prepararse.** Ya no emiten el evento `match_end` (no entran al historial); la web se entera por el evento `state` y por el mensaje de log. Si existe algún test del orquestador que esperaba `match_end` en ese caso, va a fallar y hay que ajustarlo.
-- **Compose.** Los montajes llevan `:ro,z` (SELinux en Fedora/RHEL; debería ser inofensivo en Debian/Ubuntu). `orchestrator` y `camera` ya no esperan a que Minecraft esté `healthy`: dependen de sus propios reintentos, que no se han visto funcionar. Las variables `CAMERA_ORBIT_SECONDS`, `CAMERA_VIEW_DISTANCE`, `CAMERA_BITRATE_KBPS` y `CAMERA_SILENT_AUDIO` ahora llegan al contenedor de la cámara.
-- **Scripts.** `deploy.sh` reinicia `mediamtx` en cada despliegue (no se comprobó que la cámara retome sola la publicación RTMP después) y protege el `pnpm-lock.yaml` del servidor con una regla de filtro de rsync (`P /pnpm-lock.yaml`). `smoke.sh` corta la espera y reporta un solo FAIL cuando la pelea termina sin llegar a `running`. Ninguno de los dos scripts se ha corrido, ni siquiera con `bash -n`.
+- **Render de la cámara.** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin: un rombo rojo o azul flota sobre cada peleador para distinguirlos. No trae datos de 1.20.4, así que usa las texturas de 1.20.1; `apps/camera/src/stage.ts` hace que decodifique los chunks con la versión real (sin eso los bloques salen cambiados).
+- **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
+- **Peleas cortas.** Con el kit actual (espada y armadura de hierro) un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar el kit en `apps/orchestrator/src/arena.ts`.
+- **Sin autenticación.** Cualquiera con el link puede cambiar prompts e iniciar peleas, y cada pelea gasta llamadas al LLM. Ponle un límite de gasto a la clave.
+- **Suspensión y red del servidor.** Si el equipo se suspende o pierde la red, el stream se corta. Desactiva la suspensión automática.
