@@ -1717,13 +1717,14 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   border-top: 1px solid var(--line);
 }
 
-.rounds {
+.series-fields {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 16px;
 }
 
-.rounds input[type="number"] {
+.count-input,
+.series-fields input[type="number"] {
   width: 72px;
   padding: 8px 10px;
   border: 1px solid var(--line);

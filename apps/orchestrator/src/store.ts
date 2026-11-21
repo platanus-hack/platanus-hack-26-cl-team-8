@@ -5,6 +5,8 @@ import {
   DEFAULT_KIT,
   DEFAULT_PROMPTS,
   DEFAULT_SETTINGS,
+  LEGACY_SERIES_ROUNDS,
+  syncMode,
   MatchRecordSchema,
   MatchSettingsSchema,
   ProviderSchema,
@@ -174,8 +176,13 @@ export class PromptStore {
 /** Interpreta settings.json; si falta o está corrupto, los ajustes por defecto. */
 export function parseSettings(raw: string): MatchSettings {
   try {
-    const parsed = MatchSettingsSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : { ...DEFAULT_SETTINGS };
+    const data: unknown = JSON.parse(raw);
+    const parsed = MatchSettingsSchema.safeParse(data);
+    if (!parsed.success) return { ...DEFAULT_SETTINGS };
+    // Un archivo de antes con mode "rounds" y sin rondas era una serie de 5.
+    const stored = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    if (stored.mode === "rounds" && stored.rounds === undefined) return syncMode({ ...parsed.data, rounds: LEGACY_SERIES_ROUNDS });
+    return syncMode(parsed.data);
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -204,7 +211,7 @@ export class SettingsStore {
   }
 
   async update(change: Partial<MatchSettings>): Promise<MatchSettings> {
-    this.settings = MatchSettingsSchema.parse({ ...this.settings, ...change });
+    this.settings = syncMode(MatchSettingsSchema.parse({ ...this.settings, ...change }));
     const snapshot = JSON.stringify(this.settings, null, 2);
     this.writeChain = this.writeChain.then(async () => {
       try {

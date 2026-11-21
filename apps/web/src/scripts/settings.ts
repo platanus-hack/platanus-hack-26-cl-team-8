@@ -1,10 +1,9 @@
 import {
+  MAX_ROUNDS,
   COMMS_LABELS,
   CommsModeSchema,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
-  MODE_LABELS,
-  MatchModeSchema,
   TIMER_LABELS,
   VOICE_LABELS,
   type MatchSettings,
@@ -26,7 +25,8 @@ import { showToast } from "./toast";
 
 type Elements = {
   field: HTMLElement;
-  mode: HTMLSelectElement;
+  /** Rondas: 1 = una pelea suelta, más = una serie (el formato sale de aquí). */
+  rounds: HTMLInputElement;
   modeDescription: HTMLElement;
   comms: HTMLSelectElement;
   commsDescription: HTMLElement;
@@ -95,8 +95,14 @@ let remote: MatchSettings | null = null;
 
 function render(settings: MatchSettings): void {
   if (!els) return;
-  if (els.mode.value !== settings.mode) els.mode.value = settings.mode;
-  setText(els.modeDescription, MODE_LABELS[settings.mode].description);
+  // Mientras alguien escribe el número no se le cambia lo que lleva.
+  if (document.activeElement !== els.rounds && els.rounds.value !== String(settings.rounds)) els.rounds.value = String(settings.rounds);
+  setText(
+    els.modeDescription,
+    settings.rounds > 1
+      ? `Serie de ${settings.rounds} rondas: cada agente sabe cómo va y puede rendirse en una ronda.`
+      : "Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.",
+  );
   if (els.comms.value !== settings.comms) els.comms.value = settings.comms;
   setText(els.commsDescription, COMMS_LABELS[settings.comms].description);
   els.timer.checked = settings.timer;
@@ -109,7 +115,7 @@ function render(settings: MatchSettings): void {
     if (els.amount.value !== fields.amount) els.amount.value = fields.amount;
     if (els.unit.value !== fields.unit) els.unit.value = fields.unit;
   }
-  const what = settings.mode === "rounds" ? "Cada ronda dura" : "La pelea dura";
+  const what = settings.rounds > 1 ? "Cada ronda dura" : "La pelea dura";
   setText(
     els.timerDescription,
     settings.timer ? `${what} ${spokenDuration(seconds)}. ${TIMER_LABELS.on}` : TIMER_LABELS.off,
@@ -126,8 +132,8 @@ function render(settings: MatchSettings): void {
 /** Bloquea los controles mientras se guarda; la voz sigue bloqueada si el servidor no la tiene. */
 function lockControls(locked: boolean): void {
   if (!els) return;
-  const { mode, comms, timer, amount, unit, voice } = els;
-  for (const control of [mode, comms, timer, amount, unit]) control.disabled = locked;
+  const { rounds, comms, timer, amount, unit, voice } = els;
+  for (const control of [rounds, comms, timer, amount, unit]) control.disabled = locked;
   voice.disabled = locked || voiceUnavailable();
 }
 
@@ -175,7 +181,7 @@ export function initSettings(): void {
   initBenchSettings();
   els = {
     field: byId("settings-field"),
-    mode: byId<HTMLSelectElement>("mode"),
+    rounds: byId<HTMLInputElement>("rounds-count"),
     modeDescription: byId("mode-description"),
     comms: byId<HTMLSelectElement>("comms"),
     commsDescription: byId("comms-description"),
@@ -189,7 +195,7 @@ export function initSettings(): void {
     voiceState: byId("voice-state"),
     voiceDescription: byId("voice-description"),
   };
-  const { mode, comms, timer, amount, unit, voice } = els;
+  const { rounds, comms, timer, amount, unit, voice } = els;
 
   // La duración por defecto y si hay voz los dice el servidor: al llegar, se vuelve a dibujar.
   onDefaultsChange(() => {
@@ -216,9 +222,13 @@ export function initSettings(): void {
   amount.addEventListener("change", saveDuration);
   unit.addEventListener("change", saveDuration);
 
-  mode.addEventListener("change", () => {
-    const parsed = MatchModeSchema.safeParse(mode.value);
-    if (parsed.success) save({ mode: parsed.data }, "el formato de la partida");
+  rounds.addEventListener("change", () => {
+    const value = Math.round(Number(rounds.value));
+    if (!Number.isFinite(value) || value < 1) {
+      if (remote) render(remote);
+      return;
+    }
+    save({ rounds: Math.min(MAX_ROUNDS, value) }, "las rondas");
   });
   comms.addEventListener("change", () => {
     const parsed = CommsModeSchema.safeParse(comms.value);

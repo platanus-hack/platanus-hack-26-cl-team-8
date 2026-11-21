@@ -6,6 +6,7 @@ import {
   MIN_TIMER_SECONDS,
   API_ROUTES,
   DEFAULT_MIN_MATCHES,
+  LEGACY_SERIES_ROUNDS,
   SCENARIO_IDS,
   ScenarioIdSchema,
   FlagBodySchema,
@@ -266,7 +267,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (body.data.comms !== undefined) change.comms = body.data.comms;
       if (body.data.timer !== undefined) change.timer = body.data.timer;
       if (body.data.timerSeconds !== undefined) change.timerSeconds = body.data.timerSeconds;
-      if (body.data.mode !== undefined) change.mode = body.data.mode;
+      // El formato sale de las rondas (ver syncMode). Un cliente de antes que solo manda
+      // mode: "rounds" pide una serie; "single", una pelea suelta.
+      if (body.data.mode !== undefined && body.data.rounds === undefined) {
+        const current = settings.get().rounds;
+        change.rounds = body.data.mode === "single" ? 1 : current > 1 ? current : LEGACY_SERIES_ROUNDS;
+      }
       if (body.data.voice !== undefined) change.voice = body.data.voice;
       const b = body.data;
       if (b.scenario !== undefined) change.scenario = b.scenario;

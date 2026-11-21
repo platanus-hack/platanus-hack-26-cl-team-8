@@ -52,6 +52,7 @@ import {
   FlagBodySchema,
   DEFAULT_PROMPTS,
   DEFAULT_SETTINGS,
+  LEGACY_SERIES_ROUNDS,
   ScenarioIdSchema,
   normalizeTags,
   type FlaggedPrompt,
@@ -108,6 +109,8 @@ const settings: MatchSettings = {
   timer: params.get("timer") !== "off",
   timerSeconds: null,
   mode: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? "rounds" : "single",
+  // El formato sale de las rondas: ?mode=rounds es una serie de 5.
+  rounds: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? LEGACY_SERIES_ROUNDS : 1,
   voice: params.get("voice") === "on",
 };
 
@@ -849,6 +852,9 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     for (const [key, value] of Object.entries(rest)) {
       if (value !== undefined) Object.assign(settings, { [key]: value });
     }
+    // Igual que el servidor: un modo sin rondas pide una serie de 5 o una pelea suelta.
+    if (rest.mode !== undefined && rest.rounds === undefined) settings.rounds = rest.mode === "single" ? 1 : Math.max(2, settings.rounds > 1 ? settings.rounds : LEGACY_SERIES_ROUNDS);
+    settings.mode = settings.rounds > 1 ? "rounds" : "single";
     if (rules) settings.rules = { red: rules.red ?? settings.rules.red, blue: rules.blue ?? settings.rules.blue };
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;

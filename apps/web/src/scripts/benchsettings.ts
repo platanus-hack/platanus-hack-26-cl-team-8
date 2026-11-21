@@ -1,7 +1,6 @@
 import {
   HORIZON_LABELS,
   HorizonSchema,
-  MAX_ROUNDS,
   RuleIdSchema,
   SCENARIOS,
   SERIES_WIN_LABELS,
@@ -30,7 +29,6 @@ type Elements = {
   scenarioDescription: HTMLElement;
   scenarioHint: HTMLElement;
   seriesOptions: HTMLElement;
-  rounds: HTMLInputElement;
   horizon: HTMLSelectElement;
   seriesWin: HTMLSelectElement;
   refillKit: HTMLInputElement;
@@ -51,7 +49,7 @@ function ruleBoxes(side: Side): HTMLInputElement[] {
 
 function controls(): (HTMLInputElement | HTMLSelectElement)[] {
   if (!els) return [];
-  return [els.scenario, els.rounds, els.horizon, els.seriesWin, els.refillKit, els.judge, ...SIDES.flatMap(ruleBoxes)];
+  return [els.scenario, els.horizon, els.seriesWin, els.refillKit, els.judge, ...SIDES.flatMap(ruleBoxes)];
 }
 
 function render(settings: MatchSettings): void {
@@ -62,23 +60,22 @@ function render(settings: MatchSettings): void {
 
   // Lo que el servidor va a forzar con este escenario (ver effectiveSettings en el orquestador).
   const hints: string[] = [];
-  if (settings.scenario !== "duel" && settings.mode !== "rounds") hints.push("Se jugará por rondas.");
+  if (settings.scenario !== "duel" && settings.rounds === 1) hints.push("Se jugará como serie de 1 ronda, para repartir sus puntos.");
   if (settings.scenario === "injection" && settings.comms !== "chat") hints.push("Se jugará con chat: las órdenes falsas llegan por ahí.");
   else if (scenario.wantsChat && settings.comms !== "chat") hints.push("Recomendado: que los agentes puedan hablarse.");
   if (settings.scenario === "dilemma" && !settings.timer) hints.push("Se jugará con límite de tiempo.");
   setText(els.scenarioHint, hints.join(" "));
   els.scenarioHint.hidden = hints.length === 0;
 
-  const series = settings.mode === "rounds" || settings.scenario !== "duel";
+  const series = settings.rounds > 1 || settings.scenario !== "duel";
   els.seriesOptions.hidden = !series;
-  if (document.activeElement !== els.rounds) els.rounds.value = String(settings.rounds);
   if (els.horizon.value !== settings.horizon) els.horizon.value = settings.horizon;
   if (els.seriesWin.value !== settings.seriesWin) els.seriesWin.value = settings.seriesWin;
   els.refillKit.checked = settings.refillKit;
   const byPoints = seriesByPoints(settings);
   setText(
     els.seriesDescription,
-    `${settings.rounds} rondas. ${HORIZON_LABELS[settings.horizon]} ${SERIES_WIN_LABELS[settings.seriesWin].description}` +
+    `${settings.rounds} ${settings.rounds === 1 ? "ronda" : "rondas"}. ${HORIZON_LABELS[settings.horizon]} ${SERIES_WIN_LABELS[settings.seriesWin].description}` +
       (settings.seriesWin === "auto" ? ` Con este escenario: por ${byPoints ? "puntos" : "rondas ganadas"}.` : "") +
       (settings.refillKit ? " El kit se repone en cada ronda." : " Lo gastado no vuelve en las rondas siguientes."),
   );
@@ -142,7 +139,6 @@ export function initBenchSettings(): void {
     scenarioDescription: byId("scenario-description"),
     scenarioHint: byId("scenario-hint"),
     seriesOptions: byId("series-options"),
-    rounds: byId<HTMLInputElement>("rounds"),
     horizon: byId<HTMLSelectElement>("horizon"),
     seriesWin: byId<HTMLSelectElement>("series-win"),
     refillKit: byId<HTMLInputElement>("refill-kit"),
@@ -152,14 +148,10 @@ export function initBenchSettings(): void {
     mirror: byId<HTMLButtonElement>("btn-mirror"),
     rules: { red: byId("rules-red"), blue: byId("rules-blue") },
   };
-  const { scenario, rounds, horizon, seriesWin, refillKit, judge, mirror } = els;
+  const { scenario, horizon, seriesWin, refillKit, judge, mirror } = els;
   scenario.addEventListener("change", () => {
     const parsed = ScenarioIdSchema.safeParse(scenario.value);
     if (parsed.success) save({ scenario: parsed.data }, "el escenario");
-  });
-  rounds.addEventListener("change", () => {
-    const value = Math.round(Number(rounds.value));
-    if (Number.isFinite(value)) save({ rounds: Math.min(MAX_ROUNDS, Math.max(2, value)) }, "las rondas");
   });
   horizon.addEventListener("change", () => {
     const parsed = HorizonSchema.safeParse(horizon.value);
