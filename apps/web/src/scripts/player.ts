@@ -1,6 +1,6 @@
 // hls.js publica ESM con export default (dist/hls.mjs): import por defecto.
 import Hls from "hls.js";
-import { HLS_URL } from "./config";
+import { HLS_URL, MOCK } from "./config";
 import { byId, setText } from "./dom";
 
 const RETRY_MS = 3000;
@@ -24,6 +24,18 @@ export function initPlayer(): void {
   let lastTime = 0;
   let lastProgressAt = Date.now();
   let attempts = 0;
+
+  if (MOCK) {
+    // Modo maqueta: video de relleno dibujado en un canvas, sin HLS.
+    container.dataset.signal = "off";
+    void import("./mock").then((mock) => {
+      if (!mock.startMockVideo(video)) return;
+      video.addEventListener("timeupdate", () => {
+        container.dataset.signal = "on";
+      });
+    });
+    return;
+  }
 
   const useHlsJs = Hls.isSupported();
   const useNative = !useHlsJs && video.canPlayType("application/vnd.apple.mpegurl") !== "";

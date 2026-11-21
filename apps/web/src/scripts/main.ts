@@ -1,10 +1,11 @@
 import { parseArenaEvent, type ArenaEvent, type MatchPhase, type MatchState } from "@phack/protocol";
-import { fetchState } from "./api";
+import { fetchDefaults, fetchState } from "./api";
 import { initControls, setPhase } from "./controls";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
 import { addRecord, initHistory, refreshHistory } from "./history";
+import { setDefaults } from "./models";
 import { initPlayer } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import {
@@ -159,6 +160,12 @@ function init(): void {
   pollState();
   void loadPrompts();
   void refreshHistory();
+  // Con esto se sabe qué modelo usa un agente que dejó "por defecto del servidor".
+  fetchDefaults()
+    .then(setDefaults)
+    .catch(() => {
+      // Sin este dato la página funciona igual: solo no muestra el modelo por defecto.
+    });
 
   // Respaldo: mientras el websocket esté caído, el estado se consulta por HTTP.
   window.setInterval(() => {

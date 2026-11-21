@@ -1,0 +1,30 @@
+// Despliegue de la web en Cloudflare Workers (assets estáticos + proxy a la arena).
+//
+//   pnpm --filter @phack/web run deploy     # astro build + wrangler deploy
+//
+// El Worker sirve dist/ y manda /api/* y /live/* a los servicios que corren en la
+// máquina de la arena, a través del túnel "phack2026-local" (Workers VPC). Ver
+// worker/index.ts y la sección "Cloudflare" del README.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "phack2026-web",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // Estas rutas van siempre al Worker (proxy); el resto se sirve directo desde assets.
+    "run_worker_first": ["/api/*", "/live/*"],
+    // Igual que Caddy: cualquier ruta desconocida cae en index.html.
+    "not_found_handling": "single-page-application"
+  },
+  // VPC services creados con `wrangler vpc service create` sobre el túnel
+  // phack2026-local (1eeeaaa2-bf62-42db-adf0-fddc37d1f458). Son IDs, no secretos.
+  "vpc_services": [
+    // phack2026-api  -> http://127.0.0.1:8787 (orquestador)
+    { "binding": "API", "service_id": "01a1fd5d-509c-7a31-a98b-8ca20bd476f1", "remote": true },
+    // phack2026-live -> http://127.0.0.1:8888 (HLS de MediaMTX)
+    { "binding": "LIVE", "service_id": "01a1fd5d-6081-7f10-9f67-c9efd27b1400", "remote": true }
+  ],
+  "observability": { "enabled": true }
+}

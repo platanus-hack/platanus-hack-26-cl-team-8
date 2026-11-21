@@ -1,6 +1,7 @@
 import { SIDES, type AgentStatus, type MatchResult, type MatchState, type Side } from "@phack/protocol";
 import { byId, setText } from "./dom";
 import { PHASE_LABEL, formatClock, formatNumber, resultDetail, resultTitle } from "./format";
+import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 
 const MAX_HEALTH = 20;
 const URGENT_MS = 10_000;
@@ -9,6 +10,7 @@ type SideElements = {
   card: HTMLElement;
   bot: HTMLElement;
   status: HTMLElement;
+  model: HTMLElement;
   hp: HTMLElement;
   hpFill: HTMLElement;
   hpValue: HTMLElement;
@@ -38,6 +40,7 @@ function sideElements(side: Side): SideElements {
     card: byId(`fighter-${side}`),
     bot: byId(`bot-${side}`),
     status: byId(`fighter-state-${side}`),
+    model: byId(`fighter-model-${side}`),
     hp: byId(`hp-${side}`),
     hpFill: byId(`hp-fill-${side}`),
     hpValue: byId(`hp-value-${side}`),
@@ -59,6 +62,9 @@ export function initScoreboard(): void {
     bannerDetail: byId("winner-detail"),
   };
   window.setInterval(renderClock, 250);
+  onDefaultsChange(() => {
+    if (current) renderState(current);
+  });
 }
 
 /** Cada evento trae `at` (reloj del servidor): se usa para corregir la cuenta regresiva. */
@@ -71,7 +77,7 @@ function setHealth(side: SideElements, health: number): void {
   side.hpFill.style.width = `${(clamped / MAX_HEALTH) * 100}%`;
   side.hp.setAttribute("aria-valuenow", String(Math.round(clamped)));
   side.hp.dataset.level = clamped <= 6 ? "low" : clamped <= 12 ? "mid" : "high";
-  setText(side.hpValue, `${formatNumber(clamped)} / ${MAX_HEALTH}`);
+  setText(side.hpValue, formatNumber(clamped));
 }
 
 function renderAgent(side: SideElements, agent: AgentStatus): void {
@@ -121,6 +127,8 @@ export function renderState(state: MatchState): void {
   setText(els.phase, PHASE_LABEL[state.phase]);
   for (const side of SIDES) {
     renderAgent(els.sides[side], state.agents[side]);
+    // Modelo con el que se pelea (o se peleó) esta pelea.
+    renderModelTag(els.sides[side].model, resolveModel(state.configs[side]));
     els.sides[side].card.classList.toggle(
       "is-winner",
       state.phase === "finished" && state.result !== null && state.result.winner === side,

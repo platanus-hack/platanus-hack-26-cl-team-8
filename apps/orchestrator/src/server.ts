@@ -10,6 +10,7 @@ import {
   type MatchRecord,
   type MatchState,
   type PromptsResponse,
+  type ServerDefaults,
   type Side,
   type UpdatePromptBody,
 } from "@phack/protocol";
@@ -29,6 +30,8 @@ export type ServerDeps = {
     update(side: Side, body: UpdatePromptBody): Promise<AgentConfig>;
   };
   history: { latest(): MatchRecord[] };
+  /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
+  defaults: ServerDefaults;
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
 };
@@ -51,7 +54,9 @@ function describeBodyError(issues: { path: (string | number)[]; code: string }[]
     return `El prompt supera el máximo de ${MAX_PROMPT_LENGTH} caracteres`;
   }
   if (first?.path[0] === "prompt") return "Falta el campo 'prompt' o no es texto";
-  if (first?.path[0] === "provider") return "Proveedor inválido: usa mock, vercel, openai, anthropic u openrouter";
+  if (first?.path[0] === "provider") {
+    return "Proveedor inválido: usa mock, vercel, openai, anthropic, openrouter o gateway";
+  }
   if (first?.path[0] === "model") return "Modelo inválido: debe ser texto de hasta 100 caracteres";
   return "Cuerpo inválido: se espera un JSON { prompt, provider?, model? }";
 }
@@ -151,6 +156,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post(API_ROUTES.matchStop, async () => deps.match.stop());
 
   app.get(API_ROUTES.matches, async () => deps.history.latest());
+
+  app.get(API_ROUTES.defaults, async () => deps.defaults);
 
   // ---------- WebSocket (solo servidor -> cliente) ----------
 

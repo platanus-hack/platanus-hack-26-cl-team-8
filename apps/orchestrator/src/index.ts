@@ -2,7 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createFighter } from "@phack/agent";
 import { loadEnv } from "@phack/env";
-import { createLlmClient } from "@phack/llm";
+import { DEFAULT_MODELS, createLlmClient } from "@phack/llm";
+import type { ServerDefaults } from "@phack/protocol";
 import { applyWorldRules, buildArena } from "./arena";
 import { Hub } from "./hub";
 import { MatchManager } from "./match";
@@ -54,9 +55,15 @@ async function main(): Promise<void> {
   hub.setProviders({ getState: () => match.getState(), getPrompts: () => prompts.get() });
   hub.start();
 
-  const app = await buildServer({ hub, match, prompts, history });
-  await app.listen({ host: "0.0.0.0", port: env.ORCHESTRATOR_PORT });
-  log("info", `API escuchando en el puerto ${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
+  // LLM_MODEL solo reemplaza el modelo por defecto del proveedor elegido en LLM_PROVIDER.
+  const defaults: ServerDefaults = {
+    provider: env.LLM_PROVIDER,
+    models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
+  };
+
+  const app = await buildServer({ hub, match, prompts, history, defaults });
+  await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
+  log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 
   // ---------- Apagado ordenado ----------
 

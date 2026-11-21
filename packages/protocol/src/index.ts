@@ -32,7 +32,11 @@ export type Side = z.infer<typeof SideSchema>;
 
 export const AGENT_USERNAMES: Record<Side, string> = { red: "AgenteRojo", blue: "AgenteAzul" };
 
-export const ProviderSchema = z.enum(["mock", "vercel", "openai", "anthropic", "openrouter"]);
+/**
+ * "vercel" y "gateway" = Vercel AI Gateway (un solo endpoint y una sola clave para todos
+ * los modelos): "vercel" va por el SDK `ai`, "gateway" por la API compatible con OpenAI.
+ */
+export const ProviderSchema = z.enum(["mock", "vercel", "openai", "anthropic", "openrouter", "gateway"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const MAX_PROMPT_LENGTH = 4000;
@@ -156,6 +160,7 @@ export type ArenaEvent = z.infer<typeof ArenaEventSchema>;
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
+//   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
 
 export const API_ROUTES = {
@@ -166,10 +171,29 @@ export const API_ROUTES = {
   matchStart: "/api/match/start",
   matchStop: "/api/match/stop",
   matches: "/api/matches",
+  defaults: "/api/defaults",
   ws: "/api/ws",
 } as const;
 
 export type PromptsResponse = { red: AgentConfig; blue: AgentConfig };
+
+/**
+ * Qué se usa cuando un agente no elige proveedor o modelo: el proveedor por defecto
+ * del servidor y el modelo por defecto de cada proveedor. La web lo usa para mostrar
+ * el modelo real de cada agente.
+ */
+export const ServerDefaultsSchema = z.object({
+  provider: ProviderSchema,
+  models: z.object({
+    mock: z.string(),
+    vercel: z.string(),
+    openai: z.string(),
+    anthropic: z.string(),
+    openrouter: z.string(),
+    gateway: z.string(),
+  }),
+});
+export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 
 export function parseArenaEvent(raw: string): ArenaEvent | null {
   try {

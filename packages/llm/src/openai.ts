@@ -4,7 +4,8 @@ import { isRecord, parseToolArgs } from "./util";
 
 /**
  * Adaptador para el formato "chat completions" de OpenAI.
- * OpenRouter usa el mismo formato, así que comparte este código con otra base URL.
+ * OpenRouter y Vercel AI Gateway usan el mismo formato, así que comparten este código
+ * con otra base URL.
  */
 
 type WireMessage = Record<string, unknown>;
@@ -75,7 +76,7 @@ export function fromOpenAiResponse(provider: string, data: unknown): LlmResponse
 }
 
 export type OpenAiCompatibleOptions = {
-  provider: "openai" | "openrouter";
+  provider: "openai" | "openrouter" | "gateway";
   baseUrl: string;
   apiKey: string;
   model: string;

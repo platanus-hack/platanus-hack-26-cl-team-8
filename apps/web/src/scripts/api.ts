@@ -3,14 +3,16 @@ import {
   AgentConfigSchema,
   MatchRecordSchema,
   MatchStateSchema,
+  ServerDefaultsSchema,
   type AgentConfig,
   type MatchRecord,
   type MatchState,
   type PromptsResponse,
+  type ServerDefaults,
   type Side,
   type UpdatePromptBody,
 } from "@phack/protocol";
-import { apiUrl } from "./config";
+import { MOCK, apiUrl } from "./config";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -44,7 +46,23 @@ function serverMessage(data: unknown): string | null {
   return null;
 }
 
+/** Modo maqueta: responde mock.ts en vez del servidor, pasando por los mismos parsers. */
+async function mockedRequest<T>(path: string, parser: Parser<T>, init?: { method: string; body?: unknown }): Promise<T> {
+  const { mockRequest } = await import("./mock");
+  let data: unknown;
+  try {
+    data = await mockRequest(path, init);
+  } catch (err) {
+    const { status, message } = err as { status?: unknown; message?: unknown };
+    if (typeof status === "number" && typeof message === "string") throw new ApiError(status, message);
+    throw err;
+  }
+  return parser.parse(data);
+}
+
 async function request<T>(path: string, parser: Parser<T>, init?: { method: string; body?: unknown }): Promise<T> {
+  if (MOCK) return mockedRequest(path, parser, init);
+
   const headers: Record<string, string> = { Accept: "application/json" };
   const options: RequestInit = { method: init?.method ?? "GET", headers };
   if (init?.body !== undefined) {
@@ -110,6 +128,10 @@ export function stopMatch(): Promise<MatchState> {
 
 export function fetchMatches(): Promise<MatchRecord[]> {
   return request(API_ROUTES.matches, matchesParser);
+}
+
+export function fetchDefaults(): Promise<ServerDefaults> {
+  return request(API_ROUTES.defaults, ServerDefaultsSchema);
 }
 
 export function describeError(err: unknown): string {

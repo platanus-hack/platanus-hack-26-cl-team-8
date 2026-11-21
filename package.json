@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @phack/orchestrator --filter @phack/web run dev",
+    "local:setup": "bash scripts/local/setup.sh",
+    "local": "bash scripts/local/dev.sh",
     "local:check": "node scripts/local-check.mjs",
     "local:install": "pnpm install --filter \"!@phack/camera\"",
     "local:infra": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d minecraft mediamtx",
@@ -15,6 +17,7 @@
     "local:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
+    "deploy:web": "pnpm --filter @phack/web run deploy",
     "dev:web": "pnpm --filter @phack/web dev",
     "dev:orchestrator": "pnpm --filter @phack/orchestrator dev",
     "dev:camera": "pnpm --filter @phack/camera dev",
