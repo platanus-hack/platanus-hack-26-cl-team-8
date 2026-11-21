@@ -10,6 +10,8 @@ import {
   quantizeAngle,
   smoothScalar,
   smoothToward,
+  waitingForTeleport,
+  TELEPORT_CONFIRM_TIMEOUT_MS,
 } from "./director";
 
 const center = { x: 0, y: 64, z: 0 };
@@ -188,5 +190,16 @@ describe("pickShot", () => {
   it("se puede dejar una sola cámara", () => {
     expect(pickShot(true, 500, 20, 0)).toBe("follow");
     expect(pickShot(true, 5, 0, 6)).toBe("wide");
+  });
+});
+
+describe("waitingForTeleport", () => {
+  it("sin /tp pendiente se puede volar", () => {
+    expect(waitingForTeleport(null, 1_000)).toBe(false);
+  });
+  it("se queda quieto tras un /tp hasta la confirmación o el tope", () => {
+    expect(waitingForTeleport(1_000, 1_010)).toBe(true);
+    expect(waitingForTeleport(1_000, 1_000 + TELEPORT_CONFIRM_TIMEOUT_MS - 1)).toBe(true);
+    expect(waitingForTeleport(1_000, 1_000 + TELEPORT_CONFIRM_TIMEOUT_MS)).toBe(false);
   });
 });

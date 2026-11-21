@@ -73,6 +73,9 @@ rsync -az --delete \
   --filter 'P /pnpm-lock.yaml' \
   --exclude 'node_modules/' \
   --exclude '.git/' \
+  # Las estructuras de los datapacks viven en un "data/" que SÍ va al servidor; rsync usa
+  # la primera regla que calza, así que esta inclusión debe ir antes de excluir data/.
+  --include '/infra/minecraft/datapacks/*/data/' \
   --exclude 'data/' \
   --exclude 'dist/' \
   --exclude '.astro/' \

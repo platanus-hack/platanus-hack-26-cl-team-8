@@ -198,3 +198,14 @@ export function pickShot(fighting: boolean, fightSeconds: number, followSeconds:
   if (wideSeconds <= 0) return "follow";
   return fightSeconds % (followSeconds + wideSeconds) < followSeconds ? "follow" : "wide";
 }
+
+/** Si la confirmación de un /tp (paquete de posición del servidor) no llega en este tiempo, se sigue igual. */
+export const TELEPORT_CONFIRM_TIMEOUT_MS = 3_000;
+
+/**
+ * true si el bot debe quedarse quieto esperando que el servidor confirme un /tp lejano
+ * (`pendingSince` = performance.now() del /tp, null si no hay ninguno pendiente).
+ */
+export function waitingForTeleport(pendingSince: number | null, now: number): boolean {
+  return pendingSince !== null && now - pendingSince < TELEPORT_CONFIRM_TIMEOUT_MS;
+}
