@@ -101,6 +101,8 @@ async function copyFrom(side: Side, button: HTMLButtonElement): Promise<void> {
     const source = (await fetchPrompts())[from];
     const body: UpdatePromptBody = { prompt: source.prompt };
     if (source.kit) body.kit = source.kit;
+    // Un inventario armado a mano (kit "Personalizado") también se copia.
+    if (source.kit === "custom" && source.customKit) body.customKit = source.customKit;
     if (source.provider) body.provider = source.provider;
     if (source.model) body.model = source.model;
     await savePrompt(side, body);

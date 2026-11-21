@@ -1,34 +1,62 @@
 import { CUSTOM_KIT_POTIONS } from "@phack/protocol";
-import { ALWAYS_EDIBLE, attackCooldownMs, isArrow, isAxe, isBow, isBuildBlock, isFoodName, isPickaxe, isSword } from "./items";
+import { round1 } from "./geometry";
+import { ALWAYS_EDIBLE, isArrow, isAxe, isBow, isBuildBlock, isFoodName, isLavaBucket, isPearl, isPickaxe, isShield, isSword, isWaterBucket } from "./items";
+import { PEARL_MIN_HEALTH } from "./tools";
 
+/** Un ítem tal como lo lee el cuerpo del inventario del bot. */
 export type ResourceItem = { name: string; count: number; slot?: number; durabilityUsed?: number; maxDurability?: number; enchantments?: { name: string; level: number }[] };
-export type ResourceUse = { tool: string; description: string; args?: Record<string, unknown>; available: boolean; constraint?: string };
-export type ResourceContext = { health: number; food: number; absorption: number; pearlCooldown: number; tools: readonly string[] };
+/** Con qué herramienta y argumentos se usa un ítem; `blocked` solo si ahora no se puede, con el motivo. */
+export type ResourceUse = { tool: string; args?: Record<string, unknown>; blocked?: string };
+export type ResourceContext = { health: number; food: number; pearlCooldown: number; tools: readonly string[]; /** Vida con la que ya no se lanza la perla con este kit. */ pearlMinHealth?: number };
+/** Lo que cambia de un ítem durante la pelea. Qué hace cada objeto está una sola vez, en TU KIT (item-guide.ts). */
+export type WornItem = { name: string; durabilityLeft?: number; enchantments?: { name: string; level: number }[] };
+export type ResourceView = WornItem & { count: number; uses: ResourceUse[] };
 
-/** Usos soportados por el cuerpo; cantidades y disponibilidad se recalculan cada turno. */
-export function describeResources(items: ResourceItem[], context: ResourceContext) {
-  const has = (name: string) => items.some((item) => item.name === name && item.count > 0);
+/** Nombre, usos que le quedan (si se desgasta) y encantamientos (si tiene): sin campos vacíos. */
+export function wornItem(item: ResourceItem): WornItem {
+  const wears = item.maxDurability !== undefined && item.maxDurability > 0;
+  return {
+    name: item.name,
+    ...(wears ? { durabilityLeft: (item.maxDurability as number) - (item.durabilityUsed ?? 0) } : {}),
+    ...(item.enchantments && item.enchantments.length > 0 ? { enchantments: item.enchantments } : {}),
+  };
+}
+
+/**
+ * Estado vivo del inventario, por casilla: cantidad, desgaste y con qué herramienta se usa
+ * cada cosa ahora mismo. Se recalcula cada turno, así que solo lleva lo que cambia.
+ */
+export function describeResources(items: ResourceItem[], context: ResourceContext): ResourceView[] {
+  const has = (match: (name: string) => boolean): boolean => items.some((item) => match(item.name) && item.count > 0);
+  const pearlMin = context.pearlMinHealth ?? PEARL_MIN_HEALTH;
   return items.map((item) => {
     const [name, potion] = item.name.split(":");
     const id = name ?? item.name;
     const uses: ResourceUse[] = [];
-    const add = (tool: string, description: string, args?: Record<string, unknown>, constraint?: string) => {
-      const unavailable = constraint ?? (context.tools.includes(tool) ? undefined : "el cuerpo no ofrece esta herramienta con este kit");
-      uses.push({ tool, description, args, available: item.count > 0 && !unavailable, ...(unavailable ? { constraint: unavailable } : {}) });
+    const add = (tool: string, args?: Record<string, unknown>, blocked?: string): void => {
+      const why = blocked ?? (context.tools.includes(tool) ? undefined : "tu kit no ofrece esta herramienta");
+      uses.push({ tool, ...(args ? { args } : {}), ...(why ? { blocked: why } : {}) });
     };
-    if (isSword(id) || isAxe(id)) add("attack", `arma cuerpo a cuerpo; recarga de ${attackCooldownMs(id) / 1000} s${isAxe(id) ? "; puede desactivar escudos" : ""}`, { weapon: id });
-    if (isAxe(id) || isPickaxe(id) || id === "shears") add("dig", id === "shears" ? "rompe lana rápidamente" : isAxe(id) ? "rompe madera rápidamente" : "rompe piedra y obsidiana; el tiempo depende del material");
-    if (isBuildBlock(id)) add("build", "material para cualquier plano: cobertura, caminos, escaleras, plataformas, pasajes o modificaciones de construcciones existentes; decide su geometría con blocks");
-    if (isBow(id) || isArrow(id)) add("shoot", "disparar a distancia; cada tiro consume una flecha", undefined, !has("bow") ? "falta arco" : !items.some((i) => isArrow(i.name) && i.count > 0) ? "faltan flechas" : undefined);
-    if (isFoodName(id)) add("eat", ALWAYS_EDIBLE.has(id) ? "se puede comer con hambre llena; la manzana dorada da regeneración y absorción que no se acumula" : "recupera hambre y permite regenerar vida gradualmente", { food: id }, context.food >= 20 && !ALWAYS_EDIBLE.has(id) ? "barra de comida llena" : undefined);
-    if (id === "ender_pearl") add("pearl", "reposicionarse cerca del rival o escapar; cuesta vida al aterrizar", undefined, context.health <= 4 ? "vida insuficiente (4 o menos)" : context.pearlCooldown > 0 ? `recarga: ${context.pearlCooldown} s` : undefined);
-    if (id === "shield") add("shield", "bloquea daño frontal; attack con guard=true permite cubrirse entre golpes; un hacha puede desactivarlo");
-    if (id === "water_bucket") add("water", "controla movimiento y apaga fuego; where=feet amortigua caídas, where=between frena al rival");
-    if (id === "lava_bucket") add("lava", "crea una zona peligrosa a los pies del rival; puede quemarte también; requiere rival a entre 3 y 5 bloques");
-    if (id === "potion" || id === "splash_potion") {
-      const effect = potion ? CUSTOM_KIT_POTIONS[potion] : undefined;
-      add(id === "potion" ? "drink" : "throw", effect?.effect ?? "efecto desconocido: no asumas un efecto", potion ? { potion, ...(id === "splash_potion" ? { at: effect?.harmful ? "rival" : "self" } : {}) } : undefined);
+    if (isSword(id) || isAxe(id)) add("attack", { weapon: id });
+    if (isAxe(id) || isPickaxe(id)) add("dig");
+    if (isBuildBlock(id)) add("build");
+    if (isBow(id) || isArrow(id)) add("shoot", undefined, !has(isBow) ? "falta arco" : !has(isArrow) ? "faltan flechas" : undefined);
+    if (isFoodName(id)) add("eat", { food: id }, context.food >= 20 && !ALWAYS_EDIBLE.has(id) ? "barra de comida llena" : undefined);
+    if (isPearl(id)) {
+      add("pearl", undefined, context.health <= pearlMin ? `vida insuficiente (${pearlMin} o menos)` : context.pearlCooldown > 0 ? `recarga: ${round1(context.pearlCooldown)} s` : undefined);
     }
-    return { ...item, uses, ...(id === "golden_apple" && context.absorption > 0 ? { note: `quedan ${context.absorption} de absorción; otra manzana no la suma` } : {}), ...(uses.length === 0 ? { note: "equipo pasivo o ítem sin uso activo soportado; no puedes fabricar ni abrir menús" } : {}) };
+    if (isShield(id)) {
+      add("shield");
+      add("attack", { guard: true });
+    }
+    if (isWaterBucket(id)) add("water");
+    if (isLavaBucket(id)) add("lava");
+    if (id === "potion" || id === "splash_potion") {
+      const harmful = potion ? CUSTOM_KIT_POTIONS[potion]?.harmful : undefined;
+      add(id === "potion" ? "drink" : "throw", potion ? { potion, ...(id === "splash_potion" ? { at: harmful ? "rival" : "self" } : {}) } : undefined);
+    }
+    // `uses` vacío: un ítem que ninguna herramienta usa (un cubo ya vaciado, una botella vacía).
+    const { name: shown, ...state } = wornItem(item);
+    return { name: shown, count: item.count, ...state, uses };
   });
 }

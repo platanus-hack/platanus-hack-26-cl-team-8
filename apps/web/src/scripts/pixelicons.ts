@@ -11,11 +11,13 @@
  *   forward, back, pause   acercarse, alejarse y esperar (para las acciones)
  *   sound-on, sound-off    botón de sonido
  *   speaking               marca del globo mientras se oye la voz del agente
+ *   thought                nube de pensamiento: marca lo que el agente piensa (lo que dice lleva "talk")
  *
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
+ *   pips, timer, bookmark, star      marca de cada ajuste de la partida (con talk y speaking)
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
  *
- *   sword, axe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
+ *   sword, axe, pickaxe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
  *   helmet, chestplate, leggings, boots                  las cuatro piezas de armadura
  *
  * Cada ícono es una lista de filas; cada letra es un color de su paleta y "." es
@@ -35,6 +37,9 @@ export const MATERIALS = {
   diamond: { a: "#b5fbf2", b: "#4fe0d2", c: "#1f9c93" },
   wood: { a: "#d2a468", b: "#a97c44", c: "#7b5730" },
   chainmail: { a: "#a7adb8", b: "#6a717d", c: "#3e434c" },
+  gold: { a: "#fdf55f", b: "#eac33b", c: "#b8860b" },
+  netherite: { a: "#6d6569", b: "#4a4347", c: "#2c2729" },
+  leather: { a: "#c0764a", b: "#9b5a36", c: "#6b3d24" },
   /** Lana (un solo tono neutro para todos los colores: el nombre del ítem dice cuál es). */
   wool: { a: "#f4f1ea", b: "#d9d4c8", c: "#a9a397" },
 } satisfies Record<string, MaterialColors>;
@@ -241,6 +246,23 @@ export const ICONS = {
       ".khhkkck...",
       "khhk..kk...",
       "kkk........",
+    ],
+  },
+  // Pico: el mango en diagonal y la cabeza curva que lo cruza arriba.
+  pickaxe: {
+    palette: { k: OUTLINE, h: HANDLE, ...MATERIALS.iron },
+    rows: [
+      "...kkkkkk..",
+      "..kaaabbbk.",
+      "...kkkkhbbk",
+      "......khkbk",
+      ".....khkkck",
+      "....khk.kck",
+      "...khk...kk",
+      "..khk......",
+      ".khk.......",
+      "khk........",
+      "kk.........",
     ],
   },
   axe: {
@@ -560,6 +582,93 @@ export const ICONS = {
       "..x........",
       "..x........",
       "...........",
+    ],
+  },
+  // ---------- Ajustes de la partida: una marca de un solo color antes de cada nombre ----------
+
+  // Rondas: tres fichas, como las del marcador.
+  pips: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+      "xxx.xxx.xxx",
+      "xxx.xxx.xxx",
+      "xxx.xxx.xxx",
+      "...........",
+      "...........",
+      "...........",
+      "...........",
+    ],
+  },
+  // Límite de tiempo: un reloj de línea.
+  timer: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...xxxxx...",
+      "..x.....x..",
+      ".x...x...x.",
+      "x....x....x",
+      "x....x....x",
+      "x....xxx..x",
+      "x.........x",
+      "x.........x",
+      ".x.......x.",
+      "..x.....x..",
+      "...xxxxx...",
+    ],
+  },
+  // Pre-ajuste: un marcador de libro, algo guardado para volver a usar.
+  bookmark: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxx.xxx..",
+      "..xx...xx..",
+      "..x.....x..",
+      "...........",
+    ],
+  },
+  // Juez: una estrella, la calificación.
+  star: {
+    palette: { x: "currentColor" },
+    rows: [
+      ".....x.....",
+      ".....x.....",
+      "....xxx....",
+      "xxxxxxxxxxx",
+      ".xxxxxxxxx.",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      ".xxxx.xxxx.",
+      ".xxx...xxx.",
+      "xx.......xx",
+      "...........",
+    ],
+  },
+  // Nube con sus dos burbujas, como el globo de pensamiento de una historieta.
+  thought: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "..xxxxxxx..",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "..xxxxxxx..",
+      "...........",
+      "..xx.......",
+      "..xx.......",
+      "...........",
+      "x..........",
     ],
   },
   talk: {

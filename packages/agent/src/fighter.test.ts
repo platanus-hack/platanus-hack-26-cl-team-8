@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KITS, type CommsMode } from "@phack/protocol";
+import { buildCustomKit, KITS, type CommsMode, type Kit } from "@phack/protocol";
 import type { LlmRequest, LlmResponse } from "@phack/llm";
 import type { Fighter, FighterOptions } from "./types";
 
@@ -8,7 +8,7 @@ const driver = vi.hoisted(() => ({ createBot: vi.fn(), goals: vi.fn() }));
 vi.mock("node:module", () => ({
   createRequire: () => (name: string) => name === "mineflayer" ? { createBot: driver.createBot } : {
     pathfinder: () => {}, Movements: class {},
-    goals: { GoalNear: class { constructor(...args: unknown[]) { driver.goals(...args); } }, GoalPlaceBlock: class {} },
+    goals: { GoalNear: class { constructor(...args: unknown[]) { driver.goals(...args); } }, GoalPlaceBlock: class {}, GoalFollow: class {} },
   },
 }));
 import { createFighter } from "./fighter";
@@ -65,6 +65,8 @@ type ScriptedAction = { name: string; args: Record<string, unknown> };
 type StartOptions = {
   comms?: CommsMode;
   rounds?: { maxRounds: number } | null;
+  /** Kit del luchador; por defecto, el constructor. */
+  kit?: Kit;
   /** Si se da, reemplaza la respuesta guionada del LLM. */
   complete?: (request: LlmRequest) => Promise<LlmResponse>;
 };
@@ -83,7 +85,7 @@ async function start(
   const requests: LlmRequest[] = [];
   let turn = 0;
   const options: FighterOptions = {
-    side: "red", username: "Red", opponentUsername: "Blue", prompt: "Explora tus recursos", kit: KITS.builder,
+    side: "red", username: "Red", opponentUsername: "Blue", prompt: "Explora tus recursos", kit: extra.kit ?? KITS.builder,
     comms: extra.comms ?? "none", durationSeconds: 120, rounds: extra.rounds ?? null, tickMs, observationRadius: 8,
     mc: { host: "test", port: 25565, version: "1.20.4" },
     llm: {
@@ -365,5 +367,56 @@ describe("agente: modo por rondas", () => {
     expect(received[0]).not.toHaveProperty("round");
     expect(events.onSurrender).not.toHaveBeenCalled();
     expect(events.onAction).toHaveBeenCalledWith("surrender", {}, expect.stringContaining("herramienta desconocida"));
+  });
+});
+
+describe("agente: el cuerpo usa el inventario como lo anuncia el prompt", () => {
+  /** El rival a 6 bloques: a la vista y fuera del alcance de un golpe. */
+  const rival = () => ({ Blue: { entity: { id: 2, position: new Point(6.5, 65, 0.5), velocity: new Point(0, 0, 0), yaw: 0, pitch: 0, equipment: [] } } });
+
+  it("attack sin 'weapon' saca la espada de mejor material, no la primera que encuentra", async () => {
+    const { bot } = await start([{ name: "attack", args: {} }], 10_000);
+    bot.stock = [item("iron_sword", 36), item("netherite_axe", 37), item("diamond_sword", 38)];
+    bot.heldItem = bot.stock[0]!;
+    bot.players = rival();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(bot.equip).toHaveBeenCalledWith(expect.objectContaining({ name: "diamond_sword" }), "hand");
+    expect(bot.heldItem.name).toBe("diamond_sword");
+  });
+
+  it("attack con guard pasa a la mano secundaria un escudo que el kit dejó en el inventario", async () => {
+    const { bot } = await start([{ name: "attack", args: { guard: true } }], 10_000);
+    const slots = bot.inventory.slots as unknown as Record<number, unknown>;
+    const equip = vi.fn(async (entry: ReturnType<typeof item>, where?: string) => {
+      if (where === "off-hand") slots[45] = entry;
+      else bot.heldItem = entry;
+    });
+    (bot as unknown as { equip: typeof equip }).equip = equip;
+    bot.stock = [item("iron_sword", 36), item("shield", 37)];
+    bot.heldItem = bot.stock[0]!;
+    bot.players = rival();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(equip).toHaveBeenCalledWith(expect.objectContaining({ name: "shield" }), "off-hand");
+    expect(slots[45]).toMatchObject({ name: "shield" });
+    // El arma sigue en la mano: el escudo no la reemplaza.
+    expect(bot.heldItem.name).toBe("iron_sword");
+  });
+
+  it("no lanza la perla si la caída lo dejaría sin vida: el límite sale de la armadura del kit", async () => {
+    // Sin Caída de pluma la perla quita 5; con las botas del kit Enderman, 2.6.
+    const { kit: bare } = buildCustomKit({ items: [{ item: "iron_boots" }, { item: "ender_pearl", count: 3 }] });
+    for (const [kit, expected] of [
+      [bare, "no puedes usar la perla: te queda muy poca vida (caer quita ~5)"],
+      [KITS.ender, "preparando la perla para alejarte del rival"],
+    ] as const) {
+      const { bot, events } = await start([{ name: "wait", args: {} }, { name: "pearl", args: { target: "away" } }], 1000, { kit });
+      bot.stock = [item("ender_pearl", 36)];
+      bot.heldItem = bot.stock[0]!;
+      bot.health = 5;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(events.onAction).toHaveBeenLastCalledWith("pearl", { target: "away" }, expect.stringContaining(expected));
+      await Promise.all(fighters.splice(0).map((fighter) => fighter.stop()));
+      vi.useRealTimers();
+    }
   });
 });

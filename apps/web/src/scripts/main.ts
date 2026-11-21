@@ -2,6 +2,7 @@ import { parseArenaEvent, type ArenaEvent, type MatchPhase, type MatchState } fr
 import { actionLine, describeAction } from "./actions";
 import { fetchDefaults, fetchMatches, fetchState } from "./api";
 import { initControls, setPhase } from "./controls";
+import { initSettingControls } from "./controls-enhance";
 import { initCountdown, updateCountdown } from "./countdown";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
@@ -275,6 +276,7 @@ function init(): void {
   initTranscriptLink();
   initPrompts();
   initHistory();
+  initSettingControls();
   initSettings();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.

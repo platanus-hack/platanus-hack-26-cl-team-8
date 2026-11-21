@@ -134,7 +134,7 @@ export const ARENA: ArenaScenario = ARENAS[DEFAULT_ARENA_SCENARIO];
 // herramientas ofrecer y la web dibuja el inventario. Van antes de "Agentes" porque
 // AgentConfigSchema usa KitIdSchema.
 
-/** "custom" = el inventario lo describe el usuario dentro de su prompt (ver CUSTOM_KIT_ITEMS). */
+/** "custom" = el inventario lo arma el usuario: casillero por casillero en la web o descrito en su prompt (ver CUSTOM_KIT_ITEMS). */
 export const KIT_IDS = ["classic", "archer", "tank", "berserker", "ender", "builder", "custom"] as const;
 export const KitIdSchema = z.enum(KIT_IDS);
 export type KitId = z.infer<typeof KitIdSchema>;
@@ -313,8 +313,8 @@ export const KITS: Record<KitId, Kit> = {
     ],
     effects: [],
   },
-  // Molde vacío: el kit real lo arma el orquestador al iniciar la pelea a partir del
-  // prompt (AgentConfig.customKit). Mientras no exista, se pelea con lo de aquí: nada.
+  // Molde vacío: el kit real es AgentConfig.customKit, el que el usuario armó en la web o,
+  // si no armó nada, el que el orquestador saca del prompt al iniciar la pelea.
   custom: {
     id: "custom",
     name: "Personalizado",
@@ -377,7 +377,7 @@ export function kitOf(config: { kit?: KitId | undefined; customKit?: Kit | undef
 // ---------- Kit personalizado ----------
 //
 // Lista cerrada de lo que se puede pedir: son los ítems que el cuerpo del agente sabe
-// usar (armas, arco, comida, perlas, tablones y armadura). No hay presupuesto: el
+// usar (armas, arco, escudo, comida, pociones, perlas, cubos, bloques, pico y armadura). No hay presupuesto: el
 // usuario decide cuánto lleva. Lo que no esté aquí se ignora.
 
 type CatalogEntry = { label: string; /** Tamaño de un stack en Minecraft. */ stack: number };
@@ -399,26 +399,6 @@ const ARMOR_MATERIALS = {
   netherite: "netherita",
 } as const;
 const ARMOR_PIECE_LABELS = ["Casco", "Peto", "Grebas", "Botas"] as const;
-/** Colores de la lana (bloques para construir): id de Minecraft -> adjetivo en español. */
-const WOOL_COLORS = {
-  white: "blanca",
-  orange: "naranja",
-  magenta: "magenta",
-  light_blue: "celeste",
-  yellow: "amarilla",
-  lime: "verde lima",
-  pink: "rosada",
-  gray: "gris",
-  light_gray: "gris claro",
-  cyan: "cian",
-  purple: "morada",
-  blue: "azul",
-  brown: "café",
-  green: "verde",
-  red: "roja",
-  black: "negra",
-} as const;
-
 function buildCatalog(): Record<string, CatalogEntry> {
   const catalog: Record<string, CatalogEntry> = {};
   for (const [id, name] of Object.entries(TOOL_MATERIALS)) {
@@ -439,13 +419,10 @@ function buildCatalog(): Record<string, CatalogEntry> {
     water_bucket: { label: "Cubo de agua", stack: 1 },
     lava_bucket: { label: "Cubo de lava", stack: 1 },
     shield: { label: "Escudo", stack: 1 },
-    shears: { label: "Tijeras", stack: 1 },
     // Las pociones llevan además su tipo (CustomKitRequest.items[].potion).
     potion: { label: "Poción", stack: 1 },
     splash_potion: { label: "Poción arrojadiza", stack: 1 },
     cobblestone: { label: "Roca", stack: 64 },
-    dirt: { label: "Tierra", stack: 64 },
-    obsidian: { label: "Obsidiana", stack: 64 },
     cooked_beef: { label: "Filete", stack: 64 },
     cooked_porkchop: { label: "Chuleta cocinada", stack: 64 },
     cooked_chicken: { label: "Pollo asado", stack: 64 },
@@ -456,9 +433,6 @@ function buildCatalog(): Record<string, CatalogEntry> {
     golden_apple: { label: "Manzana dorada", stack: 64 },
     enchanted_golden_apple: { label: "Manzana dorada encantada", stack: 64 },
   } satisfies Record<string, CatalogEntry>);
-  for (const [id, name] of Object.entries(WOOL_COLORS)) {
-    catalog[`${id}_wool`] = { label: `Lana ${name}`, stack: 64 };
-  }
   return catalog;
 }
 
@@ -486,15 +460,15 @@ export const CUSTOM_KIT_ENCHANTMENTS: Readonly<Record<string, number>> = {
 export const CUSTOM_KIT_POTIONS: Readonly<Record<string, { label: string; effect: string; harmful?: boolean }>> = {
   healing: { label: "curación", effect: "cura 4 de vida al instante" },
   strong_healing: { label: "curación II", effect: "cura 8 de vida al instante" },
-  regeneration: { label: "regeneración", effect: "recuperas vida de a poco durante unos 45 s" },
-  strength: { label: "fuerza", effect: "tus golpes quitan más vida durante 3 min" },
-  swiftness: { label: "rapidez", effect: "caminas más rápido durante 3 min" },
+  regeneration: { label: "regeneración", effect: "recuperas 1 de vida cada 2.5 s durante 45 s" },
+  strength: { label: "fuerza", effect: "tus golpes quitan 3 más durante 3 min" },
+  swiftness: { label: "rapidez", effect: "caminas un 20% más rápido durante 3 min" },
   fire_resistance: { label: "resistencia al fuego", effect: "la lava y el fuego no te dañan durante 3 min" },
   harming: { label: "daño", effect: "quita 6 de vida al instante", harmful: true },
   strong_harming: { label: "daño II", effect: "quita 12 de vida al instante", harmful: true },
-  poison: { label: "veneno", effect: "quita vida de a poco (no mata: deja en 1)", harmful: true },
-  slowness: { label: "lentitud", effect: "camina más lento", harmful: true },
-  weakness: { label: "debilidad", effect: "sus golpes quitan menos vida", harmful: true },
+  poison: { label: "veneno", effect: "quita 1 de vida cada 1.25 s durante 45 s (no mata: deja en 1)", harmful: true },
+  slowness: { label: "lentitud", effect: "camina un 15% más lento durante 1 min 30 s", harmful: true },
+  weakness: { label: "debilidad", effect: "sus golpes quitan 4 menos durante 1 min 30 s", harmful: true },
 };
 
 /** Efectos permanentes permitidos: id -> nombre en español (el nivel va aparte). */
@@ -527,21 +501,108 @@ function armorSlotOf(id: string): KitSlot | null {
   return ARMOR_SLOT_BY_PIECE[piece] ?? null;
 }
 
+const ARMOR_PIECE_RE = /_(helmet|chestplate|leggings|boots)$/;
+/** Comida del catálogo. Las espadas, hachas, picos y armadura de oro se miran antes (también empiezan con "golden_"). */
+const FOOD_RE = /^(cooked_|golden_|enchanted_golden_)|^(bread|baked_potato|apple)$/;
+
 /** Convención de los kits fijos: arma en la 1, arco en la 2, comida en la 3, flechas en la 9. */
 function preferredHotbar(id: string): number {
   if (/_(sword|axe)$/.test(id)) return 0;
   if (id === "bow") return 1;
   if (id === "arrow") return 8;
-  if (id.endsWith("_pickaxe") || id === "shears") return 7;
+  if (id.endsWith("_pickaxe")) return 7;
   // Comida en la 3; bloques, cubos y perlas desde la 4 (lo que no quepa, en la siguiente libre).
-  const food = /^(cooked_|golden_|enchanted_golden_)|^(bread|baked_potato|apple)$/.test(id);
-  return food ? 2 : 3;
+  return FOOD_RE.test(id) ? 2 : 3;
+}
+
+/** Para qué sirve un ítem del catálogo: decide dónde puede ir y bajo qué título se lista en la web. */
+export type CustomKitGroup = "armor" | "offhand" | "weapon" | "ranged" | "food" | "potion" | "block" | "utility";
+
+export function customKitGroup(id: string): CustomKitGroup {
+  if (ARMOR_PIECE_RE.test(id)) return "armor";
+  if (id === "shield") return "offhand";
+  if (/_(sword|axe)$/.test(id)) return "weapon";
+  if (id === "bow" || id === "arrow") return "ranged";
+  if (id === "potion" || id === "splash_potion") return "potion";
+  if (id.endsWith("_pickaxe")) return "utility";
+  if (FOOD_RE.test(id)) return "food";
+  // Lo que queda y se apila de a 64 son bloques (tablones, roca); el resto, utilidades (cubos, perlas).
+  return CUSTOM_KIT_ITEMS[id]?.stack === 64 ? "block" : "utility";
+}
+
+/** Casillero de armadura de una pieza ("iron_helmet" -> "armor.head"); null si no es armadura. */
+export function customKitArmorSlot(id: string): KitSlot | null {
+  return ARMOR_PIECE_RE.test(id) ? armorSlotOf(id) : null;
 }
 
 function intIn(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === "string" ? Number(value) : value;
   if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+/** Id tal como viene (texto del LLM o del usuario) -> id del catálogo: sin espacios, en minúsculas y sin "minecraft:". */
+function cleanId(raw: unknown): string {
+  return typeof raw === "string" ? raw.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+}
+
+/**
+ * Encantamientos válidos de un ítem: solo los permitidos, sin repetidos y con el nivel
+ * dentro de su máximo. `strict` (kit armado en la web) también anota un nivel fuera de
+ * rango o un repetido; el LLM los recorta sin avisar.
+ */
+function cleanEnchantments(list: unknown, ignored: string[], strict = false): KitEnchantment[] {
+  const enchantments: KitEnchantment[] = [];
+  for (const e of Array.isArray(list) ? (list as { id?: unknown; level?: unknown }[]) : []) {
+    const eid = cleanId(e?.id);
+    const max = CUSTOM_KIT_ENCHANTMENTS[eid];
+    if (max === undefined) {
+      if (eid) ignored.push(`encantamiento ${eid}: no permitido`);
+      continue;
+    }
+    if (enchantments.some((x) => x.id === eid)) {
+      if (strict) ignored.push(`encantamiento ${ENCHANTMENT_LABELS[eid] ?? eid}: repetido`);
+      continue;
+    }
+    const level = intIn(e.level, 1, max, 1);
+    if (strict && e.level !== level) ignored.push(`encantamiento ${ENCHANTMENT_LABELS[eid] ?? eid}: el nivel va de 1 a ${max}`);
+    enchantments.push({ id: eid, level });
+  }
+  return enchantments;
+}
+
+/** Tipo de una poción si es válido; null (y se anota) si falta o no está permitido. */
+function cleanPotion(id: string, raw: unknown, ignored: string[]): string | null {
+  const kind = cleanId(raw);
+  if (CUSTOM_KIT_POTIONS[kind]) return kind;
+  ignored.push(`${id}: falta el tipo de poción o no está permitido (${kind || "sin tipo"})`);
+  return null;
+}
+
+function potionLabel(entry: CatalogEntry, potion: string): string {
+  return `${entry.label} de ${CUSTOM_KIT_POTIONS[potion]?.label ?? potion}`;
+}
+
+/** Efectos permanentes válidos, sin repetidos; `level` 1 = nivel I. `strict` como en cleanEnchantments. */
+function cleanEffects(list: unknown, ignored: string[], strict = false): KitEffect[] {
+  const effects: KitEffect[] = [];
+  for (const e of Array.isArray(list) ? (list as { id?: unknown; level?: unknown }[]) : []) {
+    const eid = cleanId(e?.id);
+    const label = CUSTOM_KIT_EFFECTS[eid];
+    if (!label) {
+      if (eid) ignored.push(`efecto ${eid}: no permitido`);
+      continue;
+    }
+    if (effects.some((x) => x.id === eid)) {
+      if (strict) ignored.push(`efecto ${label}: repetido`);
+      continue;
+    }
+    const level = intIn(e.level, 1, CUSTOM_KIT_MAX_AMPLIFIER + 1, 1);
+    if (strict && e.level !== level) ignored.push(`efecto ${label}: el nivel va de 1 a ${CUSTOM_KIT_MAX_AMPLIFIER + 1}`);
+    const amplifier = level - 1;
+    effects.push({ id: eid, amplifier, label: `${label} ${ROMAN[amplifier + 1] ?? amplifier + 1}` });
+  }
+  return effects;
 }
 
 /**
@@ -569,24 +630,15 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
 
   const sources = Array.isArray(request.items) ? request.items : [];
   for (const raw of sources) {
-    const id = typeof raw?.item === "string" ? raw.item.trim().toLowerCase().replace(/^minecraft:/, "") : "";
+    const id = cleanId(raw?.item);
     const entry = CUSTOM_KIT_ITEMS[id];
     if (!entry) {
       if (id) ignored.push(`${id}: no está en la lista de ítems permitidos`);
       continue;
     }
-    const enchantments: KitEnchantment[] = [];
-    for (const e of Array.isArray(raw.enchantments) ? raw.enchantments : []) {
-      const eid = typeof e?.id === "string" ? e.id.trim().toLowerCase().replace(/^minecraft:/, "") : "";
-      const max = CUSTOM_KIT_ENCHANTMENTS[eid];
-      if (max === undefined) {
-        if (eid) ignored.push(`encantamiento ${eid}: no permitido`);
-        continue;
-      }
-      if (!enchantments.some((x) => x.id === eid)) enchantments.push({ id: eid, level: intIn(e.level, 1, max, 1) });
-    }
+    const enchantments = cleanEnchantments(raw.enchantments, ignored);
 
-    const armorSlot = /_(helmet|chestplate|leggings|boots)$/.test(id) ? armorSlotOf(id) : null;
+    const armorSlot = customKitArmorSlot(id);
     if (armorSlot) {
       if (used.has(armorSlot)) {
         ignored.push(`${id}: ya hay otra pieza en ese lugar de la armadura`);
@@ -600,12 +652,8 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
     // Una poción sin un tipo válido no sirve de nada: se descarta.
     let potion: string | undefined;
     if (id === "potion" || id === "splash_potion") {
-      const kind = typeof raw.potion === "string" ? raw.potion.trim().toLowerCase().replace(/^minecraft:/, "") : "";
-      const info = CUSTOM_KIT_POTIONS[kind];
-      if (!info) {
-        ignored.push(`${id}: falta el tipo de poción o no está permitido (${kind || "sin tipo"})`);
-        continue;
-      }
+      const kind = cleanPotion(id, raw.potion, ignored);
+      if (!kind) continue;
       potion = kind;
     }
 
@@ -630,31 +678,115 @@ export function buildCustomKit(request: CustomKitRequest): { kit: Kit; ignored: 
       if (enchantments.length) placed.enchantments = enchantments;
       if (potion) {
         placed.potion = potion;
-        placed.label = `${entry.label} de ${CUSTOM_KIT_POTIONS[potion]?.label ?? potion}`;
+        placed.label = potionLabel(entry, potion);
       }
       items.push(placed);
       remaining -= count;
     }
   }
 
-  const effects: KitEffect[] = [];
-  for (const e of Array.isArray(request.effects) ? request.effects : []) {
-    const eid = typeof e?.id === "string" ? e.id.trim().toLowerCase().replace(/^minecraft:/, "") : "";
-    const label = CUSTOM_KIT_EFFECTS[eid];
-    if (!label) {
-      if (eid) ignored.push(`efecto ${eid}: no permitido`);
-      continue;
-    }
-    if (effects.some((x) => x.id === eid)) continue;
-    const amplifier = intIn(e.level, 1, CUSTOM_KIT_MAX_AMPLIFIER + 1, 1) - 1;
-    effects.push({ id: eid, amplifier, label: `${label} ${ROMAN[amplifier + 1] ?? amplifier + 1}` });
-  }
+  const effects = cleanEffects(request.effects, ignored);
 
   const base = KITS.custom;
   return { kit: { id: "custom", name: base.name, description: base.description, items, effects }, ignored };
 }
 
 const KIT_SLOT_RE = /^(armor\.(head|chest|legs|feet)|weapon\.offhand|hotbar\.[0-8]|inventory\.([0-9]|1[0-9]|2[0-6]))$/;
+
+/** Kit armado casillero por casillero (en la web), antes de validar. Un Kit completo también sirve. */
+export type CustomKitDraft = {
+  items: readonly {
+    slot: string;
+    item: string;
+    count: number;
+    enchantments?: readonly { id: string; level: number }[];
+    potion?: string;
+  }[];
+  effects?: readonly { id: string; amplifier: number }[];
+};
+
+const SLOT_NAMES: Record<string, string> = {
+  "armor.head": "la cabeza",
+  "armor.chest": "el pecho",
+  "armor.legs": "las piernas",
+  "armor.feet": "los pies",
+};
+
+/**
+ * Revisa un kit que armó el usuario eligiendo qué va en cada casillero: cada ítem del
+ * catálogo, con una cantidad de 1 a su stack, en un casillero que le sirve (la armadura
+ * solo en su lugar, en la mano secundaria solo el escudo) y sin dos ítems en el mismo
+ * casillero; encantamientos, tipos de poción y efectos dentro de lo permitido.
+ * Devuelve el kit limpio (lo inválido se descarta o se recorta, los nombres salen del
+ * catálogo) y la lista de problemas, vacía si estaba bien.
+ */
+export function validateCustomKit(draft: CustomKitDraft): { kit: Kit; problems: string[] } {
+  const problems: string[] = [];
+  const items: KitItem[] = [];
+  const used = new Map<string, string>();
+
+  for (const raw of Array.isArray(draft?.items) ? draft.items : []) {
+    const id = cleanId(raw?.item);
+    const entry = CUSTOM_KIT_ITEMS[id];
+    if (!entry) {
+      problems.push(`${id || "ítem sin id"}: no está en la lista de ítems permitidos`);
+      continue;
+    }
+    const slot = typeof raw.slot === "string" ? raw.slot : "";
+    if (!KIT_SLOT_RE.test(slot)) {
+      problems.push(`${entry.label}: "${slot}" no es un casillero del inventario`);
+      continue;
+    }
+    const armorSlot = customKitArmorSlot(id);
+    if (armorSlot && slot !== armorSlot) {
+      problems.push(`${entry.label}: solo puede ir en ${SLOT_NAMES[armorSlot] ?? armorSlot}`);
+      continue;
+    }
+    if (!armorSlot && slot.startsWith("armor.")) {
+      problems.push(`${entry.label}: en ${SLOT_NAMES[slot] ?? slot} solo va la pieza de armadura que le toca`);
+      continue;
+    }
+    if (slot === "weapon.offhand" && id !== "shield") {
+      problems.push(`${entry.label}: en la mano secundaria solo va el escudo`);
+      continue;
+    }
+    const taken = used.get(slot);
+    if (taken) {
+      problems.push(`${entry.label}: ese casillero ya lo ocupa ${taken}`);
+      continue;
+    }
+
+    let potion: string | undefined;
+    if (id === "potion" || id === "splash_potion") {
+      const kind = cleanPotion(id, raw.potion, problems);
+      if (!kind) continue;
+      potion = kind;
+    } else if (raw.potion !== undefined) {
+      problems.push(`${entry.label}: solo las pociones llevan tipo de poción`);
+    }
+
+    const count = intIn(raw.count, 1, entry.stack, 1);
+    if (raw.count !== count) problems.push(`${entry.label}: la cantidad va de 1 a ${entry.stack}`);
+    const placed: KitItem = { slot: slot as KitSlot, item: id, count, label: potion ? potionLabel(entry, potion) : entry.label };
+    const enchantments = cleanEnchantments(raw.enchantments, problems, true);
+    if (enchantments.length) placed.enchantments = enchantments;
+    if (potion) placed.potion = potion;
+    used.set(slot, placed.label);
+    items.push(placed);
+  }
+
+  const effects = cleanEffects(
+    (Array.isArray(draft?.effects) ? draft.effects : []).map((e) => ({
+      id: e?.id,
+      level: typeof e?.amplifier === "number" ? e.amplifier + 1 : e?.amplifier,
+    })),
+    problems,
+    true,
+  );
+
+  const base = KITS.custom;
+  return { kit: { id: "custom", name: base.name, description: base.description, items, effects }, problems };
+}
 
 /** Kit completo (el personalizado ya armado) tal como viaja en el estado y el historial. */
 export const KitSchema = z.object({
@@ -718,16 +850,21 @@ export const AgentConfigSchema = z.object({
    */
   kit: KitIdSchema.optional().catch(undefined),
   /**
-   * Solo con kit "custom": el kit que armó el orquestador al iniciar la pelea a partir del
-   * prompt. Lo escribe el servidor (en el estado y el historial), nunca la web.
+   * Solo con kit "custom": el inventario. En los prompts guardados es el que el usuario
+   * armó casillero por casillero en la web (si no armó nada, falta y el orquestador lo
+   * lee del prompt al iniciar la pelea). En el estado y el historial, el que se usó.
    */
   customKit: KitSchema.optional().catch(undefined),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
-/** Lo que manda la web al guardar. Aquí el proveedor sí se valida: uno desconocido es un 400. */
+/**
+ * Lo que manda la web al guardar. Aquí el proveedor sí se valida: uno desconocido es un 400.
+ * `customKit` solo cuenta con kit "custom" y se revisa con validateCustomKit.
+ */
 export const UpdatePromptBodySchema = AgentConfigSchema.omit({ side: true, customKit: true }).extend({
   provider: ProviderSchema.optional(),
+  customKit: KitSchema.optional(),
 });
 export type UpdatePromptBody = z.infer<typeof UpdatePromptBodySchema>;
 
@@ -1485,7 +1622,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   GET  /api/health                 -> { ok: true }
 //   GET  /api/state                  -> MatchState
 //   GET  /api/prompts                -> { red: AgentConfig, blue: AgentConfig }
-//   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
+//   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit?, customKit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
 //   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules? } -> MatchSettings
@@ -1579,6 +1716,7 @@ export const ModelsResponseSchema = z.object({
 export type ModelsResponse = z.infer<typeof ModelsResponseSchema>;
 
 export { formatTranscript } from "./transcript";
+export { FLOOR_LOGO_PALETTE, FLOOR_LOGO_RADIUS, FLOOR_LOGO_ROWS } from "./logo";
 export * from "./bench";
 export * from "./presets";
 

@@ -17,6 +17,7 @@ import {
   UpdateSettingsBodySchema,
   formatTranscript,
   parseTranscript,
+  validateCustomKit,
   type AgentConfig,
   type BenchOptions,
   type BenchReport,
@@ -152,7 +153,8 @@ function describeBodyError(issues: { path: (string | number)[]; code: string }[]
   if (first?.path[0] === "prompt") return "Falta el campo 'prompt' o no es texto";
   if (first?.path[0] === "provider") return "Proveedor inválido: usa mock o vercel";
   if (first?.path[0] === "model") return "Modelo inválido: debe ser texto de hasta 100 caracteres";
-  return "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }";
+  if (first?.path[0] === "customKit") return "Inventario inválido: no tiene la forma de un kit";
+  return "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit?, customKit? }";
 }
 
 /**
@@ -255,7 +257,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if ((body.data.provider ?? deps.defaults.provider) === "vercel" && !deps.vercelKeyConfigured) {
       return reply.code(400).send(errorBody(NO_VERCEL_KEY));
     }
-    const update = applyModelPolicy(body.data, deps.defaults.provider, deps.models);
+    // El inventario armado en la web solo vale con kit "custom"; con otro kit se ignora.
+    let request = body.data;
+    if (request.customKit) {
+      if (request.kit !== "custom") {
+        request = { ...request };
+        delete request.customKit;
+      } else {
+        const { kit, problems } = validateCustomKit(request.customKit);
+        if (problems.length > 0) return reply.code(400).send(errorBody(`Inventario inválido: ${problems[0]}`));
+        request = { ...request, customKit: kit };
+      }
+    }
+    const update = applyModelPolicy(request, deps.defaults.provider, deps.models);
     if (!update) {
       return reply.code(400).send(errorBody("Modelo no permitido: elige uno de la lista"));
     }

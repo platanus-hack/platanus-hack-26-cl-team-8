@@ -19,7 +19,6 @@
  */
 import {
   arenaFor,
-  CUSTOM_KIT_POTIONS,
   MAX_AGENT_MESSAGE_LENGTH,
   MAX_HEALTH,
   kitItemTitle,
@@ -34,33 +33,10 @@ import {
 } from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
-import {
-  ALWAYS_EDIBLE,
-  attackCooldownMs,
-  isArrow,
-  isAxe,
-  isBow,
-  isBuildBlock,
-  isFoodName,
-  isLavaBucket,
-  isPearl,
-  isPickaxe,
-  isShears,
-  isShield,
-  isSword,
-  isWaterBucket,
-} from "./items";
-import { armorGuide, itemGuideLines } from "./item-guide";
-import {
-  DIG_MAX_SECONDS,
-  kitToolNames,
-  THROW_MAX_DISTANCE,
-  LAVA_MAX_DISTANCE,
-  LAVA_MIN_DISTANCE,
-  PEARL_COOLDOWN_MS,
-  PEARL_MIN_HEALTH,
-  type ToolName,
-} from "./tools";
+import { defaultMeleeWeapon, FIST_DAMAGE, isAxe, isBuildBlock, isDrinkPotion, isLavaBucket, isPickaxe, isSword, isWaterBucket } from "./items";
+import { armorGuide, effectGuide, itemGuideLines } from "./item-guide";
+import { knowledgeSection } from "./knowledge";
+import { DIG_MAX_SECONDS, kitToolNames, type ToolName } from "./tools";
 
 export type SystemPromptInput = {
   side: Side;
@@ -91,19 +67,22 @@ export type SystemPromptInput = {
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
 
-/** Arma cuerpo a cuerpo del kit: espada y, si no hay, hacha (el mismo orden que usa el cuerpo). */
-function meleeWeapon(kit: Kit): KitItem | undefined {
-  return kit.items.find((i) => isSword(i.item)) ?? kit.items.find((i) => isAxe(i.item));
+/** Arma que saca attack con este kit si no se nombra otra (la misma regla que usa el cuerpo); null = a puño limpio. */
+function meleeWeapon(kit: Kit): string | null {
+  return defaultMeleeWeapon(kit.items.map((i) => i.item));
 }
 
-/** Una línea de la lista HERRAMIENTAS: qué hace la herramienta, en corto. */
+/**
+ * Una línea de la lista HERRAMIENTAS: qué hace la herramienta, en corto. Los argumentos
+ * van en la definición de cada herramienta y los datos de cada objeto, en TU KIT.
+ */
 function toolLine(tool: ToolName, kit: Kit): string {
   switch (tool) {
     case "approach":
       return "- approach: caminar hacia el rival.";
     case "attack": {
       const weapon = meleeWeapon(kit);
-      const how = !weapon ? "a puño limpio" : isSword(weapon.item) ? "con la espada" : "con el hacha";
+      const how = !weapon ? "a puño limpio" : isSword(weapon) ? "con la espada" : "con el hacha";
       return `- attack: cuerpo a cuerpo ${how}; solo golpea a menos de ~3 bloques, así que te acerca solo.`;
     }
     case "retreat":
@@ -115,11 +94,11 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "throw":
       return "- throw: arrojar una poción al rival o a tus propios pies.";
     case "shoot":
-      return "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.";
+      return "- shoot: disparar con el arco.";
     case "eat":
-      return "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.";
+      return "- eat: comer una comida de tu inventario.";
     case "pearl":
-      return '- pearl: lanzar una perla de ender y aparecer donde cae; con target "rival" caes junto al rival y con target "away" lejos de él.';
+      return "- pearl: lanzar una perla de ender y aparecer donde cae.";
     case "build":
       return '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.';
     case "dig":
@@ -127,108 +106,33 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "shield":
       return "- shield: levantar el escudo hacia el rival para bloquear golpes y flechas de frente.";
     case "water":
-      return '- water: vaciar un cubo de agua; con where "between" entre tú y el rival (lo empuja y lo frena), con where "feet" bajo tus pies (anula el daño de caída y apaga el fuego).';
+      return "- water: vaciar un cubo de agua entre tú y el rival o bajo tus pies.";
     case "lava":
-      return "- lava: vaciar un cubo de lava a los pies del rival para quemarlo y obligarlo a alejarse.";
+      return "- lava: vaciar un cubo de lava a los pies del rival.";
     case "wait":
       return "- wait: quedarte quieto.";
   }
 }
 
 /**
- * Lo que el modelo no puede adivinar de una herramienta con ESTE kit (qué ítem usa,
- * cuántos tiene, qué le cuesta). null si el kit no cambia nada en esa herramienta.
+ * Lo que el modelo no puede adivinar de una herramienta y no es dato de un objeto (eso va
+ * en la guía de objetos, item-guide.ts). null si no hay nada que agregar.
  */
 function mechanicsLine(tool: ToolName, kit: Kit): string | null {
-  const find = (match: (name: string) => boolean): KitItem | undefined => kit.items.find((i) => match(i.item));
   switch (tool) {
-    case "attack": {
-      const weapon = meleeWeapon(kit);
-      if (!weapon) return "- attack: no tienes arma; a puño limpio casi no haces daño.";
-      const seconds = Math.round(attackCooldownMs(weapon.item) / 100) / 10;
-      const slower = isAxe(weapon.item) ? " Es más lenta que una espada, pero cada golpe quita más vida." : "";
-      const weapons = kit.items.filter((i) => isSword(i.item) || isAxe(i.item));
-      const choice =
-        weapons.length > 1
-          ? ` Puedes elegir otra con "weapon": ${weapons.map((w) => `${w.item} (${kitItemTitle(w)}, un golpe cada ~${Math.round(attackCooldownMs(w.item) / 100) / 10} s)`).join(", ")}.`
-          : "";
-      const guard = find(isShield)
-        ? ' Con "guard": true levantas el escudo entre golpe y golpe y lo bajas justo para pegar: recibes mucho menos daño de frente, pero persigues más lento.'
-        : "";
-      return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
-    }
+    case "attack":
+      return meleeWeapon(kit) ? null : `- attack: no tienes arma; a puño limpio cada golpe quita ${FIST_DAMAGE}.`;
     case "move":
       return '- move: "strafe" te desplaza de lado respecto del otro agente; "circle" gira a su alrededor; "keep" mantiene la distancia de "distance" (de 2 a 16 bloques); "goto" va a "place" ("center", "far_corner", "behind_rival") o a "position": {x,y,z}. Sigue hasta que la reemplaces o termine su duración.';
-    case "drink":
-    case "throw": {
-      const kind = tool === "drink" ? "potion" : "splash_potion";
-      const potions = kit.items.filter((i) => i.item === kind && i.potion);
-      if (potions.length === 0) return null;
-      const counts = new Map<string, number>();
-      for (const p of potions) counts.set(p.potion as string, (counts.get(p.potion as string) ?? 0) + p.count);
-      const list = [...counts].map(([type, n]) => {
-        const info = CUSTOM_KIT_POTIONS[type];
-        return `${n} de ${info?.label ?? type} (potion "${type}": ${info?.effect ?? "efecto desconocido"})`;
-      });
-      const how =
-        tool === "drink"
-          ? "Beber tarda cerca de 2 s y te deja quieto."
-          : `Arrojar es instantáneo; al rival solo llega si está a ${THROW_MAX_DISTANCE} bloques o menos. Las de efecto bueno arrójalas a tus pies (at "self"), las dañinas al rival.`;
-      return `- ${tool}: tienes ${list.join("; ")}. ${how}`;
-    }
-    case "shoot": {
-      const bow = find(isBow);
-      const arrows = find(isArrow);
-      if (!bow || !arrows) return null;
-      const punch = bow.enchantments?.some((e) => e.id === "punch")
-        ? " Cada flecha que acierta empuja al rival hacia atrás."
-        : "";
-      return `- shoot: ${kitItemTitle(bow)} y ${kitItemTitle(arrows)}; cada disparo tarda cerca de 1.5 segundos.${punch}`;
-    }
-    case "eat": {
-      const foods = kit.items.filter((i) => isFoodName(i.item));
-      if (foods.length === 0) return null;
-      const parts = foods.map((food) => {
-        const title = kitItemTitle(food);
-        if (food.item === "golden_apple") {
-          return `${title} (se puede comer siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras la observación traiga "absorption", que es lo que te queda de ellos)`;
-        }
-        if (ALWAYS_EDIBLE.has(food.item)) return `${title} (se puede comer siempre)`;
-        return `${title} (solo se puede comer con la comida bajo 20; la vida vuelve de a poco, no al instante)`;
-      });
-      const pick = foods.length > 1 ? ' Con "food" eliges cuál (si no, la primera que se pueda comer).' : "";
-      return `- eat: ${parts.join("; ")}.${pick}`;
-    }
-    case "pearl": {
-      const pearls = find(isPearl);
-      if (!pearls) return null;
-      return `- pearl: ${kitItemTitle(pearls)}; cada una te quita unos 2.5 de vida al caer y no se puede lanzar con ${PEARL_MIN_HEALTH} de vida o menos. Con target "away", al caer empiezas a comer solo si tienes comida y tu comida está bajo 20. Entre una y otra hay ${PEARL_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "pearlCooldown" con los segundos que faltan.`;
-    }
     case "build": {
-      const blocks = find(isBuildBlock);
-      if (!blocks) return "- build: no tienes bloques ahora; puedes usar los que recojas con dig para diseñar un plano libre.";
-      const total = kit.items.filter((i) => isBuildBlock(i.item)).reduce((sum, i) => sum + i.count, 0);
-      const amount = total > blocks.count ? `${blocks.label} (${total} en total)` : kitItemTitle(blocks);
-      return `- build: ${amount}; define blocks como una lista ordenada de celdas {x,y,z,material}. La geometría la decides tú: puedes combinar materiales, construir apoyos, escaleras, plataformas, pasillos o huecos para mirar. Cada bloque nuevo consume uno del material elegido. Tu cuerpo se acerca para colocarlos respetando alcance y línea de visión. No hay formas fijas ni recarga artificial; la colocación lleva tiempo físico y continúa entre decisiones. Otra herramienta pausa el plano y build sin blocks lo retoma; blocks nuevos lo reemplazan. Consulta construction para conocer progreso y obstáculos. No puedes poner bloques donde hay agentes, fuera de buildBounds o sobre una celda ocupada. Ordena primero los apoyos; si algo falla, corrige el plano o usa dig/move con position.`;
+      // Cuántos bloques hay de cada material lo dice la guía de objetos (y después, "inventory").
+      if (!kit.items.some((i) => isBuildBlock(i.item))) return "- build: no tienes bloques ahora; puedes usar los que recojas con dig para diseñar un plano libre.";
+      return `- build: define blocks como una lista ordenada de celdas {x,y,z,material}. La geometría la decides tú: puedes combinar materiales, construir apoyos, escaleras, plataformas, pasillos o huecos para mirar. Cada bloque nuevo consume uno del material elegido. Tu cuerpo se acerca para colocarlos respetando alcance y línea de visión. No hay formas fijas ni recarga artificial; la colocación lleva tiempo físico y continúa entre decisiones. Otra herramienta pausa el plano y build sin blocks lo retoma; blocks nuevos lo reemplazan. Consulta construction para conocer progreso y obstáculos. No puedes poner bloques donde hay agentes, fuera de buildBounds o sobre una celda ocupada. Ordena primero los apoyos; si algo falla, corrige el plano o usa dig/move con position.`;
     }
     case "dig": {
-      const tools = kit.items.filter((i) => isPickaxe(i.item) || isShears(i.item) || isAxe(i.item));
+      const tools = kit.items.filter((i) => isPickaxe(i.item) || isAxe(i.item));
       const with_ = tools.length > 0 ? `Tus herramientas para romper: ${tools.map(kitItemTitle).join(", ")}.` : "No tienes herramientas: rompes a mano.";
-      return `- dig: ${with_} A mano la lana tarda ~1 s y los tablones ~3 s; la roca y la obsidiana necesitan pico (sin pico no se intentan: pasarían de ${DIG_MAX_SECONDS} s). Las tijeras rompen la lana al instante, el hacha la madera y el pico la piedra.`;
-    }
-    case "shield": {
-      if (!find(isShield)) return null;
-      return "- shield: tu Escudo va en la mano secundaria, así que no sueltas el arma. Levantado frena todo el daño que llega de frente (no por la espalda); mientras lo sostienes no atacas ni caminas. Un golpe de hacha puede bajarlo unos segundos.";
-    }
-    case "water": {
-      const buckets = kit.items.filter((i) => isWaterBucket(i.item)).length;
-      if (buckets === 0) return null;
-      return `- water: tienes ${buckets === 1 ? "1 Cubo de agua" : `${buckets} Cubos de agua`}; cada uno se vacía una sola vez. El agua corre unos 7 bloques por el piso y empuja a quien esté en ella.`;
-    }
-    case "lava": {
-      const buckets = kit.items.filter((i) => isLavaBucket(i.item)).length;
-      if (buckets === 0) return null;
-      return `- lava: tienes ${buckets === 1 ? "1 Cubo de lava" : `${buckets} Cubos de lava`}; cada uno se vacía una sola vez y solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. La lava quema a cualquiera que la pise, también a ti, y se extiende unos 3 bloques.`;
+      return `- dig: ${with_} A mano un tablón tarda 3 s y una roca 10 s (rota a mano no deja bloque para recoger); con hacha los tablones y con pico la roca, 1.5 s o menos. Lo que tardaría más de ${DIG_MAX_SECONDS} s no se intenta.`;
     }
     default:
       return null;
@@ -236,7 +140,7 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
 }
 
 /** Sección "TU KIT": lo que lleva puesto, lo que tiene, sus efectos y cómo se usa cada cosa. */
-function kitSection(kit: Kit): string[] {
+function kitSection(kit: Kit, refill = false): string[] {
   const titles = (items: readonly KitItem[]): string =>
     items.length > 0 ? items.map(kitItemTitle).join(", ") : "nada";
   const armor = kit.items.filter((i) => i.slot.startsWith("armor."));
@@ -249,14 +153,15 @@ function kitSection(kit: Kit): string[] {
       : "- Objetos: nada.",
     ...itemGuideLines(kit),
   ];
-  if (kit.effects.length > 0) {
-    const effects = kit.effects.map((e) =>
-      e.id === "speed" ? `${e.label} (caminas más rápido que un luchador sin ese efecto)` : e.label,
-    );
-    lines.push(`- Efectos permanentes: ${effects.join(", ")}.`);
-  }
+  if (kit.effects.length > 0) lines.push(`- Efectos permanentes: ${kit.effects.map(effectGuide).join(", ")}.`);
+  // Un cubo vaciado o una poción bebida dejan el envase en el inventario: el agente lo va a ver ahí.
+  const empties = [
+    ...(kit.items.some((i) => isWaterBucket(i.item) || isLavaBucket(i.item)) ? ['el cubo vacío ("bucket")'] : []),
+    ...(kit.items.some((i) => isDrinkPotion(i.item)) ? ['la botella vacía ("glass_bottle")'] : []),
+  ];
+  const left = empties.length > 1 ? ` Después de usarlos quedan ${empties.join(" y ")}, que no sirven para nada.` : empties.length === 1 ? ` Después de usarlo queda ${empties[0]}, que no sirve para nada.` : "";
   lines.push(
-    '- Lo que gastas (flechas, comida, perlas, bloques, cubos) no se repone; el campo "inventory" de la observación dice cuánto te queda.',
+    `- Lo que gastas no se repone${refill ? " hasta la ronda siguiente" : ""}; el campo "inventory" de la observación dice cuánto te queda de cada cosa.${left}`,
   );
   for (const tool of kitToolNames(kit)) {
     const line = mechanicsLine(tool, kit);
@@ -384,7 +289,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina en el acto."] : []),
     'Todas aceptan un argumento opcional "reason": texto libre con lo que piensas al decidir; el público lo ve en vivo.',
     "",
-    ...kitSection(input.kit),
+    ...kitSection(input.kit, input.rounds?.refillKit === true),
     "",
     ...capabilitiesSection(input.kit),
     "",
@@ -392,7 +297,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- world conserva todos los bloques dentro del radio horizontal indicado en coverage, en toda la altura de bounds. format=cuboids-v1: palette identifica los materiales y sus propiedades; cada regions=[x0,y0,z0,x1,y1,z1,indiceMaterial,modificable] representa una caja homogénea de celdas, con ambos extremos incluidos. modificable=1 permite dig; 0 protege la arena. Una región puede contener un solo bloque. unknown usa cajas [x0,y0,z0,x1,y1,z1] no recibidas. Solo el resto DENTRO del radio Y bounds es aire conocido. Fuera de cobertura no has observado el terreno: nunca lo supongas vacío. Coordenadas absolutas: X/Z horizontales, Y altura.',
     '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. El historial contiene resúmenes de estado y resultados: usa el mapa e inventario de la observación ACTUAL para actuar.',
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
-    '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
+    '- resources describe tu inventario ACTUAL por casilla: cantidad, durabilityLeft (los usos que le quedan a lo que se desgasta) y uses, con la herramienta y los argumentos que lo usan; un uso con blocked no se puede hacer ahora, y dice por qué. equipment es lo que llevas puesto (armadura y mano secundaria); effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
+    "",
+    ...knowledgeSection(input.kit),
     "",
     ...commsSection(input.comms),
     "",

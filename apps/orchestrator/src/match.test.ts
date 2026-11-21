@@ -8,6 +8,7 @@ import {
   COUNTDOWN_SECONDS,
   MAX_AGENT_MESSAGE_LENGTH,
   LEGACY_SERIES_ROUNDS,
+  validateCustomKit,
   type AgentConfig,
   type CommsMode,
   type MatchMode,
@@ -869,6 +870,40 @@ describe("MatchManager: kit personalizado", () => {
     await startRunning(t);
     expect(t.fighters.red?.kit.id).toBe("classic");
     expect(t.llmCalls).toHaveLength(0);
+  });
+
+  const built = validateCustomKit({
+    items: [
+      { slot: "armor.chest", item: "netherite_chestplate", count: 1 },
+      { slot: "hotbar.0", item: "diamond_axe", count: 1 },
+      { slot: "hotbar.4", item: "ender_pearl", count: 6 },
+    ],
+    effects: [{ id: "speed", amplifier: 0 }],
+  }).kit;
+
+  for (const provider of ["vercel", "mock"] as const) {
+    it(`con el inventario armado en la web pelea con eso, sin pedirle nada al LLM (${provider})`, async () => {
+      const t = setup({ provider, complete: defineKit, prompts: { red: { kit: "custom", prompt: "arco y 64 flechas", customKit: built } } });
+      await startRunning(t);
+      const kit = t.fighters.red?.kit;
+      expect(kit?.items.map((i) => [i.slot, i.item, i.count])).toEqual([
+        ["armor.chest", "netherite_chestplate", 1],
+        ["hotbar.0", "diamond_axe", 1],
+        ["hotbar.4", "ender_pearl", 6],
+      ]);
+      expect(kit?.effects.map((e) => e.id)).toEqual(["speed"]);
+      expect(t.manager.getState().configs.red.customKit).toEqual(built);
+      expect(t.llmCalls.some((req) => req.tools[0]?.name === "define_kit")).toBe(false);
+      expect(t.logs.some((l) => l.level === "warn" && l.text.includes("kit personalizado"))).toBe(false);
+      expect(t.rconCommands).toContain("item replace entity AgenteRojo hotbar.4 with minecraft:ender_pearl 6");
+    });
+  }
+
+  it("con kit custom e inventario vacío sigue leyendo el prompt con el LLM", async () => {
+    const t = setup({ complete: defineKit, prompts: { red: { kit: "custom", prompt: "espada y manzanas", customKit: KITS.custom } } });
+    await startRunning(t);
+    expect(t.llmCalls.some((req) => req.tools[0]?.name === "define_kit")).toBe(true);
+    expect(t.fighters.red?.kit.items.map((i) => i.item)).toEqual(["diamond_sword", "golden_apple"]);
   });
 });
 

@@ -23,7 +23,6 @@
  */
 import { API_ROUTES, SIDES, type Side } from "@phack/protocol";
 import { MOCK, apiUrl } from "./config";
-import { el } from "./dom";
 import { pixelIcon } from "./icons";
 import { isSoundOn, onSoundChange, runningContext, soundContext } from "./sound";
 
@@ -53,7 +52,6 @@ type Line = {
   shownAt: number;
   bubble: HTMLElement | null;
   /** La marca "hablando" puesta en el globo mientras suena. */
-  mark: HTMLElement | null;
 };
 
 type Voice = {
@@ -247,19 +245,20 @@ function play(source: Source, side: Side, done: () => void): () => void {
   };
 }
 
+/** La marca del globo (thoughts.ts): el globo de siempre, o el medidor de voz mientras suena. */
+function setBubbleMark(line: Line, name: "talk" | "speaking"): void {
+  line.bubble?.querySelector(".thought__kind")?.replaceChildren(pixelIcon({ name }));
+}
+
 function markSpeaking(line: Line): void {
   if (!line.bubble) return;
   line.bubble.classList.add("thought--speaking");
-  const mark = el("span", "thought__voice");
-  mark.append(pixelIcon({ name: "speaking" }));
-  line.bubble.append(mark);
-  line.mark = mark;
+  setBubbleMark(line, "speaking");
 }
 
 function unmarkSpeaking(line: Line): void {
   line.bubble?.classList.remove("thought--speaking");
-  line.mark?.remove();
-  line.mark = null;
+  setBubbleMark(line, "talk");
 }
 
 function late(line: Line): boolean {
@@ -314,7 +313,7 @@ export function playSpeech(side: Side, speechId: string, bubble?: HTMLElement | 
   }
   // Si llegó con el sonido apagado no se pidió: se pide ahora.
   clipFor(speechId);
-  const line: Line = { side, speechId, shownAt: performance.now(), bubble: bubble ?? null, mark: null };
+  const line: Line = { side, speechId, shownAt: performance.now(), bubble: bubble ?? null };
   const voice = voices[side];
   if (voice.busy) {
     // Solo espera la más nueva.
