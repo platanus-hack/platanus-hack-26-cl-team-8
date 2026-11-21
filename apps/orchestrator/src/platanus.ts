@@ -16,6 +16,13 @@ export const WALL_BLOCK = "minecraft:barrier";
 export const SPAWN_MARKS = { red: "minecraft:red_concrete", blue: "minecraft:blue_concrete" } as const;
 /** Bloques de aire que se limpian por encima de la pared (restos de flechas, bloques puestos). */
 export const CLEAR_ABOVE_WALLS = 6;
+/**
+ * Franja alrededor de la plataforma que se deja en aire al construir. El mundo se guarda
+ * entre peleas: si antes hubo una arena más grande (la de 57×45, con su piso negro y sus
+ * muros de vidrio), sus restos quedarían a la vista alrededor de la plataforma y el límite
+ * parecería estar allá lejos. Con esto, lo único que se ve es la plataforma.
+ */
+export const SURROUND_MARGIN = 16;
 /** Restos de combate que se eliminan antes de cada pelea. */
 const DEBRIS = ["item", "arrow", "spectral_arrow", "experience_orb"];
 
@@ -56,6 +63,35 @@ export function floorBounds(arena: BuiltArena): { minX: number; maxX: number; mi
   };
 }
 
+/** Caja de la plataforma más la franja que se limpia alrededor (ver SURROUND_MARGIN). */
+export function surroundBounds(arena: BuiltArena): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  const { minX, maxX, minZ, maxZ } = floorBounds(arena);
+  return {
+    minX: minX - SURROUND_MARGIN,
+    maxX: maxX + SURROUND_MARGIN,
+    minZ: minZ - SURROUND_MARGIN,
+    maxZ: maxZ + SURROUND_MARGIN,
+  };
+}
+
+/**
+ * Deja en aire la franja que rodea la plataforma, desde el nivel del piso hasta donde
+ * llega la limpieza de adentro: cuatro tiras (norte, sur, oeste y este), cada una muy por
+ * debajo del límite de bloques de un /fill.
+ */
+export function surroundClearCommands(arena: BuiltArena): string[] {
+  const { minX, maxX, minZ, maxZ } = floorBounds(arena);
+  const out = surroundBounds(arena);
+  const y = arena.center.y;
+  const top = y + arena.wallHeight + CLEAR_ABOVE_WALLS;
+  return [
+    `fill ${out.minX} ${y} ${out.minZ} ${out.maxX} ${top} ${minZ - 1} minecraft:air`,
+    `fill ${out.minX} ${y} ${maxZ + 1} ${out.maxX} ${top} ${out.maxZ} minecraft:air`,
+    `fill ${out.minX} ${y} ${minZ} ${minX - 1} ${top} ${maxZ} minecraft:air`,
+    `fill ${maxX + 1} ${y} ${minZ} ${out.maxX} ${top} ${maxZ} minecraft:air`,
+  ];
+}
+
 /**
  * Comandos para (re)construir la arena desde cero. El primero es el /fill de limpieza: si
  * el chunk todavía no cargó, ese es el que hay que reintentar.
@@ -75,6 +111,8 @@ export function platanusBuildCommands(arena: BuiltArena): string[] {
   return [
     // Interior, pared y techo viejos: todo a aire (también lo que alguien haya puesto encima).
     `fill ${minX} ${y + 1} ${minZ} ${maxX} ${wallTop + CLEAR_ABOVE_WALLS} ${maxZ} minecraft:air`,
+    // Alrededor no queda nada de una arena anterior más grande.
+    ...surroundClearCommands(arena),
     `fill ${minX} ${y} ${minZ} ${maxX} ${y} ${maxZ} ${FLOOR_BLOCK}`,
     ...logo,
     `fill ${red.x} ${y} ${red.z} ${red.x} ${y} ${red.z} ${SPAWN_MARKS.red}`,
