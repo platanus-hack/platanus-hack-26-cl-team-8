@@ -259,6 +259,22 @@ export class MatchStore {
     return structuredClone(this.recent);
   }
 
+  /**
+   * Deja el historial vacío para empezar a medir de cero. No borra nada: el archivo se
+   * mueve a DATA_DIR/archive/matches-<fecha>.jsonl (se puede recuperar a mano). Devuelve
+   * el nombre del archivo guardado, o null si no había historial.
+   */
+  async archive(now: Date = new Date()): Promise<string | null> {
+    const raw = await readIfExists(this.file);
+    this.recent = [];
+    if (raw === null || raw.trim() === "") return null;
+    const dir = join(this.dataDir, "archive");
+    await mkdir(dir, { recursive: true });
+    const name = `matches-${now.toISOString().replace(/[:.]/g, "-")}.jsonl`;
+    await rename(this.file, join(dir, name));
+    return name;
+  }
+
   /** Todo el historial guardado (para el tablero de benchmarks), más recientes primero. */
   async all(): Promise<MatchRecord[]> {
     const raw = await readIfExists(this.file);

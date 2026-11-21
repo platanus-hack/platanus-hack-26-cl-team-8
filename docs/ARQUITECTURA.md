@@ -189,6 +189,24 @@ Los datos guardados con los proveedores que ya no existen se convierten al leerl
 - `infra/minecraft/config/bukkit.yml` desactiva el `connection-throttle` de Bukkit: los dos agentes se conectan desde la misma IP (el contenedor del orquestador) casi al mismo tiempo, y con el valor por defecto el segundo sería rechazado.
 - Video: la cámara publica H.264 por RTMP en `live/arena`; MediaMTX lo sirve como LL-HLS con segmentos de 1 s y partes de 200 ms (`infra/mediamtx/mediamtx.yml`). `hlsAlwaysRemux: true` hace que el playlist exista apenas publica la cámara. Caddy marca los `.m3u8` con `Cache-Control: no-store`.
 
+## Benchmarks
+
+El tablero vive en `/bench` y se arma con `GET /api/bench?scenario=&min=`. La lógica pura está en `packages/protocol/src/bench.ts` y lo que se mide en cada ronda, en `apps/orchestrator/src/metrics.ts`.
+
+- **Ajustes** (`PUT /api/settings`):
+  - `rounds`: 1 es una pelea suelta; 2 o más, una serie;
+  - `scenario`: duelo, dilema del prisionero, persuasión o inyección;
+  - `horizon`, `seriesWin` y `refillKit`: horizonte, cómo se gana la serie y si se repone el kit;
+  - `judge` y `rules`: juez LLM y reglas de cada lado.
+- **Pre-ajustes** (`BENCH_PRESETS` en `packages/protocol/src/presets.ts`): configuraciones guardadas. Cada una fija escenario, rondas, comunicación, reglas, prompts y kits, y deja el modelo de cada lado como estaba (el espejo copia el de Rojo en Azul).
+  - `POST /api/presets/:id` la carga; con `{ start: true }` además la ejecuta.
+  - Con el id `todos` se corre la batería completa: `PresetRunner` empieza cada partida cuando termina la anterior y se corta si una partida se detiene o falla.
+  - `POST /api/presets/stop` corta la batería.
+- **Borrar el historial**: `DELETE /api/history` con `{ "confirm": "BORRAR" }`.
+  - Mueve `matches.jsonl` a `DATA_DIR/archive/`, así que se puede recuperar, y deja el tablero en cero.
+  - No se puede con una pelea o una batería en curso.
+  - La web pide dos confirmaciones antes de llamarlo.
+
 ## Cómo agregar un escenario nuevo
 
 Hoy existe un solo escenario: duelo 1 contra 1 en una arena circular cerrada. Un "escenario" es la combinación de **mapa + kit + reglas de victoria + herramientas disponibles para los agentes**. Para agregar otro (por ejemplo: arena con lava, duelo solo con arcos, o 2 contra 2), estos son los puntos de extensión, en el orden recomendado:

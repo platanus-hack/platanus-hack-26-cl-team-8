@@ -8,6 +8,7 @@ import { applyWorldRules, buildArena } from "./arena";
 import { FlagStore, withFlagOutcomes } from "./flags";
 import { Hub } from "./hub";
 import { MatchManager } from "./match";
+import { PresetRunner } from "./presets";
 import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
@@ -110,7 +111,11 @@ async function main(): Promise<void> {
   });
   hub.start();
 
+  const presets = new PresetRunner({ prompts, settings, match, hub, log });
+
   const app = await buildServer({
+    presets,
+    archiveHistory: () => history.archive(),
     hub,
     match,
     prompts,
@@ -143,6 +148,7 @@ async function main(): Promise<void> {
     force.unref();
     void (async () => {
       try {
+        presets.shutdown();
         await match.shutdown();
         // Lo último de la pelea (su "end") queda escrito antes de salir.
         await transcripts.flush();

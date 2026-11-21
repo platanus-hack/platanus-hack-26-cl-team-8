@@ -1537,6 +1537,12 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   GET  /api/bench                  -> BenchReport       (tablero de benchmarks, calculado con todo el historial)
 //   POST /api/matches/:id/judge      -> Judgement         (el LLM juez califica esa pelea; 400 con el LLM simulado)
+//   GET  /api/presets                -> PresetsResponse   (pre-ajustes de benchmark y cómo va la batería)
+//   POST /api/presets/:id            body { start? } -> PresetsResponse (carga el pre-ajuste; con start, lo
+//                                       ejecuta; con id "todos" corre la batería entera. 409 con una pelea en curso)
+//   POST /api/presets/stop           -> PresetsResponse   (corta la batería; la pelea en curso sigue)
+//   DELETE /api/history              body { confirm: "BORRAR" } -> { archived } (archiva el historial de peleas;
+//                                       409 con una pelea o una batería en curso)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
 
 export const API_ROUTES = {
@@ -1556,6 +1562,10 @@ export const API_ROUTES = {
   models: "/api/models",
   bench: "/api/bench",
   judge: (matchId: string) => `/api/matches/${matchId}/judge`,
+  presets: "/api/presets",
+  preset: (id: string) => `/api/presets/${id}`,
+  presetsStop: "/api/presets/stop",
+  history: "/api/history",
   ws: "/api/ws",
 } as const;
 
@@ -1604,6 +1614,7 @@ export type ModelsResponse = z.infer<typeof ModelsResponseSchema>;
 export { formatTranscript } from "./transcript";
 export { FLOOR_LOGO_PALETTE, FLOOR_LOGO_RADIUS, FLOOR_LOGO_ROWS } from "./logo";
 export * from "./bench";
+export * from "./presets";
 
 export function parseArenaEvent(raw: string): ArenaEvent | null {
   try {

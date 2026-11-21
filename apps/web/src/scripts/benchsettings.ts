@@ -16,6 +16,7 @@ import {
 } from "@phack/protocol";
 import { describeError, fetchPrompts, savePrompt, saveSettings } from "./api";
 import { byId, setText } from "./dom";
+import { initPresetPicker } from "./presetpicker";
 import { showToast } from "./toast";
 
 /**
@@ -122,6 +123,8 @@ async function mirrorRedToBlue(button: HTMLButtonElement): Promise<void> {
     const { red } = await fetchPrompts();
     const body: UpdatePromptBody = { prompt: red.prompt };
     if (red.kit) body.kit = red.kit;
+    // Un inventario armado a mano (kit "Personalizado") también se copia.
+    if (red.kit === "custom" && red.customKit) body.customKit = red.customKit;
     if (red.provider) body.provider = red.provider;
     if (red.model) body.model = red.model;
     await savePrompt("blue", body);
@@ -134,6 +137,7 @@ async function mirrorRedToBlue(button: HTMLButtonElement): Promise<void> {
 }
 
 export function initBenchSettings(): void {
+  initPresetPicker("main");
   els = {
     scenario: byId<HTMLSelectElement>("scenario"),
     scenarioDescription: byId("scenario-description"),

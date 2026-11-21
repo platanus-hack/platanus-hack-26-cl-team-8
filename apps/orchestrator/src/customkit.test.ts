@@ -127,7 +127,7 @@ describe("validateCustomKit", () => {
           { slot: "hotbar.1", item: "bow", count: 1 },
           { slot: "hotbar.8", item: "arrow", count: 64 },
           { slot: "hotbar.4", item: "splash_potion", count: 1, potion: "harming" },
-          { slot: "hotbar.5", item: "red_wool", count: 32 },
+          { slot: "hotbar.5", item: "cobblestone", count: 32 },
         ],
         [{ id: "speed", amplifier: 1 }],
       ),
@@ -136,7 +136,7 @@ describe("validateCustomKit", () => {
     expect(kit.id).toBe("custom");
     expect(kit.items).toHaveLength(8);
     expect(kit.items.find((i) => i.slot === "hotbar.4")?.label).toBe("Poción arrojadiza de daño");
-    expect(kit.items.find((i) => i.slot === "hotbar.5")?.label).toBe("Lana roja");
+    expect(kit.items.find((i) => i.slot === "hotbar.5")?.label).toBe(CUSTOM_KIT_ITEMS.cobblestone?.label);
     expect(kit.effects).toEqual([{ id: "speed", amplifier: 1, label: "Velocidad II" }]);
     expect(KitSchema.safeParse(kit).success).toBe(true);
   });

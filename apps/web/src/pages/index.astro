@@ -326,6 +326,21 @@ const stats = [
           <section class="settings__group" id="bench-settings" aria-labelledby="settings-bench-title">
             <h3 class="settings__title" id="settings-bench-title">Experimento</h3>
 
+            <!-- Pre-ajustes: configuraciones guardadas de benchmark (scripts/presetpicker.ts). -->
+            <div class="setting setting--wide" id="main-preset-field">
+              <div class="setting__text">
+                <label class="setting__label" for="main-preset">Pre-ajuste</label>
+                <p class="setting__help" id="main-preset-description"></p>
+                <p class="setting__help setting__help--strong" id="main-preset-status" role="status" hidden></p>
+              </div>
+              <div class="setting__control setting__control--row">
+                <select id="main-preset" class="select" aria-describedby="main-preset-description"></select>
+                <button type="button" class="btn btn--small" id="main-preset-load">Cargar</button>
+                <button type="button" class="btn btn--small preset__run" id="main-preset-run">Ejecutar</button>
+                <button type="button" class="btn btn--small" id="main-preset-stop" hidden>Detener batería</button>
+              </div>
+            </div>
+
             <div class="setting">
               <div class="setting__text">
                 <label class="setting__label" for="scenario">Escenario</label>

@@ -378,3 +378,23 @@ describe("parseSettings: rondas", () => {
     expect(parseSettings("{}")).toMatchObject({ rounds: 1, mode: "single" });
   });
 });
+
+describe("MatchStore.archive", () => {
+  it("mueve el historial a archive/ y empieza vacío; sin historial no hace nada", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "phack-store-"));
+    try {
+      const store = new MatchStore(dir, () => {});
+      expect(await store.archive()).toBeNull();
+      await store.append(record("a"));
+      const name = await store.archive(new Date("2026-11-21T12:00:00Z"));
+      expect(name).toBe("matches-2026-11-21T12-00-00-000Z.jsonl");
+      expect(store.latest()).toEqual([]);
+      expect(await store.all()).toEqual([]);
+      expect(await readFile(join(dir, "archive", name as string), "utf8")).toContain('"id":"a"');
+      await store.append(record("b"));
+      expect((await store.all()).map((r) => r.id)).toEqual(["b"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
