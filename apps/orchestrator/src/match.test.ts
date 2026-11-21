@@ -55,6 +55,10 @@ type SetupOptions = {
   /** Modelos de la lista de permitidos; si falta, todos pasan. */
   allowed?: string[];
   comms?: CommsMode;
+  /** Límite de tiempo: encendido si falta. */
+  timer?: boolean;
+  /** Tope de seguridad de las peleas sin límite de tiempo, en segundos. */
+  maxSeconds?: number;
   /** Respuesta del servidor de Minecraft a cada comando; si falta, la de un servidor sano. */
   rconReply?: (command: string) => string;
   /** Si falta, las pausas no esperan. */
@@ -77,6 +81,7 @@ function setup(opts: SetupOptions = {}) {
     MC_PORT: 25565,
     MC_VERSION: "1.20.4",
     MATCH_DURATION_SECONDS: 600,
+    MATCH_MAX_SECONDS: opts.maxSeconds ?? 1800,
     AGENT_TICK_MS: 1500,
   };
   const events: Partial<Record<Side, FighterEvents>> = {};
@@ -139,7 +144,7 @@ function setup(opts: SetupOptions = {}) {
     },
     hub,
     prompts: { get: prompts },
-    settings: { get: () => ({ comms: opts.comms ?? "none" }) },
+    settings: { get: () => ({ comms: opts.comms ?? "none", timer: opts.timer ?? true }) },
     history,
     transcripts: {
       append: (matchId, entry) => {
@@ -379,6 +384,42 @@ describe("MatchManager: corazones amarillos al acabarse el tiempo", () => {
   });
 });
 
+describe("MatchManager: límite de tiempo apagado", () => {
+  it("con el límite encendido la pelea tiene hora de término y el agente sabe cuánto dura", async () => {
+    const t = setup();
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state.endsAt).toBe((state.startedAt ?? 0) + 600_000);
+    expect(t.fighters.red?.durationSeconds).toBe(600);
+    await t.manager.stop();
+  });
+
+  it("apagado, la pelea no tiene hora de término ni se acaba por tiempo", async () => {
+    const t = setup({ timer: false });
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state.phase).toBe("running");
+    expect(state.endsAt).toBeNull();
+    expect(state.settings.timer).toBe(false);
+    expect(t.fighters.red?.durationSeconds).toBeNull();
+    expect(t.fighters.blue?.durationSeconds).toBeNull();
+    const start = t.entries.map((e) => e.entry).find((entry) => entry.type === "start");
+    expect(start).toMatchObject({ durationSeconds: null });
+    // Sigue terminando con una muerte.
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("finished"));
+    expect(t.manager.getState().result).toMatchObject({ winner: "red", reason: "kill" });
+  });
+
+  it("apagado, el tope de seguridad del servidor la detiene sin ganador", async () => {
+    const t = setup({ timer: false, maxSeconds: 60 });
+    await startRunning(t);
+    await t.manager["onCeiling"](t.manager["ctx"]!);
+    expect(t.manager.getState().result).toMatchObject({ winner: null, reason: "stopped" });
+    expect(t.logs.some((l) => l.level === "warn" && l.text.includes("tope del servidor"))).toBe(true);
+  });
+});
+
 describe("MatchManager: lista de modelos permitidos", () => {
   it("un modelo guardado que no está permitido se cambia por el del servidor, con aviso", async () => {
     const t = setup({
@@ -500,7 +541,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     t.ev("blue").onMessage("hola");
     expect(t.heard.blue).toEqual([{ kind: "thought", text: "voy por la espalda" }]);
     expect(t.heard.red).toEqual([]);
-    expect(t.manager.getState().settings).toEqual({ comms: "thoughts" });
+    expect(t.manager.getState().settings).toEqual({ comms: "thoughts", timer: true });
   });
 
   it('en "chat" los mensajes llegan al rival y al público; los razonamientos no', async () => {
@@ -514,7 +555,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     );
     t.ev("red").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
-    expect(t.stored()?.settings).toEqual({ comms: "chat" });
+    expect(t.stored()?.settings).toEqual({ comms: "chat", timer: true });
   });
 
   it("pasa la duración de la pelea al agente", async () => {
@@ -620,7 +661,7 @@ describe("MatchManager: transcripción", () => {
     if (start?.type === "start") {
       expect(start.matchId).toBe(id);
       expect(start.configs.red).toMatchObject({ provider: "vercel", kit: "classic" });
-      expect(start.settings).toEqual({ comms: "chat" });
+      expect(start.settings).toEqual({ comms: "chat", timer: true });
       expect(start.systemPrompts.red).toMatch(/^sistema red:/);
       expect(start.systemPrompts.blue).toMatch(/^sistema blue:/);
       expect(start.tickMs).toBe(1500);

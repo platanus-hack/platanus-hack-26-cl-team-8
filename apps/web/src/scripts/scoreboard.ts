@@ -159,14 +159,29 @@ function renderAgent(side: SideElements, agent: AgentStatus, model: string | und
   side.card.classList.toggle("is-dead", state === "dead");
 }
 
-/** Tiempo que le queda a la pelea en el instante que se ve en pantalla (`now`, hora de la transmisión). */
+/** El reloj está contando hacia arriba (pelea sin límite de tiempo). */
+let clockOpen = false;
+
+/** Tiempo que le queda a la pelea (o que lleva, si no tiene límite) en el instante que se ve en pantalla (`now`, hora de la transmisión). */
 function renderClock(now: number = videoServerNow()): void {
   if (!els) return;
   const state = current;
+  const open = state !== null && state.phase === "running" && state.endsAt === null;
+  if (open !== clockOpen) {
+    clockOpen = open;
+    els.clock.setAttribute("aria-label", open ? "Tiempo transcurrido" : "Tiempo restante");
+    els.clock.dataset.tip = open
+      ? "Esta pelea no tiene límite de tiempo: el reloj muestra lo que lleva. Sigue hasta que uno caiga o alguien la detenga."
+      : "Tiempo que le queda a la pelea. Si se acaba, gana quien tenga más vida.";
+  }
   if (state && state.phase === "running" && state.endsAt !== null) {
     const remaining = Math.max(0, state.endsAt - now);
     setText(els.clock, formatClock(remaining));
     els.clock.classList.toggle("is-urgent", remaining <= URGENT_MS);
+  } else if (state && open && state.startedAt !== null) {
+    // Sin límite de tiempo no hay cuenta regresiva: el reloj cuenta hacia arriba.
+    setText(els.clock, formatClock(Math.max(0, now - state.startedAt)));
+    els.clock.classList.remove("is-urgent");
   } else {
     setText(els.clock, "--:--");
     els.clock.classList.remove("is-urgent");

@@ -8,6 +8,7 @@ import {
   type ServerDefaults,
   type Side,
   type UpdatePromptBody,
+  type MatchSettings,
 } from "@phack/protocol";
 import { Hub } from "./hub";
 import { applyModelPolicy, buildServer, type ModelPolicy } from "./server";
@@ -69,11 +70,15 @@ afterEach(async () => {
 
 type ServerOptions = { provider?: Provider; vercelKeyConfigured?: boolean };
 
+/** Ajustes guardados por PUT /api/settings; cada servidor de prueba parte de los de por defecto. */
+let settings: MatchSettings = { comms: "none", timer: true };
+
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
+  settings = { comms: "none", timer: true };
   app = await buildServer({
     hub: new Hub(),
     match: {
@@ -93,9 +98,37 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
+    settings: {
+      get: () => ({ ...settings }),
+      update: async (change) => {
+        settings = { ...settings, ...change };
+        return { ...settings };
+      },
+    },
   });
   return app;
 }
+
+describe("PUT /api/settings", () => {
+  const put = (s: FastifyInstance, payload: Record<string, unknown>) =>
+    s.inject({ method: "PUT", url: "/api/settings", payload });
+
+  it("cambia solo lo que viene: apagar el límite de tiempo no toca la comunicación", async () => {
+    const s = await server();
+    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true });
+    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false });
+    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true });
+  });
+
+  it("rechaza un cuerpo vacío o con valores que no son", async () => {
+    const s = await server();
+    for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }]) {
+      const res = await put(s, payload);
+      expect(res.statusCode).toBe(400);
+    }
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true });
+  });
+});
 
 describe("PUT /api/prompts/:side sin clave de Vercel", () => {
   const put = (s: FastifyInstance, payload: Record<string, unknown>) =>

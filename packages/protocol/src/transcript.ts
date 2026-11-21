@@ -87,7 +87,7 @@ export function formatTranscript(entries: TranscriptEntry[]): string {
       case "start":
         out.push(`Pelea ${entry.matchId}`);
         out.push(
-          `${new Date(entry.at).toISOString()}. Dura hasta ${entry.durationSeconds} s; cada agente decide cada ${short(entry.tickMs / 1000)} s.`,
+          `${new Date(entry.at).toISOString()}. ${entry.durationSeconds === null ? "Sin límite de tiempo" : `Dura hasta ${entry.durationSeconds} s`}; cada agente decide cada ${short(entry.tickMs / 1000)} s.`,
         );
         out.push("");
         for (const side of ["red", "blue"] as const) {

@@ -56,6 +56,7 @@ export type MatchEnv = Pick<
   | "MC_PORT"
   | "MC_VERSION"
   | "MATCH_DURATION_SECONDS"
+  | "MATCH_MAX_SECONDS"
   | "AGENT_TICK_MS"
 >;
 
@@ -282,7 +283,7 @@ export class MatchManager {
           prompt: config.prompt,
           kit,
           comms: this.state.settings.comms,
-          durationSeconds: env.MATCH_DURATION_SECONDS,
+          durationSeconds: this.durationSeconds(),
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,
@@ -339,12 +340,13 @@ export class MatchManager {
       }
 
       const now = Date.now();
-      const durationMs = env.MATCH_DURATION_SECONDS * 1000;
+      // Con el límite de tiempo apagado no hay hora de término.
+      const seconds = this.durationSeconds();
       // La cuenta regresiva se borra en la misma actualización que cambia la fase.
       this.state.phase = "running";
       this.state.countdownEndsAt = null;
       this.state.startedAt = now;
-      this.state.endsAt = now + durationMs;
+      this.state.endsAt = seconds === null ? null : now + seconds * 1000;
       this.record(ctx, { type: "phase", at: now, phase: "running" });
       for (const side of SIDES) {
         // Recién curados y teletransportados: se parte con vida completa.
@@ -353,9 +355,15 @@ export class MatchManager {
         this.state.agents[side].damageDealt = 0;
         ctx.absorption[side] = 0;
       }
-      ctx.timer = setTimeout(() => {
-        void this.onTimeout(ctx);
-      }, durationMs);
+      if (seconds !== null) {
+        ctx.timer = setTimeout(() => {
+          void this.onTimeout(ctx);
+        }, seconds * 1000);
+      } else if (env.MATCH_MAX_SECONDS > 0) {
+        ctx.timer = setTimeout(() => {
+          void this.onCeiling(ctx);
+        }, env.MATCH_MAX_SECONDS * 1000);
+      }
       for (const side of SIDES) ctx.fighters[side]?.start();
       this.deps.hub.flushState();
       this.log(ctx, "info", "¡Comienza la pelea!");
@@ -427,7 +435,7 @@ export class MatchManager {
       settings: structuredClone(this.state.settings),
       systemPrompts: { red: systemPrompt("red"), blue: systemPrompt("blue") },
       tickMs: env.AGENT_TICK_MS,
-      durationSeconds: env.MATCH_DURATION_SECONDS,
+      durationSeconds: this.durationSeconds(),
     });
     for (const entry of ctx.beforeStart.splice(0)) this.deps.transcripts.append(ctx.id, entry);
   }
@@ -640,6 +648,19 @@ export class MatchManager {
     a.health = 0;
     this.emit(ctx, { type: "death", at: Date.now(), side });
     void this.finish(ctx, resultForDeath(side));
+  }
+
+  /** Lo que dura esta pelea, en segundos; null si se pelea sin límite de tiempo. */
+  private durationSeconds(): number | null {
+    return this.state.settings.timer ? this.deps.env.MATCH_DURATION_SECONDS : null;
+  }
+
+  /** Pelea sin límite de tiempo que llegó al tope de seguridad del servidor: se detiene, sin ganador. */
+  private async onCeiling(ctx: MatchContext): Promise<void> {
+    if (ctx.ended) return;
+    const minutes = Math.round(this.deps.env.MATCH_MAX_SECONDS / 60);
+    this.log(ctx, "warn", `La pelea no tenía límite de tiempo y llegó al tope del servidor (${minutes} min): se detiene`);
+    await this.finish(ctx, { winner: null, reason: "stopped" });
   }
 
   private async onTimeout(ctx: MatchContext): Promise<void> {

@@ -2,7 +2,7 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
-import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST } from "@phack/protocol";
+import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST, TIMER_LABELS } from "@phack/protocol";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
@@ -191,15 +191,28 @@ const stats = [
           </p>
         </header>
 
-        <!-- Ajuste de la pelea (no de un lado): lo maneja scripts/settings.ts. -->
-        <div class="comms" id="comms-field">
-          <label class="field">
-            <span class="field__label">Comunicación entre agentes</span>
-            <select id="comms" aria-describedby="comms-description">
-              {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
-            </select>
-          </label>
-          <p class="comms__description" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+        <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
+        <div class="match-settings" id="settings-field">
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Comunicación entre agentes</span>
+              <select id="comms" aria-describedby="comms-description">
+                {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
+              </select>
+            </label>
+            <p class="comms__description" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Límite de tiempo</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="timer" aria-describedby="timer-description" checked />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="timer-state">Encendido</span>
+              </span>
+            </label>
+            <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
+          </div>
         </div>
 
         <div class="editors">

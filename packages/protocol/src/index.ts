@@ -669,11 +669,25 @@ export const MAX_AGENT_MESSAGE_LENGTH = 500;
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
   comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
+  /**
+   * Límite de tiempo. Encendido, la pelea dura lo que diga el servidor y, si nadie cae,
+   * gana quien tenga más vida. Apagado, no se acaba sola: sigue hasta que uno caiga o
+   * alguien la detenga (el servidor tiene un tope de seguridad aparte, MATCH_MAX_SECONDS).
+   */
+  timer: z.boolean().catch(true).default(true),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
-export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS };
+export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true };
 
-export const UpdateSettingsBodySchema = z.object({ comms: CommsModeSchema });
+export const TIMER_LABELS = {
+  on: "Si se acaba el tiempo y nadie ha caído, gana quien tenga más vida.",
+  off: "La pelea no se acaba sola: sigue hasta que uno caiga o alguien la detenga.",
+} as const;
+
+/** Se manda solo lo que cambia; al menos uno de los dos. */
+export const UpdateSettingsBodySchema = z
+  .object({ comms: CommsModeSchema.optional(), timer: z.boolean().optional() })
+  .refine((body) => body.comms !== undefined || body.timer !== undefined);
 export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
 
 // ---------- Estado de la pelea ----------
@@ -826,7 +840,8 @@ export const TranscriptEntrySchema = z.discriminatedUnion("type", [
     /** Prompt de sistema completo de cada agente (el mundo + las instrucciones del usuario). */
     systemPrompts: z.object({ red: z.string(), blue: z.string() }),
     tickMs: z.number(),
-    durationSeconds: z.number(),
+    /** null = sin límite de tiempo. */
+    durationSeconds: z.number().nullable(),
   }),
   z.object({ type: z.literal("phase"), at: z.number(), phase: MatchPhaseSchema }),
   /**
@@ -904,7 +919,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer? } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
