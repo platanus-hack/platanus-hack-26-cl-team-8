@@ -26,6 +26,7 @@ import {
 } from "./items";
 import { keepDistanceTarget, orbitTarget, placeTarget, strafeTarget, type MovePlace } from "./tactics";
 import { buildObservation, type Observation } from "./observation";
+import { ActionPlan, isOpenEnded, QUEUE_STEP_DEFAULT_MS, replyResults, stepSeconds, type PlanStep } from "./plan";
 import { buildSystemPrompt } from "./prompt";
 import {
   BOX_BLOCKS,
@@ -318,6 +319,15 @@ class MineflayerFighter implements Fighter {
   private bodyTimer: ReturnType<typeof setInterval> | null = null;
   private mode: Mode = "wait";
   private modeUntil: number | null = null;
+  /** Lo que queda por hacer de la última respuesta que llamó herramientas (ver plan.ts). */
+  private readonly plan = new ActionPlan();
+  /**
+   * true cuando el cuerpo terminó solo la acción en curso (enterWait). El próximo tick del
+   * cuerpo empieza entonces la siguiente acción en cola. Se hace en el tick y no dentro de
+   * enterWait porque enterWait también corre dentro de cadenas asíncronas (muro, cubo...)
+   * que todavía tienen que soltar sus marcas.
+   */
+  private modeFinished = false;
   private lastResult = "todavía no has hecho nada";
   private goalKind: GoalKind = "none";
   private followTarget: Entity | null = null;
@@ -480,6 +490,7 @@ class MineflayerFighter implements Fighter {
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
+    this.plan.clear();
     this.stopPromise = this.doStop().catch(() => undefined);
     return this.stopPromise;
   }
@@ -564,6 +575,8 @@ class MineflayerFighter implements Fighter {
       this.ended = true;
       this.connected = false;
       this.alive = false;
+      this.plan.clear();
+      this.modeFinished = false;
       this.using = false;
       this.goalKind = "none";
       this.followTarget = null;
@@ -875,38 +888,63 @@ class MineflayerFighter implements Fighter {
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
     const text = typeof response.text === "string" ? response.text : "";
     const normalized: LlmResponse = { text, toolCalls };
-    const first = toolCalls[0];
 
-    let firstResult = "";
-    if (first) {
-      const args: Record<string, unknown> =
-        first.args && typeof first.args === "object" ? first.args : {};
-      const parsed = parseToolArgs(args);
-      const thought = parsed.reason ?? text.trim();
-      if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
-      const said = this.opts.comms === "chat" ? parsed.say : null;
-      if (said) {
-        this.inbox.said(said);
-        this.safe(() => this.opts.events.onMessage(said));
-      }
-
-      try {
-        firstResult = this.executeTool(first.name, parsed);
-      } catch (err) {
-        firstResult = `error al ejecutar la acción: ${errorText(err)}`;
-        this.log("warn", `Error ejecutando "${first.name}": ${errorText(err)}`);
-      }
-      const result = firstResult;
-      this.safe(() => this.opts.events.onAction(first.name, args, result));
-    } else {
-      if (text.trim().length > 0) this.safe(() => this.opts.events.onThought(text.trim()));
-      this.log("warn", "El LLM respondió sin elegir una herramienta; se mantiene la acción actual");
+    // Sin herramientas no cambia nada: el cuerpo sigue con su acción y con su cola.
+    let ran: string[] = [];
+    if (toolCalls.length > 0) {
+      this.plan.replace(toolCalls);
+      this.modeFinished = false;
+      ran = this.runQueued(text.trim()).results;
+    } else if (text.trim().length > 0) {
+      this.safe(() => this.opts.events.onThought(text.trim()));
     }
 
-    const turn = buildTurnMessages(observationJson, normalized, (index) =>
-      index === 0 ? firstResult : "ignorada: solo se ejecuta una acción por turno",
-    );
+    const results = replyResults(toolCalls.length, ran);
+    const turn = buildTurnMessages(observationJson, normalized, (index) => results[index] ?? "");
     this.history = trimHistory([...this.history, ...turn], MAX_HISTORY_MESSAGES);
+  }
+
+  /**
+   * Empieza la siguiente acción de la cola. Una que no se puede usar ahora no la traba:
+   * queda su resultado y se sigue con la próxima. Devuelve los resultados en orden.
+   * `thought` es lo que se muestra como pensamiento si la primera no trae "reason".
+   * `started` dice si alguna empezó.
+   */
+  private runQueued(thought: string): { results: string[]; started: boolean } {
+    const results: string[] = [];
+    let fallback = thought;
+    for (let step = this.plan.next(); step; step = this.plan.next()) {
+      const { result, started } = this.runStep(step, fallback);
+      fallback = "";
+      results.push(result);
+      if (started) return { results, started };
+    }
+    return { results, started: false };
+  }
+
+  /** Ejecuta una llamada: su "reason" y su "say" salen al empezar ella, no antes. */
+  private runStep(step: PlanStep, fallbackThought: string): { result: string; started: boolean } {
+    const parsed = parseToolArgs(step.args);
+    const thought = parsed.reason ?? fallbackThought;
+    if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
+    const said = this.opts.comms === "chat" ? parsed.say : null;
+    if (said) {
+      this.inbox.said(said);
+      this.safe(() => this.opts.events.onMessage(said));
+    }
+
+    const args: ParsedToolArgs = { ...parsed, seconds: stepSeconds(step.name, parsed.seconds, this.plan.hasNext()) };
+    let result: string;
+    try {
+      result = this.executeTool(step.name, args);
+    } catch (err) {
+      result = `error al ejecutar la acción: ${errorText(err)}`;
+      this.log("warn", `Error ejecutando "${step.name}": ${errorText(err)}`);
+    }
+    // Si el cuerpo quedó en esa acción, empezó (o continúa); si no, no se pudo usar.
+    const started = this.mode === step.name;
+    this.safe(() => this.opts.events.onAction(step.name, step.args, result));
+    return { result, started };
   }
 
   private observe(bot: Bot, heard: InboxSnapshot): Observation {
@@ -927,6 +965,7 @@ class MineflayerFighter implements Fighter {
       arena: { center: ARENA.center, radius: ARENA.radius },
       currentAction: this.mode,
       lastActionResult: this.lastResult,
+      queuedActions: this.plan.pending(),
       pearlReadyAt: this.pearlReadyAt,
       buildReadyAt: this.buildReadyAt,
       terrain: this.terrain(bot, opponent),
@@ -954,8 +993,8 @@ class MineflayerFighter implements Fighter {
     if (name === this.mode) {
       // Repetir la herramienta continúa la acción en curso (no reinicia cargas ni comidas),
       // pero sí toma los argumentos nuevos que cambian cómo se hace.
+      if (isOpenEnded(name)) this.modeUntil = args.seconds !== null ? now + args.seconds * 1000 : null;
       if (name === "attack") {
-        this.modeUntil = args.seconds !== null ? now + args.seconds * 1000 : null;
         this.attackWeapon = args.weapon;
         this.attackGuard = args.guard;
       }
@@ -1114,7 +1153,7 @@ class MineflayerFighter implements Fighter {
 
     this.leaveMode(bot);
     this.mode = name;
-    this.modeUntil = name === "attack" && args.seconds !== null ? now + args.seconds * 1000 : null;
+    this.modeUntil = isOpenEnded(name) && args.seconds !== null ? now + args.seconds * 1000 : null;
     this.hits = 0;
     this.shots = 0;
     this.nextShotAt = 0;
@@ -1349,6 +1388,8 @@ class MineflayerFighter implements Fighter {
     this.mode = "wait";
     this.modeUntil = null;
     this.lastResult = result;
+    // El cuerpo terminó la acción por su cuenta: en el próximo tick sigue la cola.
+    this.modeFinished = true;
     return result;
   }
 
@@ -1379,6 +1420,9 @@ class MineflayerFighter implements Fighter {
   private resetBody(result: string): void {
     this.mode = "wait";
     this.modeUntil = null;
+    // Morir o reaparecer corta lo que quedaba en cola.
+    this.plan.clear();
+    this.modeFinished = false;
     this.using = false;
     // La cadena del muro se corta sola al cambiar la generación; la marca se suelta ya,
     // para que "build" no quede bloqueada si esa cadena nunca llega a terminar.
@@ -1414,6 +1458,15 @@ class MineflayerFighter implements Fighter {
 
     if (this.modeUntil !== null && now >= this.modeUntil) {
       this.enterWait(bot, `terminó el tiempo de "${this.mode}" (${this.lastResult})`);
+    }
+    if (this.modeFinished) {
+      this.modeFinished = false;
+      if (this.mode === "wait" && this.plan.hasNext()) {
+        const { results, started } = this.runQueued("");
+        // Si ninguna pudo empezar, la observación cuenta por qué no se pudo la última.
+        const last = results[results.length - 1];
+        if (!started && last !== undefined) this.lastResult = last;
+      }
     }
 
     switch (this.mode) {
@@ -1877,9 +1930,10 @@ class MineflayerFighter implements Fighter {
       this.lastResult = `${this.pearlNote}empezando a comer`;
       return;
     }
-    // Cayó junto al rival: pasa directo a atacar, sin esperar la próxima decisión.
+    // Cayó junto al rival: pasa directo a atacar, sin esperar la próxima decisión. Si hay
+    // otra acción en cola, ataca lo mismo que cualquier acción que no termina sola antes de otra.
     this.mode = "attack";
-    this.modeUntil = null;
+    this.modeUntil = this.plan.hasNext() ? Date.now() + QUEUE_STEP_DEFAULT_MS : null;
     this.hits = 0;
     this.pearlNote = `te teletransportaste junto al rival (${where}); `;
     this.lastResult = `${this.pearlNote}atacando`;

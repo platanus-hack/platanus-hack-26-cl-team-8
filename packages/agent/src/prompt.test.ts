@@ -42,6 +42,34 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("La partida dura 120 segundos");
   });
 
+  it("dice que una respuesta puede llamar una herramienta, varias o ninguna", () => {
+    const prompt = promptFor(KITS.classic);
+    expect(prompt).not.toContain("exactamente a UNA herramienta");
+    expect(prompt).not.toContain("solo se ejecuta la primera");
+    expect(prompt).not.toContain("una frase corta en español");
+    const lines = prompt.split("\n");
+    const first = lines.indexOf("- Cada respuesta tuya puede llamar una herramienta, varias o ninguna.");
+    expect(first).toBeGreaterThan(-1);
+    expect(lines.slice(first + 1, first + 4)).toEqual([
+      '- Si llamas varias, se ejecutan en orden: cada una empieza cuando termina la anterior. Las que no terminan solas (approach, attack, retreat, move, shoot, wait) duran lo que diga su argumento "seconds"; sin él, 2 segundos si hay otra acción después, o hasta que la reemplaces si es la última.',
+      "- Si no llamas ninguna, no cambia nada: tu cuerpo sigue con lo que estaba haciendo y con lo que quedaba en cola.",
+      '- Una respuesta que llama herramientas reemplaza lo que quedaba en cola de la anterior. Lo que queda en cola viene en el campo "queuedActions" de tu observación.',
+    ]);
+    expect(prompt).toContain("- Repetir la misma herramienta continúa la acción en curso");
+  });
+
+  it("la lista de las que no terminan solas sale del kit", () => {
+    const { kit } = buildCustomKit({ items: [{ item: "iron_sword" }, { item: "shield" }] });
+    expect(promptFor(kit)).toContain("Las que no terminan solas (approach, attack, retreat, move, shield, wait)");
+  });
+
+  it("no le dice cuándo llamar varias, ninguna ni en qué idioma pensar", () => {
+    const prompt = promptFor(KITS.classic);
+    const world = prompt.slice(0, prompt.indexOf("TUS INSTRUCCIONES"));
+    expect(world).not.toMatch(/en español/i);
+    expect(world).not.toMatch(/conviene|te recomendamos|deberías/i);
+  });
+
   it("no le fija un objetivo: ni ganar, ni matar, ni sobrevivir", () => {
     const prompt = promptFor(KITS.classic);
     const world = prompt.slice(0, prompt.indexOf("TUS INSTRUCCIONES"));
@@ -126,7 +154,7 @@ describe("buildSystemPrompt", () => {
       "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.",
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.',
       "- wait: quedarte quieto.",
-      'Todas aceptan un argumento opcional "reason": una frase corta en español explicando tu decisión (el público la ve en vivo).',
+      'Todas aceptan un argumento opcional "reason" con lo que piensas al decidir: texto libre, el público lo ve en vivo.',
     ]);
   });
 

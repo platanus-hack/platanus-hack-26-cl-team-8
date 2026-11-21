@@ -20,6 +20,8 @@ export type ObservationInput = {
   arena: { center: Vec3Like; radius: number };
   currentAction: string;
   lastActionResult: string;
+  /** Herramientas que siguen en cola después de la acción actual, en orden. */
+  queuedActions?: string[];
   /** Epoch ms desde el que se puede lanzar otra perla (ausente o pasado = ya se puede). */
   pearlReadyAt?: number;
   /** Epoch ms desde el que se puede construir otro muro (ausente o pasado = ya se puede). */
@@ -53,6 +55,11 @@ export type Observation = {
   inventory: Record<string, number>;
   currentAction: string;
   lastActionResult: string;
+  /**
+   * Herramientas que esperan su turno después de la acción actual, en orden (las que
+   * quedan de una respuesta que llamó varias). Solo aparece si queda alguna.
+   */
+  queuedActions?: string[];
   /** Segundos que faltan para poder lanzar otra perla. Solo aparece mientras hay recarga. */
   pearlCooldown?: number;
   /** Segundos que faltan para poder construir otro muro. Solo aparece mientras hay recarga. */
@@ -124,6 +131,7 @@ export function buildObservation(input: ObservationInput): Observation {
   };
   // Las recargas solo se mandan mientras corren: la observación se repite varias veces en
   // el historial y conviene que sea corta.
+  if (input.queuedActions && input.queuedActions.length > 0) observation.queuedActions = [...input.queuedActions];
   if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
   if (buildCooldown > 0) observation.buildCooldown = buildCooldown;
   // Lo del terreno, igual: solo cuando dice algo (casi siempre estás en el piso, sin bloques cerca).

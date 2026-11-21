@@ -103,8 +103,6 @@ type MatchContext = {
   finalized: boolean;
   fighters: Partial<Record<Side, Fighter>>;
   timer: ReturnType<typeof setTimeout> | null;
-  /** Para contar una decisión por respuesta del LLM (pensamiento + sus acciones). */
-  thoughtPending: Record<Side, boolean>;
   /** Suma y cantidad de las latencias del LLM, para el promedio (avgDecisionMs). */
   latency: Record<Side, { totalMs: number; count: number }>;
   /** true cuando ya se escribió la entrada "start" de la transcripción. */
@@ -212,7 +210,6 @@ export class MatchManager {
       finalized: false,
       fighters: {},
       timer: null,
-      thoughtPending: { red: false, blue: false },
       latency: { red: { totalMs: 0, count: 0 }, blue: { totalMs: 0, count: 0 } },
       startRecorded: false,
       beforeStart: [],
@@ -575,8 +572,6 @@ export class MatchManager {
         if (!live()) return;
         const a = agent();
         a.lastThought = truncate(text, 500);
-        a.decisions += 1;
-        ctx.thoughtPending[side] = true;
         this.emit(ctx, { type: "thought", at: Date.now(), side, text: truncate(text, 2000) });
         hub.markStateDirty();
         // Modo "leen la mente": el rival recibe este razonamiento en su próxima observación.
@@ -594,9 +589,6 @@ export class MatchManager {
       onAction: (tool, args, result) => {
         if (!live()) return;
         const a = agent();
-        // Una acción sin pensamiento previo también es una decisión del LLM.
-        if (ctx.thoughtPending[side]) ctx.thoughtPending[side] = false;
-        else a.decisions += 1;
         a.lastAction = formatAction(tool, args, result);
         this.emit(ctx, { type: "action", at: Date.now(), side, tool, args, result: truncate(result, 1000) });
         hub.markStateDirty();
@@ -607,6 +599,8 @@ export class MatchManager {
         // Igual que el daño: solo cuenta lo que el LLM gastó durante el duelo.
         if (!fighting()) return;
         const a = agent();
+        // Una decisión por respuesta del LLM, traiga una acción, varias o ninguna.
+        a.decisions += 1;
         if (d.usage) {
           a.tokensIn += count(d.usage.inputTokens);
           a.tokensOut += count(d.usage.outputTokens);

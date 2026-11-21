@@ -25,6 +25,10 @@ export type FighterEvents = {
   onStatus(s: { connected: boolean; alive: boolean; health: number; absorption: number; food: number; heldItem: string }): void;
   onDecision(d: DecisionReport): void;
   onThought(text: string): void;
+  /**
+   * Una llamada a herramienta empezó (o no se pudo usar) y este es su resultado. Con varias
+   * llamadas en una respuesta, las que esperaban en cola avisan cuando les toca.
+   */
   onAction(tool: string, args: Record<string, unknown>, result: string): void;
   /**
    * `bySelf`: el daño se lo hizo el propio agente al caer de su perla de ender; no es

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@phack/llm";
 import { buildTurnMessages, trimHistory } from "./history";
+import { ActionPlan, QUEUED_RESULT, replyResults } from "./plan";
 import { parseToolArgs } from "./tools";
 
 function turn(n: number): ChatMessage[] {
@@ -53,6 +54,26 @@ describe("buildTurnMessages", () => {
     expect(messages[3]).toEqual({ role: "tool", toolCallId: "b", name: "eat", content: "ignorada" });
   });
 
+  it("con varias acciones, la primera lleva su resultado y las demás que están en cola", () => {
+    const response = {
+      text: "",
+      toolCalls: [
+        { id: "a", name: "eat", args: {} },
+        { id: "b", name: "attack", args: {} },
+        { id: "c", name: "wait", args: {} },
+      ],
+    };
+    const results = replyResults(response.toolCalls.length, ["empezando a comer"]);
+    const messages = buildTurnMessages("{}", response, (index) => results[index] ?? "");
+    expect(messages.slice(2).map((m) => m.content)).toEqual(["empezando a comer", QUEUED_RESULT, QUEUED_RESULT]);
+    expect(messages.some((m) => m.content.includes("ignorada"))).toBe(false);
+    // Lo mismo que queda en cola para el cuerpo.
+    const plan = new ActionPlan();
+    plan.replace(response.toolCalls);
+    plan.next();
+    expect(plan.pending()).toEqual(["attack", "wait"]);
+  });
+
   it("sin tool calls deja solo el texto del asistente", () => {
     const messages = buildTurnMessages("{}", { text: "hola", toolCalls: [] }, () => "x");
     expect(messages).toEqual([
@@ -72,6 +93,15 @@ describe("parseToolArgs", () => {
     expect(parseToolArgs({ reason: 5, seconds: -1 })).toMatchObject({ reason: null, seconds: null, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
     expect(parseToolArgs(undefined)).toMatchObject({ reason: null, seconds: null, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
     expect(parseToolArgs({ seconds: 999 })).toMatchObject({ reason: null, seconds: 60, target: "rival", shape: "wall", where: "between", digTarget: "between", say: null });
+  });
+
+  it("toma seconds en cualquier herramienta que no termina sola, con el mismo tope", () => {
+    for (const tool of ["approach", "retreat", "move", "shoot", "shield", "wait"]) {
+      expect(parseToolArgs({ tool, seconds: 4 }).seconds).toBe(4);
+      expect(parseToolArgs({ tool, seconds: "1.5" }).seconds).toBe(1.5);
+      expect(parseToolArgs({ tool, seconds: 0 }).seconds).toBeNull();
+      expect(parseToolArgs({ tool, seconds: 120 }).seconds).toBe(60);
+    }
   });
 
   it("extrae el destino de la perla", () => {

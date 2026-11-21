@@ -230,6 +230,41 @@ describe("MatchManager: estadísticas del LLM y mano", () => {
     expect(t.manager.getState().agents.red).toMatchObject({ tokensIn: 150, avgDecisionMs: 867 });
     expect(t.stored()?.final.red).toMatchObject({ tokensIn: 150, tokensOut: 15, avgDecisionMs: 867 });
   });
+
+  it("cuenta una decisión por respuesta del LLM, traiga varias acciones o ninguna", async () => {
+    const t = setup();
+    await startRunning(t);
+    const red = (): number => t.manager.getState().agents.red.decisions;
+
+    // Una respuesta con dos acciones: la segunda empieza después, desde la cola.
+    t.ev("red").onDecision(
+      decision(500, undefined, {
+        text: "",
+        toolCalls: [
+          { name: "eat", args: { reason: "como primero" } },
+          { name: "attack", args: { reason: "y después le pego" } },
+        ],
+      }),
+    );
+    t.ev("red").onThought("como primero");
+    t.ev("red").onAction("eat", { reason: "como primero" }, "empezando a comer");
+    expect(red()).toBe(1);
+    t.ev("red").onThought("y después le pego");
+    t.ev("red").onAction("attack", { reason: "y después le pego" }, "atacando cuerpo a cuerpo con la espada");
+    expect(red()).toBe(1);
+
+    // Una respuesta sin herramientas también es una decisión.
+    t.ev("red").onDecision(decision(400, undefined, { text: "sigo comiendo", toolCalls: [] }));
+    t.ev("red").onThought("sigo comiendo");
+    expect(red()).toBe(2);
+    expect(t.manager.getState().agents.blue.decisions).toBe(0);
+
+    // Lo que llega después del final no cuenta.
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    t.ev("red").onDecision(decision(300));
+    expect(red()).toBe(2);
+  });
 });
 
 describe("MatchManager: por qué ganó", () => {

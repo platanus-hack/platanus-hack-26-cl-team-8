@@ -164,16 +164,27 @@ export function kitToolNames(kit: Kit): ToolName[] {
 
 const reasonProperty = {
   type: "string",
-  description: "Explicación breve (una frase) de por qué eliges esta acción.",
+  description: "Opcional: lo que piensas al elegir esta acción. Texto libre; el público lo ve.",
 };
 
-function simpleTool(name: ToolName, description: string): ToolDef {
+/**
+ * Argumento "seconds" de las herramientas que no terminan solas (ver OPEN_ENDED_TOOLS en
+ * plan.ts). `what` dice qué se hace durante esos segundos.
+ */
+function secondsProperty(what: string): { type: string; description: string } {
+  return {
+    type: "number",
+    description: `Opcional: cuántos segundos ${what}; al cumplirse empieza tu siguiente acción en cola o, si no hay, quedas en espera.`,
+  };
+}
+
+function simpleTool(name: ToolName, description: string, seconds?: string): ToolDef {
   return {
     name,
     description,
     parameters: {
       type: "object",
-      properties: { reason: reasonProperty },
+      properties: seconds ? { reason: reasonProperty, seconds: secondsProperty(seconds) } : { reason: reasonProperty },
       required: [],
     },
   };
@@ -181,19 +192,16 @@ function simpleTool(name: ToolName, description: string): ToolDef {
 
 /** Todas las herramientas que existen. Al LLM solo se le ofrecen las de su kit (kitToolDefs). */
 export const TOOL_DEFS: ToolDef[] = [
-  simpleTool("approach", "Camina hacia el rival hasta quedar a unos 2 bloques, sin atacar."),
+  simpleTool("approach", "Camina hacia el rival hasta quedar a unos 2 bloques, sin atacar.", "caminar hacia el rival"),
   {
     name: "attack",
     description:
-      "Ataque cuerpo a cuerpo: equipa tu arma (espada o hacha), persigue al rival y lo golpea respetando la recarga del arma. Sigue atacando hasta tu próxima decisión (o por 'seconds' segundos).",
+      "Ataque cuerpo a cuerpo: equipa tu arma (espada o hacha), persigue al rival y lo golpea respetando la recarga del arma. Sigue atacando hasta que elijas otra acción (o por 'seconds' segundos).",
     parameters: {
       type: "object",
       properties: {
         reason: reasonProperty,
-        seconds: {
-          type: "number",
-          description: "Opcional: cuántos segundos atacar antes de quedar en espera.",
-        },
+        seconds: secondsProperty("atacar"),
         weapon: {
           type: "string",
           description:
@@ -208,15 +216,16 @@ export const TOOL_DEFS: ToolDef[] = [
       required: [],
     },
   },
-  simpleTool("retreat", "Aléjate del rival manteniéndote dentro de la arena."),
+  simpleTool("retreat", "Aléjate del rival manteniéndote dentro de la arena.", "alejarte del rival"),
   {
     name: "move",
     description:
-      "Movimiento táctico (sigue hasta tu próxima decisión). style='strafe': esquivas de lado a lado frente al rival, difícil de acertar con flechas. style='circle': lo rodeas a la distancia en que estás (entre 3 y 8 bloques). style='keep': mantienes la distancia 'distance' (te acercas o te alejas, y esquivas de lado cuando ya estás). style='goto': vas a un lugar: place='center' (centro), 'far_corner' (la esquina más lejos del rival) o 'behind_rival' (al otro lado del rival).",
+      "Movimiento táctico (sigue hasta que elijas otra acción). style='strafe': esquivas de lado a lado frente al rival, difícil de acertar con flechas. style='circle': lo rodeas a la distancia en que estás (entre 3 y 8 bloques). style='keep': mantienes la distancia 'distance' (te acercas o te alejas, y esquivas de lado cuando ya estás). style='goto': vas a un lugar: place='center' (centro), 'far_corner' (la esquina más lejos del rival) o 'behind_rival' (al otro lado del rival).",
     parameters: {
       type: "object",
       properties: {
         reason: reasonProperty,
+        seconds: secondsProperty("moverte así"),
         style: { type: "string", enum: [...MOVE_STYLES], description: "Cómo moverte." },
         distance: {
           type: "number",
@@ -229,7 +238,8 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   simpleTool(
     "shoot",
-    "Dispara con el arco: te detienes, apuntas, cargas cerca de 1 segundo y sueltas. Sigue disparando hasta tu próxima decisión. Necesita arco y flechas.",
+    "Dispara con el arco: te detienes, apuntas, cargas cerca de 1 segundo y sueltas. Sigue disparando hasta que elijas otra acción. Necesita arco y flechas.",
+    "disparar",
   ),
   {
     name: "eat",
@@ -323,7 +333,8 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   simpleTool(
     "shield",
-    "Levanta el escudo (en tu mano secundaria) mirando al rival: bloquea por completo los golpes y las flechas que vienen de frente. Mientras lo tienes levantado te quedas quieto y no atacas. Sigue levantado hasta tu próxima decisión. Un hacha puede desactivarlo unos segundos.",
+    "Levanta el escudo (en tu mano secundaria) mirando al rival: bloquea por completo los golpes y las flechas que vienen de frente. Mientras lo tienes levantado te quedas quieto y no atacas. Sigue levantado hasta que elijas otra acción. Un hacha puede desactivarlo unos segundos.",
+    "tener el escudo levantado",
   ),
   {
     name: "water",
@@ -346,7 +357,7 @@ export const TOOL_DEFS: ToolDef[] = [
     "lava",
     `Vacía un cubo de lava a los pies del rival: se prende fuego, recibe daño mientras esté en ella o quemándose y tiene que alejarse. Solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. La lava se extiende unos 3 bloques alrededor: no camines hacia ella. Cada cubo sirve una sola vez.`,
   ),
-  simpleTool("wait", "Quédate quieto mirando al rival."),
+  simpleTool("wait", "Quédate quieto mirando al rival.", "quedarte quieto"),
 ];
 
 const sayProperty = {
