@@ -17,6 +17,7 @@ import {
   isWaterBucket,
 } from "./items";
 import { armorGuide, itemGuideLines } from "./item-guide";
+import { knowledgeSection } from "./knowledge";
 import {
   DIG_MAX_SECONDS,
   kitToolNames,
@@ -343,6 +344,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
     '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
     '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Resume solo la decisión en reason, si aporta algo nuevo.',
+    "",
+    ...knowledgeSection(input.kit),
     "",
     ...commsSection(input.comms),
     "",
