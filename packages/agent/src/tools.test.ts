@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_TOOL_NAMES } from "@phack/llm";
-import { KIT_LIST, KITS, type Kit } from "@phack/protocol";
+import { KIT_LIST, KITS, MAX_AGENT_MESSAGE_LENGTH, type Kit } from "@phack/protocol";
 import {
   eatRefusal,
   isToolName,
@@ -174,11 +174,19 @@ describe("modo chat: argumento say", () => {
     expect((TOOL_DEFS[0]?.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("say");
   });
 
-  it("parseToolArgs limpia y recorta lo que dice", () => {
+  it("parseToolArgs entrega lo que dice tal cual, con solo limpieza técnica", () => {
     expect(parseToolArgs({}).say).toBeNull();
     expect(parseToolArgs({ say: "   " }).say).toBeNull();
     expect(parseToolArgs({ say: 42 }).say).toBeNull();
-    expect(parseToolArgs({ say: "  hagamos\n una   tregua " }).say).toBe("hagamos una tregua");
-    expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(240);
+    // Los saltos de línea y los espacios internos son del agente: no se tocan.
+    expect(parseToolArgs({ say: "  hagamos\n una   tregua " }).say).toBe("hagamos\n una   tregua");
+    expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(MAX_AGENT_MESSAGE_LENGTH);
+  });
+
+  it("la descripción de say solo cuenta la mecánica", () => {
+    const [def] = kitToolDefs(KITS.classic, "chat");
+    const say = (def?.parameters as { properties: Record<string, { description: string }> }).properties["say"];
+    expect(say?.description).toContain(String(MAX_AGENT_MESSAGE_LENGTH));
+    expect(say?.description).toContain("tal cual");
   });
 });

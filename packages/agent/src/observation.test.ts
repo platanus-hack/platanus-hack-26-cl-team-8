@@ -130,4 +130,17 @@ describe("buildObservation: lo que llega del rival", () => {
     thoughts.length = 0;
     expect(obs.rivalThoughts).toEqual(["voy a flanquear"]);
   });
+
+  it("solo trae conversation cuando hay mensajes, en el orden en que llegaron", () => {
+    expect(buildObservation({ ...base, conversation: [] })).not.toHaveProperty("conversation");
+    expect(buildObservation(base)).not.toHaveProperty("conversation");
+    const conversation = [
+      { from: "rival" as const, text: "¿tregua?" },
+      { from: "tú" as const, text: "no" },
+    ];
+    const obs = buildObservation({ ...base, conversation });
+    expect(obs.conversation).toEqual(conversation);
+    conversation.length = 0;
+    expect(obs.conversation).toHaveLength(2);
+  });
 });

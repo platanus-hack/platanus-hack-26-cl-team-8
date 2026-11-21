@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FighterEvents, FighterOptions } from "@phack/agent";
-import type { LlmClient, LlmRequest, LlmResponse } from "@phack/llm";
+import type { DecisionReport, FighterEvents, FighterOptions, Observation } from "@phack/agent";
+import type { LlmClient, LlmRequest, LlmResponse, TokenUsage } from "@phack/llm";
 import {
   COUNTDOWN_SECONDS,
+  MAX_AGENT_MESSAGE_LENGTH,
   type AgentConfig,
   type CommsMode,
   type MatchRecord,
   type MatchState,
   type Provider,
   type Side,
+  type TranscriptEntry,
 } from "@phack/protocol";
 import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
 import { defaultPrompts } from "./store";
@@ -20,6 +22,28 @@ import type { SleepFn } from "./util";
  */
 
 type Complete = (req: LlmRequest) => Promise<LlmResponse>;
+
+/** Observación mínima con la forma de la que arma el agente. */
+const OBS: Observation = {
+  secondsElapsed: 3,
+  health: 20,
+  food: 20,
+  position: { x: 0, y: 65, z: 0 },
+  opponentVisible: true,
+  distance: 4,
+  opponentHealth: 18,
+  opponentRelative: { x: 4, y: 0, z: 0 },
+  distanceToWall: 10,
+  heldItem: "iron_sword",
+  inventory: { iron_sword: 1 },
+  currentAction: "wait",
+  lastActionResult: "esperando",
+};
+
+/** Lo que informa el agente tras una respuesta del LLM. */
+function decision(ms: number, usage?: TokenUsage, response: DecisionReport["response"] = { text: "", toolCalls: [] }): DecisionReport {
+  return { ms, ...(usage ? { usage } : {}), observation: OBS, response };
+}
 
 type SetupOptions = {
   provider?: Provider;
@@ -63,6 +87,8 @@ function setup(opts: SetupOptions = {}) {
   const logs: { level: string; text: string }[] = [];
   let stored: MatchRecord | null = null;
   const llmCalls: LlmRequest[] = [];
+  /** Lo que se escribió en las transcripciones, en orden. */
+  const entries: { matchId: string; entry: TranscriptEntry }[] = [];
   const complete: Complete = opts.complete ?? (async () => ({ text: '  "Rojo ganó\n atacando sin parar."  ', toolCalls: [] }));
 
   const history = {
@@ -115,11 +141,20 @@ function setup(opts: SetupOptions = {}) {
     prompts: { get: prompts },
     settings: { get: () => ({ comms: opts.comms ?? "none" }) },
     history,
+    transcripts: {
+      append: (matchId, entry) => {
+        entries.push({ matchId, entry: structuredClone(entry) });
+      },
+    },
     createFighter: (o: FighterOptions) => {
       events[o.side] = o.events;
       fighters[o.side] = o;
       return {
-        connect: async () => {},
+        systemPrompt: `sistema ${o.side}: ${o.prompt}`,
+        // Como el agente real: al entrar al mundo informa que está conectado.
+        connect: async () => {
+          o.events.onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 20, heldItem: "" });
+        },
         start: () => {},
         stop: async () => {},
         hear: (kind, text) => {
@@ -152,6 +187,7 @@ function setup(opts: SetupOptions = {}) {
     rconCommands,
     logs,
     flushed,
+    entries,
     stored: () => stored,
   };
 }
@@ -174,10 +210,10 @@ describe("MatchManager: estadísticas del LLM y mano", () => {
     const t = setup();
     await startRunning(t);
 
-    t.ev("red").onStatus({ connected: true, alive: true, health: 20, food: 20, heldItem: "iron_sword" });
-    t.ev("red").onDecision({ ms: 800, usage: { inputTokens: 100, outputTokens: 10 } });
-    t.ev("red").onDecision({ ms: 1201 });
-    t.ev("red").onDecision({ ms: 600, usage: { inputTokens: 50, outputTokens: 5 } });
+    t.ev("red").onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 20, heldItem: "iron_sword" });
+    t.ev("red").onDecision(decision(800, { inputTokens: 100, outputTokens: 10 }));
+    t.ev("red").onDecision(decision(1201));
+    t.ev("red").onDecision(decision(600, { inputTokens: 50, outputTokens: 5 }));
 
     const red = t.manager.getState().agents.red;
     expect(red).toMatchObject({ heldItem: "iron_sword", tokensIn: 150, tokensOut: 15, avgDecisionMs: 867 });
@@ -185,7 +221,7 @@ describe("MatchManager: estadísticas del LLM y mano", () => {
 
     t.ev("blue").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
-    t.ev("red").onDecision({ ms: 5000, usage: { inputTokens: 999, outputTokens: 999 } });
+    t.ev("red").onDecision(decision(5000, { inputTokens: 999, outputTokens: 999 }));
     expect(t.manager.getState().agents.red).toMatchObject({ tokensIn: 150, avgDecisionMs: 867 });
     expect(t.stored()?.final.red).toMatchObject({ tokensIn: 150, tokensOut: 15, avgDecisionMs: 867 });
   });
@@ -304,6 +340,42 @@ describe("MatchManager: cuenta regresiva", () => {
     expect(t.manager.getState()).toMatchObject({ phase: "finished", startedAt: null, countdownEndsAt: null });
     expect(t.flushed.every((s) => s.phase === "preparing" || s.countdownEndsAt === null)).toBe(true);
     expect(t.history.append).not.toHaveBeenCalled();
+  });
+});
+
+describe("MatchManager: desconexión antes de empezar", () => {
+  it("si un agente se desconecta en la cuenta regresiva, la pelea termina por error sin ganador", async () => {
+    let manager: MatchManager | null = null;
+    let dropped = false;
+    const t = setup({
+      sleep: async () => {
+        if (manager === null || manager.getState().countdownEndsAt === null || dropped) return;
+        dropped = true;
+        t.ev("blue").onStatus({ connected: false, alive: false, health: 0, absorption: 0, food: 20, heldItem: "" });
+      },
+    });
+    manager = t.manager;
+    current = t.manager;
+
+    t.manager.start();
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("finished"));
+    expect(t.manager.getState()).toMatchObject({ startedAt: null, result: { winner: null, reason: "error" } });
+    expect(t.manager.getState().agents.blue).toMatchObject({ connected: false, alive: false });
+    expect(t.logs).toContainEqual({ level: "error", text: "Azul se desconectó del servidor antes de empezar la pelea" });
+    // Nunca pasó por "running": no entra al historial.
+    expect(t.flushed.some((s) => s.phase === "running")).toBe(false);
+    expect(t.history.append).not.toHaveBeenCalled();
+  });
+});
+
+describe("MatchManager: corazones amarillos al acabarse el tiempo", () => {
+  it("cuentan como vida para desempatar", async () => {
+    const t = setup();
+    await startRunning(t);
+    t.ev("red").onStatus({ connected: true, alive: true, health: 16, absorption: 0, food: 20, heldItem: "iron_sword" });
+    t.ev("blue").onStatus({ connected: true, alive: true, health: 14, absorption: 4, food: 20, heldItem: "iron_sword" });
+    await t.manager["onTimeout"](t.manager["ctx"]!);
+    expect(t.manager.getState().result).toMatchObject({ winner: "blue", reason: "timeout_health" });
   });
 });
 
@@ -507,5 +579,214 @@ describe("MatchManager: kit personalizado", () => {
     await startRunning(t);
     expect(t.fighters.red?.kit.id).toBe("classic");
     expect(t.llmCalls).toHaveLength(0);
+  });
+});
+
+describe("MatchManager: transcripción", () => {
+  it("empieza con start, anota la pelea en orden y termina con end", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    const id = t.manager.getState().id;
+
+    t.ev("blue").onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 20, heldItem: "bow" });
+    t.ev("blue").onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 20, heldItem: "bow" });
+    t.ev("blue").onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 19, heldItem: "bow" });
+    t.ev("red").onDecision(
+      decision(
+        700,
+        { inputTokens: 10, outputTokens: 2 },
+        {
+          text: "voy",
+          toolCalls: [
+            { name: "attack", args: { reason: "voy por él", say: "ahí voy" } },
+            { name: "volar", args: { alto: 100 } },
+          ],
+        },
+      ),
+    );
+    t.ev("red").onThought("voy por él");
+    t.ev("red").onMessage("ahí voy");
+    t.ev("red").onAction("attack", { reason: "voy por él" }, "atacando cuerpo a cuerpo con la espada");
+    t.ev("blue").onDamageTaken(4, 16, false);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.update).toHaveBeenCalled());
+
+    const entries = t.entries.map((e) => e.entry);
+    expect(t.entries.every((e) => e.matchId === id)).toBe(true);
+    const start = entries[0];
+    expect(start?.type).toBe("start");
+    if (start?.type === "start") {
+      expect(start.matchId).toBe(id);
+      expect(start.configs.red).toMatchObject({ provider: "vercel", kit: "classic" });
+      expect(start.settings).toEqual({ comms: "chat" });
+      expect(start.systemPrompts.red).toMatch(/^sistema red:/);
+      expect(start.systemPrompts.blue).toMatch(/^sistema blue:/);
+      expect(start.tickMs).toBe(1500);
+      expect(start.durationSeconds).toBe(600);
+    }
+    // Lo que se anotó mientras se armaban los agentes va justo después, en orden.
+    expect(entries[1]).toMatchObject({ type: "phase", phase: "preparing" });
+    expect(entries[2]).toMatchObject({ type: "log", text: "Preparando la pelea…" });
+
+    const types = entries.map((e) => e.type);
+    expect(types.filter((type) => type === "start")).toHaveLength(1);
+    expect(entries.filter((e) => e.type === "phase").map((e) => e.type === "phase" && e.phase)).toEqual([
+      "preparing",
+      "running",
+      "finished",
+    ]);
+    // Solo se anota el estado cuando cambia algo: el de la conexión y los dos que cambian.
+    expect(entries.filter((e) => e.type === "status" && e.side === "blue")).toHaveLength(3);
+
+    // La respuesta del LLM queda tal cual, también la herramienta que no existe.
+    const decided = entries.find((e) => e.type === "decision");
+    expect(decided).toMatchObject({ side: "red", ms: 700, tokensIn: 10, tokensOut: 2, observation: { distance: 4 } });
+    expect(decided?.type === "decision" && decided.response).toEqual({
+      text: "voy",
+      toolCalls: [
+        { name: "attack", args: { reason: "voy por él", say: "ahí voy" } },
+        { name: "volar", args: { alto: 100 } },
+      ],
+    });
+
+    const order = ["decision", "thought", "message", "action", "damage", "death", "end", "explanation"].map((type) =>
+      types.indexOf(type as TranscriptEntry["type"]),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const end = entries.find((e) => e.type === "end");
+    expect(end?.type === "end" && end.record.result).toMatchObject({ winner: "red", reason: "kill" });
+    expect(entries.find((e) => e.type === "explanation")).toMatchObject({ text: "Rojo ganó atacando sin parar." });
+    // Las líneas del registro de la pelea también quedan.
+    expect(entries).toContainEqual(expect.objectContaining({ type: "log", text: "¡Comienza la pelea!" }));
+    expect(entries).toContainEqual(expect.objectContaining({ type: "log", text: "Ganó Rojo por KO" }));
+  });
+
+  it("todo lo que va a la web también queda anotado", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    t.ev("red").onThought("pienso");
+    t.ev("red").onMessage("hola");
+    t.ev("red").onAction("wait", {}, "esperando");
+    t.ev("red").onDamageTaken(1, 19, false);
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    const kinds = ["thought", "message", "action", "damage", "death", "log"];
+    const broadcast = t.hub.broadcast.mock.calls
+      .map(([event]) => event as { type: string })
+      .filter((event) => kinds.includes(event.type));
+    const recorded = t.entries.map((e) => e.entry).filter((entry) => kinds.includes(entry.type));
+    expect(recorded).toEqual(broadcast);
+  });
+
+  it("una pelea detenida mientras se prepara igual deja start primero y end", async () => {
+    const t = setup();
+    current = t.manager;
+    t.manager.start();
+    await t.manager.stop();
+    const entries = t.entries.map((e) => e.entry);
+    expect(entries[0]).toMatchObject({ type: "start", systemPrompts: { red: "", blue: "" } });
+    expect(entries.map((e) => e.type)).toContain("end");
+    expect(entries.map((e) => e.type)).not.toContain("explanation");
+    const end = entries.find((e) => e.type === "end");
+    expect(end?.type === "end" && end.record.result).toEqual({ winner: null, reason: "stopped" });
+  });
+
+  it("si no se puede crear un agente, start va primero con su prompt de sistema vacío", async () => {
+    const t = setup();
+    const create = t.manager["deps"].createFighter;
+    t.manager["deps"].createFighter = (o) => {
+      if (o.side === "blue") throw new Error("sin memoria");
+      return create(o);
+    };
+    current = t.manager;
+    t.manager.start();
+    await vi.waitFor(() => expect(t.entries.some((e) => e.entry.type === "end")).toBe(true));
+    const entries = t.entries.map((e) => e.entry);
+    expect(entries[0]).toMatchObject({ type: "start" });
+    if (entries[0]?.type === "start") {
+      expect(entries[0].systemPrompts.red).toMatch(/^sistema red:/);
+      expect(entries[0].systemPrompts.blue).toBe("");
+    }
+    expect(entries).toContainEqual(expect.objectContaining({ type: "log", level: "error", text: expect.stringContaining("sin memoria") }));
+  });
+
+  it("los avisos del kit personalizado quedan en la transcripción", async () => {
+    const t = setup({ prompts: { blue: { kit: "custom", prompt: "solo sé valiente" } } });
+    await startRunning(t);
+    const entries = t.entries.map((e) => e.entry);
+    expect(entries[0]?.type).toBe("start");
+    expect(entries).toContainEqual(
+      expect.objectContaining({ type: "log", level: "warn", text: expect.stringContaining("kit personalizado") }),
+    );
+  });
+
+  it("la explicación que llega tarde va a la transcripción de su pelea aunque ya empezó otra", async () => {
+    let explain: (text: string) => void = () => {};
+    const t = setup({
+      complete: () =>
+        new Promise<LlmResponse>((resolve) => {
+          explain = (text) => resolve({ text, toolCalls: [] });
+        }),
+    });
+    await startRunning(t);
+    const first = t.manager.getState().id;
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.manager.isActive()).toBe(false));
+
+    t.manager.start();
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    const second = t.manager.getState().id;
+    expect(second).not.toBe(first);
+
+    explain("Rojo ganó por insistir.");
+    await vi.waitFor(() => expect(t.history.update).toHaveBeenCalled());
+    const explanation = t.entries.find((e) => e.entry.type === "explanation");
+    expect(explanation?.matchId).toBe(first);
+    // Cada pelea tiene su propio start.
+    expect(t.entries.filter((e) => e.entry.type === "start").map((e) => e.matchId)).toEqual([first, second]);
+  });
+
+  it("las decisiones fuera de la pelea viva no se anotan", async () => {
+    const t = setup();
+    await startRunning(t);
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    t.ev("blue").onDecision(decision(100));
+    expect(t.entries.some((e) => e.entry.type === "decision")).toBe(false);
+  });
+});
+
+describe("MatchManager: los mensajes entre agentes llegan enteros", () => {
+  it("dos mensajes iguales seguidos de un lado se transmiten y entregan los dos", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    t.ev("red").onMessage("ríndete");
+    t.ev("red").onMessage("ríndete");
+    const messages = t.hub.broadcast.mock.calls.map(([event]) => event).filter((event) => event.type === "message");
+    expect(messages).toEqual([
+      expect.objectContaining({ side: "red", text: "ríndete" }),
+      expect.objectContaining({ side: "red", text: "ríndete" }),
+    ]);
+    expect(t.heard.blue).toEqual([
+      { kind: "message", text: "ríndete" },
+      { kind: "message", text: "ríndete" },
+    ]);
+    expect(t.entries.filter((e) => e.entry.type === "message")).toHaveLength(2);
+  });
+
+  it("no reescribe el texto: saltos de línea, comillas y emojis llegan igual", async () => {
+    const t = setup({ comms: "chat" });
+    await startRunning(t);
+    const text = '"Trato":\n  no te ataco si no me atacas 🤝';
+    t.ev("blue").onMessage(text);
+    expect(t.heard.red).toEqual([{ kind: "message", text }]);
+    // Un mensaje justo en el tope (contado por punto de código) no se vuelve a cortar.
+    const full = "😀".repeat(MAX_AGENT_MESSAGE_LENGTH);
+    t.ev("blue").onMessage(full);
+    expect(t.heard.red[1]?.text).toBe(full);
+    // Uno más largo (no debería llegar así del agente) se corta sin partir emojis.
+    t.ev("blue").onMessage(`${full}😀`);
+    expect(t.heard.red[2]?.text).toBe(full);
   });
 });

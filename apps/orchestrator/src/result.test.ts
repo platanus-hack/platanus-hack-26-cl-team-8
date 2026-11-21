@@ -44,6 +44,21 @@ describe("decideTimeoutResult", () => {
     });
   });
 
+  it("los corazones amarillos cuentan como vida", () => {
+    expect(decideTimeoutResult({ health: 15, alive: true }, { health: 13, absorption: 4, alive: true })).toEqual({
+      winner: "blue",
+      reason: "timeout_health",
+    });
+    expect(decideTimeoutResult({ health: 16, absorption: 2, alive: true }, { health: 18, alive: true })).toEqual({
+      winner: null,
+      reason: "draw",
+    });
+    // Un muerto no tiene corazones amarillos que valgan.
+    expect(decideTimeoutResult({ health: 0, absorption: 4, alive: false }, { health: 1, alive: true })).toMatchObject({
+      winner: "blue",
+    });
+  });
+
   it("empate si ambos están muertos", () => {
     expect(decideTimeoutResult({ health: 5, alive: false }, { health: 8, alive: false })).toEqual({
       winner: null,

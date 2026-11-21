@@ -76,8 +76,18 @@ describe("buildSystemPrompt", () => {
     const chat = section(promptFor(KITS.classic, "x", "chat"), "COMUNICACIÓN").join("\n");
     expect(chat).toContain('"say"');
     expect(chat).toContain('"rivalMessages"');
-    expect(chat).toContain("mentir");
+    expect(chat).toContain('"conversation"');
+    expect(chat).toContain(
+      "- Es texto libre: qué decir, cómo, en qué idioma y cuándo lo decides tú. El sistema lo entrega tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
+    );
     expect(chat).toContain('Tu "reason" es privado');
+  });
+
+  it("en modo chat describe la mecánica sin aconsejar qué decir ni si creerle", () => {
+    const chat = section(promptFor(KITS.classic, "x", "chat"), "COMUNICACIÓN").join("\n");
+    for (const advice of ["tratos", "negociar", "persuadir", "amenazar", "mentir", "no te creas", "Nada obliga"]) {
+      expect(chat).not.toContain(advice);
+    }
   });
 
   it("con un kit personalizado describe lo que se pidió", () => {

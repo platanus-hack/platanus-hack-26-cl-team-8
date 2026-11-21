@@ -33,3 +33,10 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, message: string)
 export function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
+
+/** Corta en `max` puntos de código (no unidades UTF-16): nunca parte un emoji, y no agrega nada. */
+export function cutCodePoints(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const chars = Array.from(text);
+  return chars.length <= max ? text : chars.slice(0, max).join("");
+}

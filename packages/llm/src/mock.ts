@@ -20,8 +20,9 @@ import { extractJsonObject, isRecord } from "./util";
  *     pearlCooldown:   number         segundos de recarga de la perla (falta = lista)
  *     buildCooldown:   number         segundos de recarga del muro (falta = listo)
  *     absorption:      number         corazones amarillos de la manzana dorada (falta = 0)
+ *     rivalMessages:   string[]       modo "chat": lo que le dijo el rival (falta = nada)
  *   Campos ausentes o inválidos se tratan como null (la vida y la comida propias como 20,
- *   las recargas y los corazones amarillos como 0 y el inventario como vacío).
+ *   las recargas y los corazones amarillos como 0, el inventario y los mensajes como vacíos).
  * - Argumentos: se envían solo los "required" del JSON Schema de la tool, con un valor
  *   por defecto (default, primer enum, minimum o 1 para números, "" para strings). La
  *   excepción es "pearl", que lleva el "target" que eligió la política ("rival" | "away").
@@ -39,6 +40,11 @@ import { extractJsonObject, isRecord } from "./util";
  *   (reglas, kit, herramientas) no cuenta, así un kit con arco no fuerza el estilo. Si no
  *   viene ese bloque, se revisa el texto completo.
  *   Así dos prompts distintos producen peleas distintas incluso sin LLM real.
+ * - Habla (modo "chat"): si la tool elegida declara la propiedad "say", también la manda.
+ *   Si la observación trae "rivalMessages" con algo, contesta; si no, habla más o menos un
+ *   turno de cada cuatro. No hay modelo detrás: las frases son fijas, salen de listas según
+ *   el número de turno (sin azar) y no dependen de lo que dijo el rival. Si la tool no
+ *   declara "say", nunca lo envía.
  * - No informa `usage`: no hay tokens reales que contar.
  * - "Turno" = el mayor entre la cantidad de mensajes "assistant" del historial y el número
  *   de llamadas previas a ESTE cliente; se usa para alternar acciones. El contador propio
@@ -101,6 +107,8 @@ export type MockObservation = {
   inventory: Record<string, number>;
   /** Herramienta que el cuerpo está ejecutando (null si no viene). */
   currentAction: string | null;
+  /** Modo "chat": mensajes del rival desde la decisión anterior ([] si no viene). */
+  rivalMessages: string[];
 };
 export type MockStyle = "melee" | "ranged";
 export type MockDecision = {
@@ -144,6 +152,9 @@ export function readObservation(messages: ChatMessage[]): MockObservation {
     absorption: Math.max(0, num(obj.absorption) ?? 0),
     inventory: readInventory(obj.inventory),
     currentAction: typeof obj.currentAction === "string" ? obj.currentAction : null,
+    rivalMessages: Array.isArray(obj.rivalMessages)
+      ? obj.rivalMessages.filter((m): m is string => typeof m === "string" && m.trim() !== "")
+      : [],
   };
 }
 
@@ -257,6 +268,42 @@ export function decide(obs: MockObservation, style: MockStyle, turn: number): Mo
   return { ...kit, preferences: [...kit.preferences, ...rest] };
 }
 
+/** Respuestas fijas para cuando el rival dijo algo (el mock no lo lee: no hay modelo). */
+const REPLIES = [
+  "Te escuché.",
+  "Anotado.",
+  "Puede ser. Veamos qué pasa.",
+  "Mmm, lo pensaré.",
+  "Interesante propuesta.",
+];
+
+/** Frases sueltas según la acción elegida. */
+const LINES: Record<MockToolName, string[]> = {
+  approach: ["Ahí voy.", "Te estoy viendo."],
+  attack: ["¡Toma esto!", "Esto recién empieza."],
+  retreat: ["Me tomo un respiro.", "Ya vuelvo."],
+  shoot: ["¡Esquiva esta!", "A ver si atrapas las flechas."],
+  eat: ["Pausa para comer.", "Recargando energía."],
+  pearl: ["¡Sorpresa!", "Nos vemos al otro lado."],
+  build: ["Un muro no le hace mal a nadie.", "Construyendo."],
+  wait: ["Te espero.", "Tu turno."],
+};
+
+function pickLine(lines: readonly string[], index: number): string {
+  return lines[index % lines.length] ?? "";
+}
+
+/** Qué dice el mock en este turno con esa tool (null = se queda callado). */
+export function mockSay(obs: MockObservation, tool: MockToolName, turn: number): string | null {
+  if (obs.rivalMessages.length > 0) return pickLine(REPLIES, turn);
+  if (turn % 4 !== 1) return null;
+  return pickLine(LINES[tool], Math.floor(turn / 4));
+}
+
+function hasSayProperty(tool: ToolDef): boolean {
+  return isRecord(tool.parameters.properties) && "say" in tool.parameters.properties;
+}
+
 function defaultForSchema(schema: unknown): unknown {
   if (!isRecord(schema)) return null;
   if ("default" in schema) return schema.default;
@@ -305,7 +352,8 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
       const historyTurn = req.messages.filter((m) => m.role === "assistant").length;
       const turn = Math.max(historyTurn, calls);
       calls += 1;
-      const decision = decide(readObservation(req.messages), readStyle(req.messages), turn);
+      const obs = readObservation(req.messages);
+      const decision = decide(obs, readStyle(req.messages), turn);
       const byName = new Map(req.tools.map((t) => [t.name, t]));
       // Si ninguna preferida está disponible, se prueba cualquier tool conocida.
       const order: string[] = [...decision.preferences, ...MOCK_TOOL_NAMES];
@@ -315,10 +363,15 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
         return { text: `[mock] ${decision.reason} (sin herramientas conocidas)`, toolCalls: [] };
       }
       // `tool.name` salió de `order`, así que es uno de los nombres conocidos.
-      const chosenArgs = decision.args?.[tool.name as MockToolName];
+      const name = tool.name as MockToolName;
+      const args: Record<string, unknown> = { ...buildArgs(tool), ...decision.args?.[name] };
+      if (hasSayProperty(tool)) {
+        const say = mockSay(obs, name, turn);
+        if (say !== null) args.say = say;
+      }
       return {
         text: `[mock] ${decision.reason}`,
-        toolCalls: [{ id: `mock_${turn}`, name: tool.name, args: { ...buildArgs(tool), ...chosenArgs } }],
+        toolCalls: [{ id: `mock_${turn}`, name: tool.name, args }],
       };
     },
   };
