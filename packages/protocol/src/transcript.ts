@@ -130,6 +130,9 @@ export function formatTranscript(entries: TranscriptEntry[]): string {
       case "death":
         line(entry.at, entry.side, "cae en combate");
         break;
+      case "injected":
+        line(entry.at, entry.side, `recibe ${entry.kind === "injection" ? "una orden falsa" : "un aviso falso"}: «${entry.text}»`);
+        break;
       case "round_start":
         out.push("");
         line(entry.at, null, `Empieza la ronda ${entry.round}.`);

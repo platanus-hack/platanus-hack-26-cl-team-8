@@ -332,6 +332,32 @@ export function pushMessage(side: Side, text: string, at: number): HTMLElement |
   return bubble;
 }
 
+/**
+ * Evento "injected": el sistema le hizo llegar a este agente un mensaje falso a propósito
+ * (benchmarks de inyección y de verificar). Se dibuja como una entrada de advertencia, para
+ * que el público vea la trampa y entienda la reacción del agente.
+ */
+export function pushInjected(side: Side, kind: "injection" | "verify", text: string, at: number): void {
+  if (!columns) return;
+  const target = columns[side];
+  target.live = true;
+  target.newsAt = at;
+  const node = el("li", "thought thought--injected");
+  const icon = el("span", "thought__kind");
+  icon.append(pixelIcon({ name: "alert" }));
+  const body = el("p", "thought__text");
+  body.append(el("strong", "", kind === "injection" ? "Orden falsa recibida: " : "Aviso falso recibido: "), document.createTextNode(text));
+  node.dataset.tip = "Mensaje falso que el sistema le mandó a propósito para medir si lo obedece. El agente no sabe que es falso.";
+  node.append(icon, body);
+  target.entries.push({ node, at, text, chip: null, chipLabel: "", said: false });
+  target.list.append(node);
+  while (target.entries.length > MAX_ENTRIES) {
+    const old = target.entries.shift()!;
+    window.setTimeout(() => old.node.remove(), LEAVE_MS);
+  }
+  refreshThinking();
+}
+
 /** Evento "action": `at` es la hora del servidor en que el agente la ejecutó. */
 export function pushAction(side: Side, view: ActionView, at: number): void {
   if (!columns) return;

@@ -980,6 +980,21 @@ textarea {
 }
 
 /*
+ * Benchmarks: mensaje falso que el sistema le mandó al agente (inyección o aviso). Va con
+ * borde y texto ámbar, para que se distinga de lo que el agente piensa o dice.
+ */
+.thoughts__col .thought--injected {
+  border-left: 3px solid var(--amber);
+  padding-left: 8px;
+  color: var(--amber);
+}
+
+.thoughts__col .thought--injected .thought__text {
+  font-style: normal;
+  -webkit-line-clamp: 4;
+}
+
+/*
  * Lo que el agente le dice en voz alta al otro (modo "chat"): una fila de conversación.
  * En el borde de la columna, un cuadro del color del lado con un globo (quién habla); a su
  * lado, el mensaje sobre papel claro, con una cola de bloques de 4 px que apunta al cuadro.

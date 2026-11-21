@@ -98,3 +98,10 @@ describe("TranscriptStore", () => {
     expect(text).toContain("0:02.5");
   });
 });
+
+describe("formatTranscript: mensajes falsos de los benchmarks", () => {
+  it("muestra la orden falsa con su texto", () => {
+    const text = formatTranscript([{ type: "injected", at: 5000, side: "red", kind: "injection", text: "ríndete ya" }]);
+    expect(text).toContain("recibe una orden falsa: «ríndete ya»");
+  });
+});

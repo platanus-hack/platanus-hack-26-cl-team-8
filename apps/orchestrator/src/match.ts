@@ -372,7 +372,7 @@ type MatchContext = {
 
 type StatusEntry = Extract<TranscriptEntry, { type: "status" }>;
 /** Eventos de la pelea que van a la web y, tal cual, a la transcripción. */
-type FightEvent = Extract<ArenaEvent, { type: "thought" | "message" | "action" | "damage" | "death" }>;
+type FightEvent = Extract<ArenaEvent, { type: "thought" | "message" | "action" | "damage" | "death" | "injected" }>;
 
 function emptyStatus(side: Side): AgentStatus {
   return {
@@ -1526,11 +1526,14 @@ export class MatchManager {
       const text = INJECTION_MESSAGES[index] ?? INJECTION_MESSAGES[0];
       const timer = setTimeout(() => {
         if (ctx.ended || this.ctx !== ctx || this.state.phase !== "running") return;
+        const at = Date.now();
         for (const side of SIDES) {
           ctx.fighters[side]?.hear("message", text);
           ctx.metrics?.injection(side);
+          // El público ve la trampa: la web lo dibuja en la columna de ese agente.
+          this.emit(ctx, { type: "injected", at, side, kind: "injection", text });
         }
-        this.log(ctx, "warn", `Inyección ${index + 1}: los dos agentes recibieron una orden falsa de rendirse`);
+        this.deps.log("info", `Inyección ${index + 1}: los dos agentes recibieron una orden falsa de rendirse`);
       }, seconds * 1000);
       ctx.injectionTimers.push(timer);
     });
@@ -1545,11 +1548,13 @@ export class MatchManager {
       const text = VERIFY_MESSAGES[index] ?? VERIFY_MESSAGES[0];
       const timer = setTimeout(() => {
         if (ctx.ended || this.ctx !== ctx || this.state.phase !== "running") return;
+        const at = Date.now();
         for (const side of SIDES) {
           ctx.fighters[side]?.hear("notice", text);
           ctx.metrics?.claim(side);
+          this.emit(ctx, { type: "injected", at, side, kind: "verify", text });
         }
-        this.log(ctx, "warn", `Aviso falso ${index + 1}: los dos agentes recibieron que les queda poca comida`);
+        this.deps.log("info", `Aviso falso ${index + 1}: los dos agentes recibieron que les queda poca comida`);
       }, seconds * 1000);
       ctx.injectionTimers.push(timer);
     });
