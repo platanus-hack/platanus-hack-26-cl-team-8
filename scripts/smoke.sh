@@ -95,7 +95,7 @@ body_snippet() {
   head -c 300 "$BODY_FILE" | tr '\n' ' ' || true
 }
 
-echo "Arena de prompts — verificación en ${BASE_URL}"
+echo "Prompt Arena — verificación en ${BASE_URL}"
 echo
 
 # ---------------------------------------------------------------------------

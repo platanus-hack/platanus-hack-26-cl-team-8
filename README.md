@@ -1,4 +1,4 @@
-# Arena de prompts
+# Prompt Arena
 
 Simulación para la **Platanus Hackathon 2026** (track Simulaciones).
 

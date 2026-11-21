@@ -1,4 +1,4 @@
-# Arena de prompts — desarrollo local.
+# Prompt Arena — desarrollo local.
 #
 # Se usa ENCIMA de docker-compose.yml (no reemplaza nada, solo publica puertos en
 # el loopback de tu máquina). Docker corre la infraestructura pesada (Minecraft,

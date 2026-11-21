@@ -75,7 +75,7 @@ echo "==> 3/3 Servicio systemd phack-stream"
 # script que vive en /home.
 cat >/etc/systemd/system/phack-stream.service <<UNIT
 [Unit]
-Description=Arena de prompts: transmision con el cliente real de Minecraft
+Description=Prompt Arena: transmision con el cliente real de Minecraft
 After=network-online.target docker.service
 Wants=network-online.target
 
