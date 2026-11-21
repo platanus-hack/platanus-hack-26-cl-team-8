@@ -5,7 +5,6 @@ import {
   ALWAYS_EDIBLE,
   isArrow,
   isBow,
-  isBuildBlock,
   isDrinkPotion,
   isFoodName,
   isLavaBucket,
@@ -14,6 +13,8 @@ import {
   isSplashPotion,
   isWaterBucket,
 } from "./items";
+import type { Vec3Like } from "./geometry";
+import { MAX_PLAN_BLOCKS } from "./construction";
 import { MOVE_PLACES, type MovePlace } from "./tactics";
 
 export const TOOL_NAMES = [
@@ -43,17 +44,9 @@ export function isToolName(name: string): name is ToolName {
 export const PEARL_TARGETS = ["rival", "away"] as const;
 export type PearlTarget = (typeof PEARL_TARGETS)[number];
 
-/** Qué levanta "build": un muro hacia el rival o una torre bajo los propios pies. */
-export const BUILD_SHAPES = ["wall", "tower", "box", "block"] as const;
-export type BuildShape = (typeof BUILD_SHAPES)[number];
-
 /** Dónde se vacía el cubo de agua: entre tú y el rival, o bajo tus pies. */
 export const WATER_PLACES = ["between", "feet"] as const;
 export type WaterPlace = (typeof WATER_PLACES)[number];
-
-/** Lado (respecto del rival) donde "build" pone un bloque suelto. */
-export const BLOCK_SIDES = ["front", "behind", "left", "right"] as const;
-export type BlockSide = (typeof BLOCK_SIDES)[number];
 
 /** Estilos de "move". */
 export const MOVE_STYLES = ["strafe", "circle", "keep", "goto"] as const;
@@ -73,15 +66,11 @@ export const THROW_MAX_DISTANCE = 8;
 export const DIG_TARGETS = ["between", "nearest"] as const;
 export type DigTarget = (typeof DIG_TARGETS)[number];
 
-/** Bloques que gasta encerrarse: 4 lados de 2 de alto, un apoyo y el techo. */
-export const BOX_BLOCKS = 10;
 /** Más que esto por bloque (con lo que se tiene en el inventario) no se intenta romper. */
 export const DIG_MAX_SECONDS = 10;
 /** Bloques que rompe como máximo una sola llamada a dig "between". */
 export const DIG_MAX_BLOCKS = 6;
 
-/** Bloques que sube una torre (el techo de la arena no deja más). */
-export const TOWER_HEIGHT = 3;
 /** Distancias al rival entre las que se puede vaciar la lava a sus pies (alcance del brazo y margen para no quemarse). */
 export const LAVA_MIN_DISTANCE = 3;
 export const LAVA_MAX_DISTANCE = 5;
@@ -95,19 +84,9 @@ export const WATER_BETWEEN_MIN_DISTANCE = 2.5;
 export const PEARL_COOLDOWN_MS = 5000;
 /** Con esta vida o menos no se lanza la perla: el golpe de la caída podría matar. */
 export const PEARL_MIN_HEALTH = 4;
-/** Recarga entre un muro y el siguiente. */
-export const BUILD_COOLDOWN_MS = 4000;
-/** Bloques que gasta un muro completo (3 de ancho por 2 de alto). */
-export const WALL_BLOCKS = 6;
-/**
- * Con el rival más cerca que esto no se construye: el muro va 3 bloques por delante y el
- * rival quedaría encima de las celdas o ya del lado propio.
- */
-export const BUILD_MIN_DISTANCE = 4.5;
-
 /**
  * Por qué no se puede disparar con ese inventario (nombres de ítems), o null si se puede.
- * Igual que con la perla y el muro, una herramienta que no se puede usar no cambia nada:
+ * Igual que con la perla, una herramienta que no se puede usar no cambia nada:
  * el cuerpo sigue con la acción que tenía (ver `refusalText`).
  */
 export function shootRefusal(itemNames: readonly string[]): string | null {
@@ -140,7 +119,7 @@ export function refusalText(reason: string, mode: ToolName): string {
 
 /**
  * Herramientas que se ofrecen con un kit. Salen de los ítems del kit, así la lista no
- * puede desalinearse de los datos. Es fija durante toda la pelea: si un ítem se gasta,
+ * puede desalinearse de los datos. build se ofrece también sin material inicial para reutilizar bloques recogidos. Si un ítem se gasta,
  * la herramienta responde con un texto de fallo.
  */
 export function kitToolNames(kit: Kit): ToolName[] {
@@ -152,7 +131,8 @@ export function kitToolNames(kit: Kit): ToolName[] {
   if (has(isDrinkPotion)) names.push("drink");
   if (has(isSplashPotion)) names.push("throw");
   if (has(isPearl)) names.push("pearl");
-  if (has(isBuildBlock)) names.push("build");
+  // Siempre disponible: dig permite recoger material aunque el kit no traiga bloques.
+  names.push("build");
   // Romper bloques se puede siempre: a mano, aunque el kit no traiga herramientas.
   names.push("dig");
   if (has(isShield)) names.push("shield");
@@ -223,6 +203,7 @@ export const TOOL_DEFS: ToolDef[] = [
           description: `Solo con style='keep': a cuántos bloques del rival quedarte (${KEEP_DISTANCE_MIN} a ${KEEP_DISTANCE_MAX}; por defecto ${KEEP_DISTANCE_DEFAULT}).`,
         },
         place: { type: "string", enum: [...MOVE_PLACES], description: "Solo con style='goto': adónde ir." },
+        position: { type: "object", description: "Con style=goto: destino libre ABSOLUTO; reemplaza place.", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, required: ["x", "y", "z"], additionalProperties: false },
       },
       required: ["style"],
     },
@@ -290,28 +271,32 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "build",
-    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. shape='box': te encierras en una caja de bloques con techo (gasta hasta ${BOX_BLOCKS}); nada te alcanza hasta que el rival rompa un bloque, pero tú tampoco puedes atacar sin romper uno. shape='block': pones una columna de 2 bloques justo a tu lado, en el lado 'side' respecto del rival ('front' entre tú y él, 'behind', 'left' o 'right'), para tapar un paso o cubrirte de un lado. Tarda 1 a 4 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
+    description: `Construye un plano libre, sin formas predefinidas ni recarga artificial. blocks es una lista ordenada de hasta ${MAX_PLAN_BLOCKS} celdas con x,y,z enteros ABSOLUTOS y material del inventario. Diseña tú la estructura y sus apoyos; el cuerpo se acerca y coloca los bloques en orden. Un plano nuevo reemplaza el anterior; sin blocks continúas o reintentas el plano pendiente. Otra herramienta lo pausa. La observación construction informa progreso, celdas pendientes y obstáculos. No se colocan bloques donde hay agentes ni se reemplazan bloques existentes: usa dig.`,
     parameters: {
       type: "object",
       properties: {
         reason: reasonProperty,
-        shape: {
-          type: "string",
-          enum: [...BUILD_SHAPES],
-          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir; 'box' = encerrarte; 'block' = columna de 2 a tu lado.",
+        blocks: {
+          type: "array", minItems: 1, maxItems: MAX_PLAN_BLOCKS,
+          description: "Plano en coordenadas absolutas del mapa world. Primero apoyos y después lo que depende de ellos. Cada bloque consume uno de material.",
+          items: {
+            type: "object",
+            properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" }, material: { type: "string", description: "Id del material, por ejemplo oak_planks o red_wool." } },
+            required: ["x", "y", "z", "material"], additionalProperties: false,
+          },
         },
-        side: { type: "string", enum: [...BLOCK_SIDES], description: "Solo con shape='block': de qué lado ponerla (respecto del rival)." },
       },
       required: [],
     },
   },
   {
     name: "dig",
-    description: `Rompe bloques que alguien colocó (muros, torres, cajas); nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (tijeras para lana, hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
+    description: `Rompe un bloque exacto con position, o elige bloques cercanos con target; nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (tijeras para lana, hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
     parameters: {
       type: "object",
       properties: {
         reason: reasonProperty,
+        position: { type: "object", description: "Opcional: bloque exacto a romper en coordenadas enteras ABSOLUTAS; reemplaza target. Debe estar a tu alcance.", properties: { x: { type: "integer" }, y: { type: "integer" }, z: { type: "integer" } }, required: ["x", "y", "z"], additionalProperties: false },
         target: {
           type: "string",
           enum: [...DIG_TARGETS],
@@ -375,12 +360,12 @@ export type ParsedToolArgs = {
   reason: string | null;
   seconds: number | null;
   target: PearlTarget;
-  shape: BuildShape;
+  blocks: unknown;
+  position: Vec3Like | null;
+  positionInvalid: boolean;
   where: WaterPlace;
   /** Para "dig". "target" de la perla y de dig comparten nombre: cada uno lee el suyo. */
   digTarget: DigTarget;
-  /** "build" shape "block". */
-  side: BlockSide;
   /** "move". */
   style: MoveStyle;
   distance: number;
@@ -413,15 +398,11 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
     const raw = source[key];
     return typeof raw === "string" ? raw.trim().toLowerCase() : "";
   };
-  // Como con la perla: solo el valor alternativo cambia algo; lo demás es el por defecto.
-  const rawShape = word("shape");
-  const shape: BuildShape = rawShape === "tower" || rawShape === "box" ? rawShape : "wall";
   const digTarget: DigTarget = word("target") === "nearest" ? "nearest" : "between";
   const oneOf = <T extends string>(key: string, options: readonly T[], fallback: T): T => {
     const value = word(key);
     return (options as readonly string[]).includes(value) ? (value as T) : fallback;
   };
-  const side = oneOf("side", BLOCK_SIDES, "front");
   const style = oneOf("style", MOVE_STYLES, "strafe");
   const place = oneOf("place", MOVE_PLACES, "center");
   const at = oneOf("at", THROW_AT, "rival");
@@ -440,8 +421,13 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
   const food = id("food");
   const potion = id("potion");
   const guard = source["guard"] === true || word("guard") === "true";
+  const rawPosition = source["position"];
+  const coords = rawPosition && typeof rawPosition === "object" ? rawPosition as Record<string, unknown> : {};
+  const position = [coords.x, coords.y, coords.z].every((n) => typeof n === "number" && Number.isFinite(n))
+    ? { x: coords.x as number, y: coords.y as number, z: coords.z as number } : null;
+  const positionInvalid = rawPosition !== undefined && position === null;
   const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
   // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
   const say = cleanMessage(source["say"]);
-  return { reason, seconds, target, shape, where, digTarget, side, style, distance, place, weapon, guard, food, potion, at, say };
+  return { reason, seconds, target, blocks: source["blocks"], position, positionInvalid, where, digTarget, style, distance, place, weapon, guard, food, potion, at, say };
 }

@@ -51,6 +51,8 @@ export type FighterOptions = {
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;
+  /** Radio horizontal de observación en bloques (16 por defecto). */
+  observationRadius?: number;
   events: FighterEvents;
 };
 

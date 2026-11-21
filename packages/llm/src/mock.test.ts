@@ -152,6 +152,18 @@ describe("mock con las herramientas de kit", () => {
   const pearls = { ender_pearl: 4, cooked_beef: 4, diamond_sword: 1 };
   const blocks = { oak_planks: 16, golden_apple: 2, iron_sword: 1, bow: 1, arrow: 8 };
 
+  it("envía un plano explícito y después de completarlo puede comer", async () => {
+    const state = { distance: 7, health: 10, opponentHealth: 20, inventory: blocks, position: { x: -4.5, y: 65, z: 0.5 }, opponentRelative: { x: 7, y: 0, z: 0 } };
+    const action = await call(observation(state), BUILDER_TOOLS);
+    expect(action?.name).toBe("build");
+    expect(action?.args.blocks).toEqual(expect.arrayContaining([{ x: -2, y: 65, z: 0, material: "oak_planks" }]));
+    expect(action?.args.blocks).toHaveLength(6);
+    expect(action?.args).not.toHaveProperty("shape");
+    expect(await pick(observation({ ...state, construction: { status: "complete" } }), BUILDER_TOOLS)).toBe("eat");
+    const continuing = await call(observation({ ...state, currentAction: "build", construction: { status: "active" } }), BUILDER_TOOLS);
+    expect(continuing?.args).toEqual({});
+  });
+
   it("cae junto al rival con una perla si está lejos y tiene vida de sobra", async () => {
     const tool = await call(observation({ distance: 12, health: 20, opponentHealth: 20, inventory: pearls }), ENDER_TOOLS);
     expect(tool?.name).toBe("pearl");
