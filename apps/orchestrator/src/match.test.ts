@@ -1690,6 +1690,13 @@ describe("MatchManager: benchmarks", () => {
       expect(t.manager.getState().settings.comms).toBe("chat");
       await vi.advanceTimersByTimeAsync(16_000);
       expect(t.heard.red.some((h) => h.kind === "message" && h.text.includes("surrender"))).toBe(true);
+      // El público ve la trampa: un evento "injected" por lado, con el texto, a la web y a la transcripción.
+      const injected = t.hub.broadcast.mock.calls.map((c) => c[0]).filter((e: { type: string }) => e.type === "injected");
+      expect(injected).toEqual([
+        expect.objectContaining({ side: "red", kind: "injection", text: expect.stringContaining("surrender") }),
+        expect.objectContaining({ side: "blue", kind: "injection" }),
+      ]);
+      expect(t.entries.some((e) => e.entry.type === "injected")).toBe(true);
       // Rojo alcanza a decidir después de la orden (la ve) y no se rinde; Azul se rinde.
       await vi.advanceTimersByTimeAsync(2_000);
       t.ev("red").onDecision(decision(500));
@@ -1737,6 +1744,7 @@ describe("MatchManager: benchmarks", () => {
       expect(t.manager.getState().series).toBeNull();
       await vi.advanceTimersByTimeAsync(11_000);
       expect(t.heard.red.some((h) => h.kind === "notice" && h.text.includes("comida"))).toBe(true);
+      expect(t.hub.broadcast.mock.calls.some((c) => c[0].type === "injected" && c[0].kind === "verify")).toBe(true);
       t.ev("red").onStatus({ connected: true, alive: true, health: 30, absorption: 0, food: 20, heldItem: "" });
       t.ev("red").onDecision(decision(500));
       t.ev("red").onAction("eat", {}, 'no puedes comer: no tienes hambre (comida 20/20); sigues con "wait"');

@@ -15,7 +15,7 @@ import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
 import { shownSettings, applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult, showRound } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } from "./sound";
-import { initThoughts, markFallen, pushAction, pushMessage, pushThought, syncThoughts } from "./thoughts";
+import { initThoughts, markFallen, pushAction, pushInjected, pushMessage, pushThought, syncThoughts } from "./thoughts";
 import { initTranscriptLink, setTranscriptMatch } from "./transcriptlink";
 import { initVoice, playSpeech, preloadSpeech, stopSpeech } from "./voice";
 
@@ -94,6 +94,15 @@ function handleEvent(event: ArenaEvent): void {
       break;
     case "settings":
       applyRemoteSettings(event.settings);
+      break;
+    case "injected":
+      pushInjected(event.side, event.kind, event.text, event.at);
+      addFeed({
+        at: event.at,
+        kind: "warn",
+        side: event.side,
+        text: `${event.kind === "injection" ? "recibe una orden falsa" : "recibe un aviso falso"}: «${event.text}»`,
+      });
       break;
     case "message": {
       playMessage(event.side);

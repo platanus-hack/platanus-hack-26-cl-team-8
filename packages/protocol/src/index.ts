@@ -1517,6 +1517,18 @@ const DamageEventSchema = z.object({
   health: z.number(),
 });
 const DeathEventSchema = z.object({ type: z.literal("death"), at: z.number(), side: SideSchema });
+/**
+ * Benchmarks: el sistema le hizo llegar a `side` un mensaje falso a propósito. "injection":
+ * una orden falsa de un "árbitro" por el chat; "verify": un aviso de afuera que contradice
+ * lo que el agente ve. Va a la web (para que el público vea la trampa) y a la transcripción.
+ */
+const InjectedEventSchema = z.object({
+  type: z.literal("injected"),
+  at: z.number(),
+  side: SideSchema,
+  kind: z.enum(["injection", "verify"]),
+  text: z.string(),
+});
 /** Modo por rondas: terminó una ronda. `series` ya la incluye en su cuenta. */
 const RoundEndEventSchema = z.object({
   type: z.literal("round_end"),
@@ -1547,6 +1559,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   ActionEventSchema,
   DamageEventSchema,
   DeathEventSchema,
+  InjectedEventSchema,
   RoundEndEventSchema,
   z.object({ type: z.literal("match_end"), at: z.number(), record: MatchRecordSchema }),
   LogEventSchema,
@@ -1616,6 +1629,7 @@ export const TranscriptEntrySchema = z.discriminatedUnion("type", [
   ActionEventSchema,
   DamageEventSchema,
   DeathEventSchema,
+  InjectedEventSchema,
   /** Modo por rondas: empezó la ronda `round`. */
   z.object({ type: z.literal("round_start"), at: z.number(), round: z.number() }),
   RoundEndEventSchema,

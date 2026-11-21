@@ -56,6 +56,7 @@ import {
   FlagBodySchema,
   DEFAULT_PROMPTS,
   DEFAULT_SETTINGS,
+  INJECTION_MESSAGES,
   BENCH_PRESETS,
   SUITE_ALL,
   findPreset,
@@ -633,6 +634,12 @@ function hit(attacker: Side, amount: number): void {
 function loopTick(): void {
   // Antes de que el reloj llegue a cero, la pelea "empieza" de nuevo.
   if (runningSince + matchDurationMs() - Date.now() < 6000) runningSince = Date.now();
+
+  // ?inject: cada tanto llega una orden falsa (como en el escenario de inyección), para ver cómo se dibuja.
+  if (params.has("inject") && loopStep % 6 === 2) {
+    const text = INJECTION_MESSAGES[0];
+    for (const side of ["red", "blue"] as const) emit?.({ type: "injected", at: Date.now(), side, kind: "injection", text });
+  }
 
   // Cada paso es una decisión: un pensamiento y su acción. Usa lo que el kit de ese lado
   // permite: la perla y el muro solo salen si el kit los trae, y quien no tiene arco

@@ -219,12 +219,6 @@ function mean(values: number[]): Rate {
   return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
 }
 
-function std(values: number[]): Rate {
-  const m = mean(values);
-  if (m === null || values.length < 2) return null;
-  return Math.sqrt(values.reduce((sum, v) => sum + (v - m) ** 2, 0) / (values.length - 1));
-}
-
 /** Pendiente por mínimos cuadrados de y contra 1..n. */
 export function slope(values: number[]): Rate {
   if (values.length < 2) return null;
