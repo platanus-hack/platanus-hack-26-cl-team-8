@@ -45,6 +45,18 @@ function render(): void {
     return;
   }
 
+  // Entre rondas el final de la cuenta se conoce antes de que empiece: se espera a que falte
+  // lo que dura la cuenta (3, 2, 1) para mostrarla.
+  if (remaining > COUNTDOWN_SECONDS * 1000) {
+    if (!holder.hidden) {
+      holder.hidden = true;
+      holder.replaceChildren();
+      shown = "";
+    }
+    frame = window.requestAnimationFrame(render);
+    return;
+  }
+
   const counting = remaining > 0;
   // Nunca más que el número inicial, aunque el estado se haya aplicado antes que la imagen.
   let text = GO_TEXT;

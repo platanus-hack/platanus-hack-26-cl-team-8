@@ -6,12 +6,12 @@ import { initCountdown, updateCountdown } from "./countdown";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { addToHistory, initHistory, syncHistory } from "./history";
-import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
+import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, roundDetail, roundTitle, truncate } from "./format";
 import { setDefaults } from "./models";
 import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
-import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult } from "./scoreboard";
+import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult, showRound } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } from "./sound";
 import { initThoughts, markFallen, pushAction, pushMessage, pushThought, syncThoughts } from "./thoughts";
@@ -70,7 +70,11 @@ function applyState(state: MatchState): void {
       addFeed({ at: Date.now(), kind: "system", text: "Preparando la arena para una nueva pelea…" });
     } else if (state.phase === "running") {
       announceStart();
-      addFeed({ at: Date.now(), kind: "system", text: "¡Comienza la pelea!" });
+      const text = state.series ? `¡Comienza la ronda ${state.series.round}!` : "¡Comienza la pelea!";
+      addFeed({ at: Date.now(), kind: "system", text });
+    } else if (state.phase === "intermission") {
+      // La campana de inicio vuelve a sonar con la ronda que viene.
+      startAnnounced = false;
     }
   }
   lastPhase = state.phase;
@@ -117,6 +121,12 @@ function handleEvent(event: ArenaEvent): void {
       applyDeath(event.side);
       markFallen(event.side);
       addFeed({ at: event.at, kind: "death", side: event.side, text: `${SIDE_LABEL[event.side]} ha caído en combate.` });
+      break;
+    case "round_end":
+      // En un K.O. ya sonó la caída; en los demás finales de ronda suena la campana.
+      if (event.result.reason !== "kill") playEnd();
+      showRound(event.result, event.series);
+      addFeed({ at: event.at, kind: "system", text: `${roundTitle(event.result)}. ${roundDetail(event.result, event.series)}` });
       break;
     case "match_end":
       // En un K.O. ya sonó la caída; en los demás finales suena la campana.

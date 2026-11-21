@@ -11,6 +11,8 @@
  *   /?mock&delay=4000   simula un video atrasado 4 s: el marcador espera ese tiempo
  *   /?mock&comms=chat   los agentes se hablan (también comms=thoughts)
  *   /?mock&timer=off    pelea sin límite de tiempo: el reloj cuenta hacia arriba
+ *   /?mock&mode=rounds  serie por rondas: va en la ronda 3, con una ganada por lado
+ *   /?mock=intermission la pausa entre dos rondas, con el cartel de la ronda que terminó
  *
  * Reemplaza las tres entradas de datos de la página: la API HTTP (api.ts), el
  * websocket (socket.ts) y el video (player.ts). Los botones "Iniciar pelea" y
@@ -50,6 +52,8 @@ import {
   normalizeTags,
   type FlaggedPrompt,
   type MatchRecord,
+  MAX_ROUNDS,
+  type Series,
 } from "@phack/protocol";
 
 const MATCH_DURATION_MS = 180_000;
@@ -91,11 +95,12 @@ const prompts: PromptsResponse = {
 
 /**
  * Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo,
- * y con ?timer=off, sin límite de tiempo.
+ * con ?timer=off, sin límite de tiempo, y con ?mode=rounds, en una serie por rondas.
  */
 const settings: MatchSettings = {
   comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
   timer: params.get("timer") !== "off",
+  mode: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? "rounds" : "single",
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
@@ -229,9 +234,38 @@ const EXPLANATION =
 let explanationReady = false;
 let explanationTimer: number | undefined;
 
+/** Serie terminada de la maqueta: Rojo la gana 3 a 1. */
+const FINISHED_SERIES: Series = {
+  round: 4,
+  maxRounds: MAX_ROUNDS,
+  wins: { red: 3, blue: 1 },
+  rounds: [
+    { round: 1, winner: "red", reason: "kill", durationMs: 74_000 },
+    { round: 2, winner: "blue", reason: "surrender", durationMs: 41_000 },
+    { round: 3, winner: "red", reason: "timeout_health", durationMs: 180_000 },
+    { round: 4, winner: "red", reason: "kill", durationMs: 96_000 },
+  ],
+  roundStartedAt: null,
+};
+
+/** Serie de la maqueta: dos rondas jugadas (una por lado) y la tercera en juego o por empezar. */
+function mockSeries(playing: boolean): Series {
+  return {
+    round: 3,
+    maxRounds: MAX_ROUNDS,
+    wins: { red: 1, blue: 1 },
+    rounds: [
+      { round: 1, winner: "red", reason: "kill", durationMs: 74_000 },
+      { round: 2, winner: "blue", reason: "surrender", durationMs: 41_000 },
+    ],
+    roundStartedAt: playing ? runningSince : null,
+  };
+}
+
 function buildState(phase: MatchPhase): MatchState {
   const now = Date.now();
   const configs = { red: { ...prompts.red }, blue: { ...prompts.blue } };
+  const rounds = settings.mode === "rounds";
 
   if (phase === "idle") {
     const offline = { connected: false, lastThought: "", lastAction: "" };
@@ -245,6 +279,7 @@ function buildState(phase: MatchPhase): MatchState {
       agents: { red: agent("red", offline), blue: agent("blue", offline) },
       configs,
       settings: { ...settings },
+      series: null,
       result: null,
     };
   }
@@ -260,6 +295,7 @@ function buildState(phase: MatchPhase): MatchState {
       agents: { red: agent("red", {}), blue: agent("blue", { connected: countdownEndsAt !== null }) },
       configs,
       settings: { ...settings },
+      series: null,
       result: null,
     };
   }
@@ -274,12 +310,32 @@ function buildState(phase: MatchPhase): MatchState {
       agents: structuredClone(running),
       configs,
       settings: { ...settings },
+      series: rounds ? mockSeries(true) : null,
+      result: null,
+    };
+  }
+
+  // Pausa entre rondas: los dos de vuelta en su lugar, con la vida completa.
+  if (phase === "intermission") {
+    return {
+      id: "mock-match",
+      phase,
+      startedAt: runningSince,
+      endsAt: null,
+      countdownEndsAt: null,
+      agents: {
+        red: { ...structuredClone(running.red), health: MAX_HEALTH },
+        blue: { ...structuredClone(running.blue), health: MAX_HEALTH },
+      },
+      configs,
+      settings: { ...settings },
+      series: mockSeries(false),
       result: null,
     };
   }
 
   // finished: gana Rojo por KO. La explicación aparece unos segundos después, como en el servidor.
-  const result: MatchResult = { winner: "red", reason: "kill" };
+  const result: MatchResult = { winner: "red", reason: rounds ? "rounds" : "kill" };
   if (explanationReady) result.explanation = EXPLANATION;
   return {
     id: "mock-match",
@@ -316,6 +372,7 @@ function buildState(phase: MatchPhase): MatchState {
     },
     configs,
     settings: { ...settings },
+    series: rounds ? FINISHED_SERIES : null,
     result,
   };
 }
@@ -620,7 +677,8 @@ function pastMatch(
   result: MatchResult,
   configs: PromptsResponse,
   final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
-  matchSettings: MatchSettings = { comms: "none", timer: true },
+  matchSettings: MatchSettings = { comms: "none", timer: true, mode: "single" },
+  series: Series | null = null,
 ): MatchRecord {
   const endedAt = Date.now() - minutesAgo * MINUTE;
   return {
@@ -631,6 +689,7 @@ function pastMatch(
     configs,
     final: { red: agent("red", final.red), blue: agent("blue", final.blue) },
     settings: matchSettings,
+    series,
     result,
   };
 }
@@ -658,12 +717,14 @@ const HISTORY: MatchRecord[] = [
     "7c1f0a52-3b1e-4c58-9d60-0d5a3f6b2a11",
     6,
     131,
-    { winner: "red", reason: "kill", explanation: EXPLANATION },
+    { winner: "red", reason: "rounds", explanation: EXPLANATION },
     structuredClone(prompts),
     {
       red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
       blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
     },
+    { comms: "none", timer: true, mode: "rounds" },
+    FINISHED_SERIES,
   ),
   pastMatch(
     "2e9b7d14-6a40-4f0c-8f1d-51c2a9e07b33",
@@ -675,7 +736,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
       blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
     },
-    { comms: "chat", timer: false },
+    { comms: "chat", timer: false, mode: "single" },
   ),
   pastMatch(
     "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
@@ -743,6 +804,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer? }");
     if (body.data.comms !== undefined) settings.comms = body.data.comms;
     if (body.data.timer !== undefined) settings.timer = body.data.timer;
+    if (body.data.mode !== undefined) settings.mode = body.data.mode;
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;
   }

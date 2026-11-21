@@ -1,7 +1,16 @@
-import { MAX_HEALTH, SIDES, type AgentStatus, type MatchResult, type MatchState, type Side } from "@phack/protocol";
+import {
+  MAX_HEALTH,
+  SIDES,
+  type AgentStatus,
+  type MatchResult,
+  type MatchState,
+  type RoundResult,
+  type Series,
+  type Side,
+} from "@phack/protocol";
 import { costOf, onCatalogReady } from "./catalog";
 import { byId, el, setText } from "./dom";
-import { formatClock, formatNumber, phaseLabel, resultDetail, resultTitle } from "./format";
+import { formatClock, formatNumber, phaseLabel, resultDetail, resultTitle, roundDetail, roundTitle } from "./format";
 import { setPixelIcon } from "./icons";
 import { itemIcon, itemLabel } from "./items";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
@@ -37,6 +46,8 @@ type Elements = {
   phase: HTMLElement;
   clock: HTMLElement;
   banner: HTMLElement;
+  /** Cuadros de las rondas, bajo el reloj (modo por rondas). */
+  rounds: HTMLElement;
   bannerTitle: HTMLElement;
   bannerDetail: HTMLElement;
   bannerWhy: HTMLElement;
@@ -71,6 +82,7 @@ export function initScoreboard(): void {
     phase: byId("phase"),
     clock: byId("clock"),
     banner: byId("winner-banner"),
+    rounds: byId("rounds"),
     bannerTitle: byId("winner-title"),
     bannerDetail: byId("winner-detail"),
     bannerWhy: byId("winner-why"),
@@ -197,8 +209,10 @@ function renderClock(now: number = videoServerNow()): void {
     setText(els.clock, formatClock(remaining));
     els.clock.classList.toggle("is-urgent", remaining <= URGENT_MS);
   } else if (state && open && state.startedAt !== null) {
-    // Sin límite de tiempo no hay cuenta regresiva: el reloj cuenta hacia arriba.
-    setText(els.clock, formatClock(Math.max(0, now - state.startedAt)));
+    // Sin límite de tiempo no hay cuenta regresiva: el reloj cuenta hacia arriba (en una
+    // serie, desde que empezó la ronda en juego).
+    const since = state.series?.roundStartedAt ?? state.startedAt;
+    setText(els.clock, formatClock(Math.max(0, now - since)));
     els.clock.classList.remove("is-urgent");
   } else {
     setText(els.clock, "--:--");
@@ -213,6 +227,7 @@ function renderBanner(result: MatchResult | null): void {
     return;
   }
   els.banner.dataset.winner = result.winner ?? "none";
+  els.banner.dataset.kind = "match";
   setText(els.bannerTitle, resultTitle(result));
   setText(els.bannerDetail, resultDetail(result));
   // "Por qué ganó": llega unos segundos después que el resultado.
@@ -239,13 +254,55 @@ export function renderState(state: MatchState): void {
       state.phase === "finished" && state.result !== null && state.result.winner === side,
     );
   }
+  renderRounds(state.series);
   // El cartel de resultado se mantiene hasta que parte la siguiente pelea,
   // aunque el servidor vuelva a "idle" después de terminar.
   if (state.phase === "finished" && state.result) renderBanner(state.result);
   else if (state.phase === "preparing" || state.phase === "running") renderBanner(null);
+  // Entre rondas: quién ganó la que acaba de terminar y cómo va la serie.
+  else if (state.phase === "intermission" && state.series) {
+    const last = state.series.rounds[state.series.rounds.length - 1];
+    if (last) showRound(last, state.series);
+  }
   // La frase puede llegar cuando el servidor ya volvió a "idle" (tarda más que el cartel).
   else if (state.result?.explanation) showExplanation(state.result.explanation);
   renderClock();
+}
+
+/**
+ * Modo por rondas: un cuadro por ronda bajo el reloj. Lleno del color de quien la ganó,
+ * gris si fue empate, hueco si falta jugarla; la que está en juego lleva borde claro.
+ */
+function renderRounds(series: Series | null): void {
+  if (!els) return;
+  const holder = els.rounds;
+  holder.hidden = series === null;
+  if (!series) return;
+  const key = `${series.maxRounds}|${series.round}|${series.rounds.map((r) => r.winner ?? "draw").join(",")}`;
+  if (holder.dataset.key === key) return;
+  holder.dataset.key = key;
+  const pips: HTMLElement[] = [];
+  for (let round = 1; round <= series.maxRounds; round += 1) {
+    const played = series.rounds.find((r) => r.round === round);
+    const pip = el("li", "rounds__pip");
+    pip.dataset.state = played ? (played.winner ?? "draw") : round === series.round ? "current" : "pending";
+    pip.dataset.tip = played ? `${roundTitle(played)}.` : round === series.round ? `Ronda ${round}: en juego.` : `Ronda ${round}: por jugar.`;
+    pips.push(pip);
+  }
+  holder.replaceChildren(...pips);
+  holder.setAttribute("aria-label", `Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}`);
+}
+
+/** Terminó una ronda: el cartel dice quién la ganó, sin tapar el video como el del final. */
+export function showRound(result: RoundResult, series: Series): void {
+  if (!els) return;
+  els.banner.dataset.winner = result.winner ?? "none";
+  els.banner.dataset.kind = "round";
+  setText(els.bannerTitle, roundTitle(result));
+  setText(els.bannerDetail, roundDetail(result, series));
+  setText(els.bannerWhy, "");
+  els.bannerWhy.hidden = true;
+  els.banner.hidden = false;
 }
 
 /** match_end: muestra el resultado de inmediato, sin esperar el próximo "state". */
