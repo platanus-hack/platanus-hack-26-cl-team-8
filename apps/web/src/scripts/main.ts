@@ -16,6 +16,7 @@ import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } from "./sound";
 import { initThoughts, markFallen, pushAction, pushMessage, pushThought, syncThoughts } from "./thoughts";
 import { initTranscriptLink, setTranscriptMatch } from "./transcriptlink";
+import { initVoice, playSpeech, preloadSpeech, stopSpeech } from "./voice";
 
 const STATE_POLL_MS = 5000;
 
@@ -67,6 +68,8 @@ function applyState(state: MatchState): void {
   if (lastPhase !== null && lastPhase !== state.phase) {
     if (state.phase === "preparing") {
       startAnnounced = false;
+      // Lo que quedaba por decir de la pelea anterior ya no suena.
+      stopSpeech();
       addFeed({ at: Date.now(), kind: "system", text: "Preparando la arena para una nueva pelea…" });
     } else if (state.phase === "running") {
       announceStart();
@@ -91,11 +94,14 @@ function handleEvent(event: ArenaEvent): void {
     case "settings":
       applyRemoteSettings(event.settings);
       break;
-    case "message":
+    case "message": {
       playMessage(event.side);
-      pushMessage(event.side, event.text, event.at);
+      const bubble = pushMessage(event.side, event.text, event.at);
+      // Su voz suena junto con el globo (el audio se pidió cuando llegó el evento).
+      if (event.speechId) playSpeech(event.side, event.speechId, bubble);
       addFeed({ at: event.at, kind: "message", side: event.side, text: event.text });
       break;
+    }
     case "thought":
       pushThought(event.side, event.text, event.at);
       addFeed({ at: event.at, kind: "thought", side: event.side, text: event.text });
@@ -129,6 +135,7 @@ function handleEvent(event: ArenaEvent): void {
       addFeed({ at: event.at, kind: "system", text: `${roundTitle(event.result)}. ${roundDetail(event.result, event.series)}` });
       break;
     case "match_end":
+      stopSpeech();
       // En un K.O. ya sonó la caída; en los demás finales suena la campana.
       if (event.record.result.reason !== "kill") playEnd();
       showResult(event.record.result);
@@ -180,6 +187,9 @@ function receiveEvent(event: ArenaEvent): void {
     handleEvent(event);
     return;
   }
+
+  // El audio de un mensaje se pide al llegar: cuando la imagen alcance el mensaje, ya está.
+  if (event.type === "message" && event.speechId) preloadSpeech(event.speechId);
 
   lastLiveEventAt = Date.now();
   enqueue(event);
@@ -278,6 +288,7 @@ function init(): void {
   exposeSyncProbe();
   initPlayer();
   initSound();
+  initVoice();
 
   renderConnection("connecting");
   let everOpened = false;

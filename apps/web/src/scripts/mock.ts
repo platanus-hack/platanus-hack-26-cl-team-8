@@ -10,6 +10,8 @@
  *   /?mock&static       sin el bucle de golpes y pensamientos (todo quieto)
  *   /?mock&delay=4000   simula un video atrasado 4 s: el marcador espera ese tiempo
  *   /?mock&comms=chat   los agentes se hablan (también comms=thoughts)
+ *   /?mock&comms=chat&voice=on   y además se oyen: habla el sintetizador del navegador
+ *                       (hay que encender el sonido de la página)
  *   /?mock&timer=off    pelea sin límite de tiempo: el reloj cuenta hacia arriba
  *   /?mock&mode=rounds  serie por rondas: va en la ronda 3, con una ganada por lado
  *   /?mock=intermission la pausa entre dos rondas, con el cartel de la ronda que terminó
@@ -95,13 +97,15 @@ const prompts: PromptsResponse = {
 
 /**
  * Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo,
- * con ?timer=off, sin límite de tiempo, y con ?mode=rounds, en una serie por rondas.
+ * con ?timer=off, sin límite de tiempo, con ?mode=rounds, en una serie por rondas, y con
+ * ?voice=on, con la voz de los agentes encendida.
  */
 const settings: MatchSettings = {
   comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
   timer: params.get("timer") !== "off",
   timerSeconds: null,
   mode: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? "rounds" : "single",
+  voice: params.get("voice") === "on",
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
@@ -112,6 +116,8 @@ const defaults: ServerDefaults = {
     vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
   },
   matchDurationSeconds: MATCH_DURATION_MS / 1000,
+  // La maqueta no tiene ElevenLabs: voice.ts habla con el sintetizador del navegador.
+  voice: { available: true },
 };
 
 /** El precio viaja en dólares por token; aquí se escribe por millón, que es como se lee. */
@@ -541,11 +547,36 @@ const LOOP_MESSAGES: Record<Side, string[]> = {
   ],
 };
 
+/**
+ * Lo que respondería /api/speech/:id, pero en texto: voice.ts lo lee en voz alta con el
+ * navegador. Se guardan solo las últimas frases.
+ */
+const speechTexts = new Map<string, string>();
+const MAX_SPEECH = 20;
+let speechCount = 0;
+
+/** El texto de una frase con voz, o null si no existe (como el 404 del servidor). */
+export function mockSpeechText(speechId: string): string | null {
+  return speechTexts.get(speechId) ?? null;
+}
+
 /** Modo "chat" de la maqueta: cada lado le habla al otro en su turno. */
 function talk(side: Side): void {
   if (settings.comms !== "chat") return;
   const options = LOOP_MESSAGES[side];
-  send({ type: "message", side, text: options[Math.floor(loopStep / 6) % options.length]! });
+  const text = options[Math.floor(loopStep / 6) % options.length]!;
+  if (!settings.voice) {
+    send({ type: "message", side, text });
+    return;
+  }
+  speechCount += 1;
+  const speechId = `maqueta-${speechCount}`;
+  speechTexts.set(speechId, text);
+  for (const id of speechTexts.keys()) {
+    if (speechTexts.size <= MAX_SPEECH) break;
+    speechTexts.delete(id);
+  }
+  send({ type: "message", side, text, speechId });
 }
 
 /** El agente piensa una de las `options`: cambia de una vuelta del bucle a la siguiente. */
@@ -684,7 +715,7 @@ function pastMatch(
   result: MatchResult,
   configs: PromptsResponse,
   final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
-  matchSettings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single" },
+  matchSettings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
   series: Series | null = null,
 ): MatchRecord {
   const endedAt = Date.now() - minutesAgo * MINUTE;
@@ -730,7 +761,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
       blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
     },
-    { comms: "none", timer: true, timerSeconds: null, mode: "rounds" },
+    { comms: "none", timer: true, timerSeconds: null, mode: "rounds", voice: false },
     FINISHED_SERIES,
   ),
   pastMatch(
@@ -743,7 +774,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
       blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
     },
-    { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
+    { comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
   ),
   pastMatch(
     "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
@@ -808,11 +839,12 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.settings) return settings;
   if (method === "PUT" && path === API_ROUTES.settings) {
     const body = UpdateSettingsBodySchema.safeParse(init?.body);
-    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer? }");
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice? }");
     if (body.data.comms !== undefined) settings.comms = body.data.comms;
     if (body.data.timer !== undefined) settings.timer = body.data.timer;
     if (body.data.timerSeconds !== undefined) settings.timerSeconds = body.data.timerSeconds;
     if (body.data.mode !== undefined) settings.mode = body.data.mode;
+    if (body.data.voice !== undefined) settings.voice = body.data.voice;
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;
   }

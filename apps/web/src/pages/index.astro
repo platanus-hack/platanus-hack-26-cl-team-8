@@ -14,6 +14,7 @@ import {
   MAX_HEALTH,
   MODE_LABELS,
   TIMER_LABELS,
+  VOICE_LABELS,
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
@@ -265,6 +266,17 @@ const stats = [
               </select>
             </div>
             <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Voz de los agentes</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="voice-state">Apagado</span>
+              </span>
+            </label>
+            <p class="comms__description" id="voice-description">{VOICE_LABELS.off}</p>
           </div>
         </div>
 

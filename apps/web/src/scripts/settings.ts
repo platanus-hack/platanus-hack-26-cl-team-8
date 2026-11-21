@@ -6,17 +6,20 @@ import {
   MODE_LABELS,
   MatchModeSchema,
   TIMER_LABELS,
+  VOICE_LABELS,
   type MatchSettings,
   type UpdateSettingsBody,
 } from "@phack/protocol";
 import { ApiError, describeError, fetchSettings, saveSettings } from "./api";
 import { byId, setText } from "./dom";
 import { getDefaults, onDefaultsChange } from "./models";
+import { isSoundOn, onSoundChange, setVoiceHint } from "./sound";
 import { showToast } from "./toast";
 
 /**
  * Ajustes de la próxima pelea: el formato de la partida (una pelea o una serie por
- * rondas), el modo de comunicación entre agentes y el límite de tiempo. Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
+ * rondas), el modo de comunicación entre agentes, el límite de tiempo y la voz de los
+ * agentes. Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
  * guardan al elegir; si otro visitante los cambia, llega por el websocket (evento "settings").
  */
 
@@ -33,6 +36,9 @@ type Elements = {
   duration: HTMLElement;
   amount: HTMLInputElement;
   unit: HTMLSelectElement;
+  voice: HTMLInputElement;
+  voiceState: HTMLElement;
+  voiceDescription: HTMLElement;
 };
 
 /** Lo que dura una pelea si nadie eligió otra cosa y el servidor aún no dice la suya. */
@@ -65,6 +71,22 @@ function durationFields(seconds: number): { amount: string; unit: string } {
   return { amount: String(Math.round((seconds / MINUTE) * 10) / 10), unit: String(MINUTE) };
 }
 
+/** El servidor dijo que no tiene voz configurada. Sin saberlo todavía, se deja usar. */
+function voiceUnavailable(): boolean {
+  return getDefaults()?.voice.available === false;
+}
+
+/** La línea de ayuda de la voz: qué hace y, si está encendida, qué falta para oírla. */
+function voiceLine(settings: MatchSettings): string {
+  if (voiceUnavailable()) return VOICE_LABELS.unavailable;
+  if (!settings.voice) return VOICE_LABELS.off;
+  const parts: string[] = [VOICE_LABELS.on];
+  // Sin el modo "chat" los agentes no se mandan mensajes: no hay nada que decir.
+  if (settings.comms !== "chat") parts.push(`Solo suena con "${COMMS_LABELS.chat.name}": en los otros modos no se hablan.`);
+  if (!isSoundOn()) parts.push("Para oírla, enciende el sonido con el botón de arriba.");
+  return parts.join(" ");
+}
+
 let els: Elements | null = null;
 let saving = false;
 /** Último valor conocido del servidor (al que se vuelve si guardar falla). */
@@ -91,6 +113,21 @@ function render(settings: MatchSettings): void {
     els.timerDescription,
     settings.timer ? `${what} ${spokenDuration(seconds)}. ${TIMER_LABELS.on}` : TIMER_LABELS.off,
   );
+
+  const unavailable = voiceUnavailable();
+  els.voice.checked = settings.voice && !unavailable;
+  if (!saving) els.voice.disabled = unavailable;
+  setText(els.voiceState, unavailable ? "No disponible" : settings.voice ? "Encendido" : "Apagado");
+  setText(els.voiceDescription, voiceLine(settings));
+  setVoiceHint(settings.voice && !unavailable);
+}
+
+/** Bloquea los controles mientras se guarda; la voz sigue bloqueada si el servidor no la tiene. */
+function lockControls(locked: boolean): void {
+  if (!els) return;
+  const { mode, comms, timer, amount, unit, voice } = els;
+  for (const control of [mode, comms, timer, amount, unit]) control.disabled = locked;
+  voice.disabled = locked || voiceUnavailable();
 }
 
 /** Ajustes que llegan del servidor (carga inicial o websocket). */
@@ -113,10 +150,9 @@ export async function loadSettings(): Promise<void> {
 /** Guarda un cambio; mientras tanto la página muestra lo elegido y, si falla, vuelve a lo del servidor. */
 function save(change: UpdateSettingsBody, what: string): void {
   if (!els) return;
-  const { mode, comms, timer, amount, unit } = els;
   if (remote) render({ ...remote, ...change } as MatchSettings);
   saving = true;
-  for (const control of [mode, comms, timer, amount, unit]) control.disabled = true;
+  lockControls(true);
   saveSettings(change)
     .then((saved) => {
       remote = saved;
@@ -128,7 +164,7 @@ function save(change: UpdateSettingsBody, what: string): void {
     })
     .finally(() => {
       saving = false;
-      for (const control of [mode, comms, timer, amount, unit]) control.disabled = false;
+      lockControls(false);
     });
 }
 
@@ -145,11 +181,18 @@ export function initSettings(): void {
     duration: byId("timer-duration"),
     amount: byId<HTMLInputElement>("timer-amount"),
     unit: byId<HTMLSelectElement>("timer-unit"),
+    voice: byId<HTMLInputElement>("voice"),
+    voiceState: byId("voice-state"),
+    voiceDescription: byId("voice-description"),
   };
-  const { mode, comms, timer, amount, unit } = els;
+  const { mode, comms, timer, amount, unit, voice } = els;
 
-  // La duración por defecto la dice el servidor: al llegar, se vuelve a dibujar.
+  // La duración por defecto y si hay voz los dice el servidor: al llegar, se vuelve a dibujar.
   onDefaultsChange(() => {
+    if (remote && !saving) render(remote);
+  });
+  // La ayuda de la voz dice si falta encender el sonido de la página.
+  onSoundChange(() => {
     if (remote && !saving) render(remote);
   });
 
@@ -179,5 +222,8 @@ export function initSettings(): void {
   });
   timer.addEventListener("change", () => {
     save({ timer: timer.checked }, "el límite de tiempo");
+  });
+  voice.addEventListener("change", () => {
+    save({ voice: voice.checked }, "la voz de los agentes");
   });
 }

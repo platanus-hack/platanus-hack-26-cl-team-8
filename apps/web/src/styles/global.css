@@ -972,6 +972,35 @@ textarea {
 }
 
 /*
+ * Mientras se oye la voz de un mensaje (voice.ts), el globo lleva una marca: un medidor
+ * de voz de píxeles en una pestaña de papel montada sobre su borde, al lado contrario de
+ * la cola. Late mientras suena y se va cuando la frase termina.
+ */
+.thought__voice {
+  position: absolute;
+  top: -14px;
+  right: 8px;
+  display: flex;
+  background: var(--text);
+  color: var(--side);
+}
+
+.thoughts__col--blue .thought__voice {
+  right: auto;
+  left: 8px;
+}
+
+.thought--speaking .thought__voice .pixel-icon {
+  animation: speaking 0.6s steps(1) infinite;
+}
+
+@keyframes speaking {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
  * Mientras un pensamiento se escribe letra a letra, lo que falta ya está en la página
  * pero invisible: el pensamiento ocupa su alto final desde el principio.
  */
