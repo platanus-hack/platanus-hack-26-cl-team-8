@@ -38,11 +38,11 @@ RUN npm i -g pnpm@10
 WORKDIR /repo
 COPY . .
 
-# Sin lockfile todavía, por eso no va --frozen-lockfile.
+# pnpm-lock.yaml fija las versiones.
 # El filtro "@phack/camera..." instala solo esta app y los paquetes del workspace de los
 # que depende (@phack/env, @phack/protocol, @phack/tsconfig), no la web ni el orquestador.
 # Los scripts de instalación de "canvas" y "gl" están permitidos en pnpm-workspace.yaml.
-RUN pnpm install --filter "@phack/camera..."
+RUN pnpm install --frozen-lockfile --filter "@phack/camera..."
 
 # Fuerza render por software aunque el host tenga GPU a medias configurada.
 ENV NODE_ENV=production \
