@@ -66,6 +66,8 @@ const stats = [
         <video id="arena-video" class="player__video" muted autoplay playsinline></video>
         <div class="player__nosignal">
           <strong>Sin señal</strong>
+          <!-- Tres cuadros que laten en fila: la página sigue buscando la transmisión. -->
+          <span class="player__retry" aria-hidden="true"><i></i><i></i><i></i></span>
           <p id="no-signal-detail">Esperando la transmisión de la arena. Reintentando…</p>
         </div>
       </div>
@@ -168,10 +170,55 @@ const stats = [
         </div>
       </div>
 
-      <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
-        <strong class="winner__title" id="winner-title"></strong>
+      <!--
+        Presentación de la pelea: quién contra quién, con qué modelo y qué kit, mientras se
+        prepara la arena y corre la cuenta regresiva. La maneja scripts/stagecards.ts. Es
+        solo visual: la fase bajo el reloj ya dice lo mismo para lectores de pantalla.
+      -->
+      <div class="versus" id="versus" data-state="out" aria-hidden="true">
+        <div class="versus__band">
+          {
+            sides.map((side) => (
+              <div class={`versus__side versus__side--${side.id}`} data-side={side.id}>
+                <strong class="versus__name">{side.label}</strong>
+              </div>
+            ))
+          }
+          <span class="versus__vs">VS</span>
+        </div>
+        <div class="versus__info">
+          {
+            sides.map((side) => (
+              <div class={`versus__meta versus__meta--${side.id}`} data-side={side.id}>
+                <span class="model-tag versus__model" id={`versus-model-${side.id}`} hidden />
+                <span class="versus__kit" id={`versus-kit-${side.id}`} />
+                <span class="versus__ready" id={`versus-ready-${side.id}`} data-ready="false">
+                  Conectando
+                </span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+
+      <!--
+        Cartel de resultado. Al final de la partida (data-kind="match"): franja del color de
+        quien ganó, cómo ganó, por qué y la comparación de los dos lados. Al final de una
+        ronda (data-kind="round"): una tarjeta chica arriba, con el marcador de la serie y lo
+        que falta para la ronda siguiente. Lo llenan scoreboard.ts y stagecards.ts.
+      -->
+      <div class="winner" id="winner-banner" data-winner="none" data-kind="match" role="status" hidden>
+        <span class="winner__label" id="winner-label" hidden></span>
+        <div class="winner__band">
+          <strong class="winner__title" id="winner-title"></strong>
+        </div>
         <span class="winner__detail" id="winner-detail"></span>
         <p class="winner__why" id="winner-why" hidden></p>
+        <div class="tape" id="winner-tape" hidden></div>
+        <div class="winner__next" id="winner-next" hidden>
+          <span id="winner-next-text"></span>
+          <span class="winner__next-track"><i id="winner-next-bar"></i></span>
+        </div>
       </div>
 
       <!-- Cuenta regresiva antes de la pelea ("3", "2", "1", "¡Pelea!"): la escribe scripts/countdown.ts. -->

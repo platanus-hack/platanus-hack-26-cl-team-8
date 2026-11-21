@@ -11,12 +11,13 @@ import {
 } from "@phack/protocol";
 import { costOf, onCatalogReady } from "./catalog";
 import { byId, el, setText } from "./dom";
-import { formatClock, formatNumber, phaseLabel, resultDetail, resultTitle, roundDetail, roundTitle } from "./format";
+import { formatClock, formatNumber, phaseLabel, resultDetail, resultTitle, roundHow, roundTitle, roundWinner } from "./format";
 import { setPixelIcon } from "./icons";
 import { itemIcon, itemLabel } from "./items";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import type { IconRef } from "./pixelicons";
 import { videoServerNow } from "./player";
+import { matchRows, renderTape, seriesRow } from "./stagecards";
 
 const URGENT_MS = 10_000;
 
@@ -49,9 +50,13 @@ type Elements = {
   banner: HTMLElement;
   /** Cuadros de las rondas, bajo el reloj (modo por rondas). */
   rounds: HTMLElement;
+  /** "Ronda 2", sobre el título de la tarjeta de ronda. */
+  bannerLabel: HTMLElement;
   bannerTitle: HTMLElement;
   bannerDetail: HTMLElement;
   bannerWhy: HTMLElement;
+  /** Comparación de los dos lados (resultado final) o marcador de la serie (ronda). */
+  bannerTape: HTMLElement;
 };
 
 let els: Elements | null = null;
@@ -84,9 +89,11 @@ export function initScoreboard(): void {
     clock: byId("clock"),
     banner: byId("winner-banner"),
     rounds: byId("rounds"),
+    bannerLabel: byId("winner-label"),
     bannerTitle: byId("winner-title"),
     bannerDetail: byId("winner-detail"),
     bannerWhy: byId("winner-why"),
+    bannerTape: byId("winner-tape"),
   };
   window.setInterval(() => renderClock(), TICK_MS);
   const redraw = (): void => {
@@ -229,8 +236,14 @@ function renderBanner(result: MatchResult | null): void {
   }
   els.banner.dataset.winner = result.winner ?? "none";
   els.banner.dataset.kind = "match";
+  // Una pelea detenida o caída por un error no se celebra: su franja va apagada.
+  els.banner.dataset.tone = result.reason === "stopped" || result.reason === "error" ? "quiet" : "result";
+  els.bannerLabel.hidden = true;
   setText(els.bannerTitle, resultTitle(result));
   setText(els.bannerDetail, resultDetail(result));
+  // Los dos lados, frente a frente. Sin pelea jugada (detenida antes de empezar) no hay qué comparar.
+  const played = current !== null && (current.agents.red.decisions > 0 || current.agents.blue.decisions > 0);
+  renderTape(els.bannerTape, current && played ? matchRows(current) : []);
   // "Por qué ganó": llega unos segundos después que el resultado.
   const why = result.explanation?.trim() ?? "";
   // Un estado posterior del mismo resultado puede venir sin la frase: no se borra la que ya está.
@@ -305,8 +318,13 @@ export function showRound(result: RoundResult, series: Series): void {
   if (!els) return;
   els.banner.dataset.winner = result.winner ?? "none";
   els.banner.dataset.kind = "round";
-  setText(els.bannerTitle, roundTitle(result));
-  setText(els.bannerDetail, roundDetail(result, series, current?.settings));
+  els.banner.dataset.tone = "result";
+  setText(els.bannerLabel, `Ronda ${result.round} de ${series.maxRounds}`);
+  els.bannerLabel.hidden = false;
+  setText(els.bannerTitle, roundWinner(result));
+  setText(els.bannerDetail, roundHow(result));
+  // Cómo queda la serie: una sola fila, cada número del color de su lado.
+  renderTape(els.bannerTape, [seriesRow(series, current?.settings ?? DEFAULT_SETTINGS)], false);
   setText(els.bannerWhy, "");
   els.bannerWhy.hidden = true;
   els.banner.hidden = false;

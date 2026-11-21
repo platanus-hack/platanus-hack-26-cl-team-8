@@ -192,6 +192,18 @@ textarea {
 
 .player[data-signal="off"] .player__video {
   visibility: hidden;
+  opacity: 0;
+}
+
+/* Cuando llega la transmisión, la imagen aparece de a poco en vez de saltar. */
+.player[data-signal="on"] .player__video {
+  animation: signal-in 0.5s ease-out;
+}
+
+@keyframes signal-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .player__nosignal {
@@ -200,9 +212,34 @@ textarea {
   display: grid;
   place-content: center;
   gap: 10px;
+  justify-items: center;
   background: #15161a;
   text-align: center;
   color: var(--muted);
+}
+
+/* Rojo, claro y azul: laten uno tras otro mientras se reintenta. */
+.player__retry {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 2px;
+}
+
+.player__retry i {
+  width: 8px;
+  height: 8px;
+  background: var(--red);
+  animation: thinking 1.2s ease-in-out infinite;
+}
+
+.player__retry i:nth-child(2) {
+  background: var(--text);
+  animation-delay: 0.2s;
+}
+
+.player__retry i:nth-child(3) {
+  background: var(--blue);
+  animation-delay: 0.4s;
 }
 
 .player__nosignal strong {
@@ -689,41 +726,450 @@ textarea {
   transform: translateX(-50%);
 }
 
+/* ---------- Carteles del escenario ---------- */
+
+/*
+ * Lo que se dibuja al centro del video fuera del combate: la presentación ("Rojo VS Azul"),
+ * la cuenta regresiva, la tarjeta de fin de ronda y el resultado. Todos comparten un mismo
+ * gesto: una franja de color que cruza el escenario. En la presentación va partida en los
+ * dos colores; en el resultado es del color de quien ganó.
+ *
+ * Los movimientos son cortos y secos, de entrada rápida (--ease-out) o con un pequeño
+ * rebote (--ease-pop). Con "reducir movimiento" todo aparece ya en su lugar.
+ */
+.stage {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-pop: cubic-bezier(0.3, 1.5, 0.6, 1);
+  /* Alto de la franja de la presentación; el cuadro del centro sobresale un poco. */
+  --band: clamp(72px, 11vh, 104px);
+}
+
+/* ---------- Presentación: Rojo VS Azul ---------- */
+
+/*
+ * Mientras se prepara la arena: cada mitad de la franja entra desde su lado, el cuadro del
+ * centro cae con el "VS" y debajo aparece con qué pelea cada uno. Cuando parte la pelea,
+ * cada mitad se va por donde vino. stagecards.ts solo cambia data-state.
+ */
+.versus {
+  position: absolute;
+  /* La franja queda centrada en el escenario (ahí cae la cuenta regresiva); los datos van debajo. */
+  top: calc(50% - var(--band) / 2);
+  right: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+  visibility: hidden;
+  /* Al salir, sigue visible lo que dura el movimiento. */
+  transition: visibility 0s linear 0.45s;
+}
+
+.versus[data-state="in"] {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.versus__band {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: var(--band);
+}
+
+.versus__side {
+  display: flex;
+  align-items: center;
+  /* El nombre queda hacia el centro, a un paso del cuadro del "VS". */
+  justify-content: flex-end;
+  padding: 0 calc(var(--band) / 2 + 36px) 0 var(--gutter);
+  background: var(--side);
+  color: #0b0b0d;
+  transform: translateX(-101%);
+  transition: transform 0.4s var(--ease-out);
+}
+
+.versus__side--blue {
+  justify-content: flex-start;
+  padding: 0 var(--gutter) 0 calc(var(--band) / 2 + 36px);
+  transform: translateX(101%);
+}
+
+.versus[data-state="in"] .versus__side {
+  transform: none;
+}
+
+.versus__name {
+  font: 400 clamp(34px, 5.2vw, 68px) / 1 var(--pixel);
+}
+
+/* El cuadro del centro: "VS" y, cuando corre la cuenta, el número. */
+.versus__vs {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: calc(var(--band) + 28px);
+  height: calc(var(--band) + 28px);
+  background: #0b0b0d;
+  padding-bottom: 5px;
+  box-shadow: 0 0 0 4px var(--text);
+  font: 400 clamp(26px, 3.4vw, 40px) / 1 var(--pixel);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.2s ease-in;
+}
+
+.versus[data-state="in"] .versus__vs {
+  transform: translate(-50%, -50%) scale(1);
+  transition: transform 0.26s var(--ease-pop) 0.26s;
+}
+
+/* Con la cuenta regresiva en marcha, el número ocupa el cuadro y el "VS" se quita. */
+.stage:has(.countdown:not([hidden])) .versus__vs {
+  color: transparent;
+}
+
+/* Bajo la franja: modelo, kit y si ya está conectado. Rojo hacia el centro desde la izquierda, Azul desde la derecha. */
+.versus__info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: rgba(6, 7, 9, 0.78);
+  opacity: 0;
+  transition: opacity 0.15s ease-in;
+}
+
+.versus[data-state="in"] .versus__info {
+  opacity: 1;
+  transition: opacity 0.3s ease-out 0.34s;
+}
+
+.versus__meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  min-width: 0;
+  padding: 10px calc(var(--band) / 2 + 36px) 11px var(--gutter);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.versus__meta--blue {
+  flex-direction: row-reverse;
+  padding: 10px var(--gutter) 11px calc(var(--band) / 2 + 36px);
+}
+
+.versus__model {
+  font-weight: 600;
+}
+
+.versus__kit {
+  color: var(--muted);
+}
+
+/* "Conectando" con un cuadro ámbar que late; "Listo" con el cuadro verde, quieto. */
+.versus__ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.versus__ready::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--amber);
+  animation: blink 0.9s steps(1) infinite;
+}
+
+.versus__ready[data-ready="true"] {
+  color: var(--text);
+}
+
+.versus__ready[data-ready="true"]::before {
+  background: var(--ok);
+  animation: none;
+}
+
 /* ---------- Resultado ---------- */
 
+/*
+ * Fin de la partida: el video se oscurece y, entre el marcador y el botón, van la franja
+ * con quién ganó, cómo, por qué y la comparación de los dos lados. Cada parte entra un
+ * poco después que la anterior.
+ */
 .winner {
+  --win: var(--text);
   position: absolute;
   inset: 0;
   z-index: 2;
   display: grid;
-  place-content: center;
+  align-content: center;
   justify-items: center;
   gap: 14px;
-  background: rgba(6, 7, 9, 0.6);
+  /* El centro que queda libre entre el marcador (arriba) y el botón (abajo). */
+  padding: 184px 0 96px;
+  background: rgba(6, 7, 9, 0.76);
   text-align: center;
   pointer-events: none;
+  animation: veil-in 0.3s ease-out;
+}
+
+.winner[data-winner="red"] {
+  --win: var(--red);
+}
+
+.winner[data-winner="blue"] {
+  --win: var(--blue);
+}
+
+@keyframes veil-in {
+  from {
+    background-color: rgba(6, 7, 9, 0);
+  }
+}
+
+.winner__label {
+  color: var(--muted);
+  font: 400 11px/1 var(--pixel);
+  letter-spacing: 0.06em;
+}
+
+/* La franja: de lado a lado, del color de quien ganó. Se abre desde su lado. */
+.winner__band {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 18px var(--gutter) 20px;
+  background: var(--win);
+  color: #0b0b0d;
+  transform-origin: center;
+  animation: band-in 0.42s var(--ease-out) both;
+}
+
+.winner[data-winner="red"] .winner__band {
+  transform-origin: left center;
+}
+
+.winner[data-winner="blue"] .winner__band {
+  transform-origin: right center;
+}
+
+/* Detenida o interrumpida: no hay nada que celebrar, la franja va apagada. */
+.winner[data-tone="quiet"] .winner__band {
+  background: rgba(237, 236, 232, 0.14);
+  color: var(--text);
+}
+
+@keyframes band-in {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.winner__title {
+  font: 400 clamp(44px, 6.6vw, 92px) / 1 var(--pixel);
+  animation: stamp-in 0.3s var(--ease-pop) 0.22s both;
+}
+
+@keyframes stamp-in {
+  from {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.winner__detail {
+  font-size: 18px;
+  color: rgba(237, 236, 232, 0.8);
+  animation: rise-in 0.35s ease-out 0.4s both;
+}
+
+/* "Por qué ganó": una frase, escrita por un modelo unos segundos después del final. */
+.winner__why {
+  max-width: min(58ch, calc(100% - 2 * var(--gutter)));
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-wrap: balance;
+  animation: rise-in 0.35s ease-out both;
+}
+
+@keyframes rise-in {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
 }
 
 /*
- * Fin de una ronda (no de la partida): el mismo cartel, más chico y sin oscurecer el
- * video, arriba del centro para dejarle el medio a la cuenta regresiva de la ronda que viene.
+ * Los dos lados, frente a frente: el valor de Rojo, qué se compara y el valor de Azul. El
+ * que va mejor en cada fila lleva el color de su lado; el otro queda apagado.
+ */
+.tape {
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) auto minmax(96px, 1fr);
+  width: min(520px, calc(100% - 2 * var(--gutter)));
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tape__side {
+  justify-self: end;
+  margin-bottom: 8px;
+  padding: 3px 7px 4px;
+  background: var(--red);
+  color: #0b0b0d;
+  font: 400 13px/1 var(--pixel);
+  animation: rise-in 0.3s ease-out 0.5s both;
+}
+
+.tape__side--blue {
+  justify-self: start;
+  background: var(--blue);
+}
+
+.tape__value,
+.tape__label {
+  padding: 9px 0;
+  border-top: 1px solid rgba(237, 236, 232, 0.16);
+  line-height: 22px;
+  animation: rise-in 0.3s ease-out calc(0.56s + var(--delay, 0ms)) both;
+}
+
+.tape__value {
+  /* La letra de píxeles se apoya más abajo que la del texto: sube un poco para quedar a su altura. */
+  padding-top: 6px;
+  padding-bottom: 12px;
+  color: rgba(237, 236, 232, 0.6);
+  font-family: var(--pixel);
+  font-size: 20px;
+  text-align: right;
+}
+
+.tape__value--blue {
+  text-align: left;
+}
+
+.tape__value--red.is-best {
+  color: var(--red);
+}
+
+.tape__value--blue.is-best {
+  color: var(--blue);
+}
+
+.tape__label {
+  padding-right: 28px;
+  padding-left: 28px;
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/*
+ * Fin de una ronda (no de la partida): una tarjeta chica arriba del centro, sin oscurecer
+ * el video, para dejarle el medio a la cuenta regresiva de la ronda que viene. Arriba, la
+ * raya del color de quien la ganó; abajo, lo que falta para la siguiente.
  */
 .winner[data-kind="round"] {
-  inset: 190px auto auto 50%;
-  gap: 8px;
-  padding: 14px 24px 16px;
-  background: rgba(6, 7, 9, 0.88);
+  inset: 186px auto auto 50%;
+  justify-items: stretch;
+  gap: 0;
+  width: min(400px, calc(100% - 2 * var(--gutter)));
+  padding: 0;
+  border-top: 4px solid var(--win);
+  background: rgba(6, 7, 9, 0.92);
   transform: translateX(-50%);
-  white-space: nowrap;
+  animation: card-drop 0.32s var(--ease-out);
+}
+
+@keyframes card-drop {
+  from {
+    transform: translate(-50%, -16px);
+    opacity: 0;
+  }
+}
+
+.winner[data-kind="round"] .winner__label {
+  padding: 14px 20px 0;
+}
+
+.winner[data-kind="round"] .winner__band {
+  padding: 8px 20px 0;
+  background: none;
+  color: var(--win);
+  animation: none;
 }
 
 .winner[data-kind="round"] .winner__title {
   font-size: 32px;
+  animation-delay: 0.12s;
 }
 
 .winner[data-kind="round"] .winner__detail {
-  color: var(--text);
-  font-size: 16px;
+  padding: 8px 20px 14px;
+  font-size: 15px;
+  animation-delay: 0.2s;
+}
+
+.winner[data-kind="round"] .tape {
+  width: auto;
+  margin: 0;
+  padding: 8px 20px 4px;
+  border-top: 1px solid rgba(237, 236, 232, 0.16);
+}
+
+.winner[data-kind="round"] .tape__value,
+.winner[data-kind="round"] .tape__label {
+  border-top: 0;
+  animation-delay: 0.26s;
+}
+
+/* El marcador de la serie: cada número del color de su lado, vaya quien vaya ganando. */
+.winner[data-kind="round"] .tape__value {
+  font-size: 28px;
+}
+
+.winner[data-kind="round"] .tape__value--red {
+  color: var(--red);
+}
+
+.winner[data-kind="round"] .tape__value--blue {
+  color: var(--blue);
+}
+
+.winner[data-kind="round"] .winner__next {
+  padding: 10px 20px 0;
+}
+
+/* La barra va de borde a borde, en el pie de la tarjeta. */
+.winner[data-kind="round"] .winner__next-track {
+  margin: 0 -20px;
+}
+
+/* "Ronda 3 en 5 s" y una barra que se va vaciando hasta que parte la cuenta. */
+.winner__next {
+  display: grid;
+  gap: 9px;
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.winner__next-track {
+  display: block;
+  height: 3px;
+  background: rgba(237, 236, 232, 0.14);
+}
+
+.winner__next-track i {
+  display: block;
+  height: 100%;
+  background: var(--text);
+  transform-origin: left center;
+  transition: transform 0.2s linear;
 }
 
 /* El cartel de ronda no apaga las columnas de pensamientos: la partida sigue. */
@@ -731,37 +1177,107 @@ textarea {
   opacity: 1;
 }
 
-/* Con el resultado o la cuenta regresiva en pantalla, el aviso de "Sin señal" no compite por el centro. */
+/* Con un cartel al centro, el aviso de "Sin señal" no compite por el lugar. */
 .stage:has(.winner:not([hidden])) .player__nosignal > *,
+.stage:has(.versus[data-state="in"]) .player__nosignal > *,
 .stage:has(.countdown:not([hidden])) .player__nosignal > * {
   visibility: hidden;
 }
 
-.winner__title {
-  font: 400 clamp(48px, 7vw, 96px) / 1 var(--pixel);
-  text-shadow: 0 5px 0 rgba(0, 0, 0, 0.6);
+/* Ventanas de alto medio (un notebook): el resultado se aprieta para que quepa entero. */
+@media (max-height: 879px) {
+  .winner[data-kind="match"] {
+    gap: 10px;
+  }
+
+  .winner[data-kind="match"] .winner__band {
+    padding-top: 12px;
+    padding-bottom: 14px;
+  }
+
+  .winner[data-kind="match"] .winner__title {
+    font-size: clamp(40px, 5.4vw, 64px);
+  }
+
+  .winner__why {
+    font-size: 17px;
+  }
+
+  .winner[data-kind="match"] .tape {
+    margin-top: 4px;
+  }
+
+  .winner[data-kind="match"] .tape__label {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .winner[data-kind="match"] .tape__value {
+    padding-top: 2px;
+    padding-bottom: 8px;
+    font-size: 18px;
+  }
 }
 
-.winner[data-winner="red"] .winner__title {
-  color: var(--red);
+/* Ventanas bajas: el resultado se queda con lo esencial. */
+@media (max-height: 759px) {
+  .winner[data-kind="match"] .tape {
+    display: none;
+  }
 }
 
-.winner[data-winner="blue"] .winner__title {
-  color: var(--blue);
-}
+@media (max-width: 699px) {
+  /* Pantallas angostas: la franja y su cuadro se achican, y los datos van uno bajo el otro. */
+  .stage {
+    --band: 56px;
+  }
 
-.winner__detail {
-  font-size: 18px;
-  color: rgba(237, 236, 232, 0.75);
-}
+  .versus__side {
+    padding-right: calc(var(--band) / 2 + 18px);
+  }
 
-/* "Por qué ganó": una frase, escrita por un modelo unos segundos después del final. */
-.winner__why {
-  max-width: 54ch;
-  margin-top: 6px;
-  font-size: 20px;
-  font-weight: 500;
-  line-height: 1.4;
+  .versus__side--blue {
+    padding-right: var(--gutter);
+    padding-left: calc(var(--band) / 2 + 18px);
+  }
+
+  .versus__name {
+    font-size: 26px;
+  }
+
+  .versus__vs {
+    width: calc(var(--band) + 16px);
+    height: calc(var(--band) + 16px);
+    font-size: 18px;
+  }
+
+  .versus__meta {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    padding-right: calc(var(--band) / 2 + 18px);
+    font-size: 13px;
+  }
+
+  .versus__meta--blue {
+    align-items: flex-start;
+    padding-right: var(--gutter);
+    padding-left: calc(var(--band) / 2 + 18px);
+  }
+
+  .winner__why {
+    font-size: 16px;
+  }
+
+  .tape__label {
+    padding-right: 14px;
+    padding-left: 14px;
+    font-size: 12px;
+  }
+
+  .tape__value {
+    font-size: 16px;
+  }
 }
 
 /* ---------- Cuenta regresiva ---------- */
@@ -785,6 +1301,14 @@ textarea {
   pointer-events: none;
 }
 
+/* Antes de la pelea, el número cae dentro del cuadro del centro de la presentación. */
+.stage:has(.versus[data-state="in"]) .countdown[data-step="count"] {
+  /* La letra de píxeles se apoya abajo de su línea: se sube un poco para quedar al centro del cuadro. */
+  padding-bottom: calc(var(--band) * 0.1);
+  font-size: calc(var(--band) * 0.82);
+  text-shadow: none;
+}
+
 /* "¡Pelea!" es una palabra entera: va más chica para caber en pantallas angostas. */
 .countdown[data-step="go"] {
   font-size: clamp(48px, 11vw, 144px);
@@ -793,16 +1317,85 @@ textarea {
 /* Cada paso es un elemento nuevo (countdown.ts), así el salto se repite con cada número. */
 .countdown__step {
   display: block;
-  animation: count-pop 0.3s ease-out;
+  animation: count-pop 0.3s var(--ease-pop);
 }
 
 @keyframes count-pop {
   from {
-    transform: scale(1.6);
+    transform: scale(1.7);
     opacity: 0;
   }
-  60% {
+  55% {
     opacity: 1;
+  }
+}
+
+/*
+ * "¡Pelea!": la palabra entra de golpe y, detrás, dos rayas (roja hacia la izquierda, azul
+ * hacia la derecha) salen disparadas desde el centro, por donde se fueron las mitades de
+ * la presentación.
+ */
+.countdown[data-step="go"] .countdown__step {
+  position: relative;
+  /* La palabra va delante de las rayas. */
+  z-index: 1;
+  animation: go-pop 0.8s var(--ease-pop) both;
+}
+
+@keyframes go-pop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  22% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  30%,
+  78% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.countdown[data-step="go"]::before,
+.countdown[data-step="go"]::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 2px);
+  width: 50%;
+  height: 10px;
+  animation: slash 0.55s var(--ease-out) both;
+}
+
+.countdown[data-step="go"]::before {
+  left: 0;
+  background: var(--red);
+  transform-origin: right center;
+}
+
+.countdown[data-step="go"]::after {
+  right: 0;
+  background: var(--blue);
+  transform-origin: left center;
+}
+
+@keyframes slash {
+  from {
+    transform: scaleX(0);
+    opacity: 1;
+  }
+  60% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 0;
   }
 }
 
