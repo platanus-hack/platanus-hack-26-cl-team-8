@@ -134,12 +134,13 @@ if [ -n "$OLD_SHA" ] && git -C "$REPO_ROOT" cat-file -e "$OLD_SHA^{commit}" 2>/d
 fi
 
 # --delete borra en el servidor lo que ya no existe en el repo; lo excluido no se toca.
+# Las estructuras de los datapacks viven en un "data/" que SÍ va al servidor; rsync usa
+# la primera regla que calza, así que esa inclusión debe ir antes de excluir data/.
+# (No poner comentarios entre las líneas del comando: cortan la continuación con "\".)
 rsync -az --delete \
   --exclude '.env' \
   --exclude '.deployed-sha' \
   --exclude '/.map-backups/' \
-  # Las estructuras de los datapacks viven en un "data/" que SÍ va al servidor; rsync usa
-  # la primera regla que calza, así que esta inclusión debe ir antes de excluir data/.
   --include '/infra/minecraft/datapacks/*/data/' \
   --exclude 'data/' \
   --exclude 'node_modules/' \
@@ -154,6 +155,14 @@ COMPOSE="docker compose"
 [ "${DEPLOY_TUNNEL:-0}" = "1" ] && COMPOSE="docker compose --profile tunnel"
 
 BUILD_LOG="$TMP_DIR/build.log"
+
+# Momento en que arrancó el contenedor de minecraft; sirve para notar si el despliegue lo
+# reinició (por `up` o por `restart`) y así reconectar la transmisión.
+mc_started_at() {
+  remote_docker "docker inspect -f '{{.State.StartedAt}}' \$($COMPOSE ps -q minecraft) 2>/dev/null" 2>/dev/null || true
+}
+MC_BEFORE="$(mc_started_at)"
+
 if ! remote_docker "$COMPOSE up -d --build" >"$BUILD_LOG" 2>&1; then
   echo "ERROR: falló '$COMPOSE up -d --build' al desplegar $NEW_SHORT. Últimas líneas:"
   tail -n 15 "$BUILD_LOG"
@@ -176,8 +185,24 @@ fi
 # La transmisión (cliente real de Minecraft) corre en el host como servicio systemd, fuera
 # de Docker: se reinicia si cambió su script. Si no está instalada, solo se avisa.
 STREAM_NOTE=""
-case "$CHANGED" in
-  *infra/stream/*)
+RESTART_STREAM=0
+case "$CHANGED" in *infra/stream/*) RESTART_STREAM=1 ;; esac
+
+# Si minecraft se reinició, el cliente de la transmisión queda desconectado y tarda minutos
+# en volver solo. Se espera a que el servidor esté sano y se reinicia la transmisión.
+MC_AFTER="$(mc_started_at)"
+if [ "$MC_AFTER" != "$MC_BEFORE" ]; then
+  for _ in $(seq 1 60); do
+    if remote_docker "docker inspect -f '{{.State.Health.Status}}' \$($COMPOSE ps -q minecraft)" 2>/dev/null | grep -q healthy; then
+      break
+    fi
+    sleep 3
+  done
+  RESTART_STREAM=1
+fi
+
+case "$RESTART_STREAM" in
+  1)
     if remote "test -f /etc/systemd/system/phack-stream.service"; then
       if remote_docker "systemctl restart phack-stream" >>"$BUILD_LOG" 2>&1; then
         STREAM_NOTE=" Transmisión reiniciada."
