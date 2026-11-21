@@ -1701,8 +1701,15 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   min-height: 36px;
   display: flex;
   align-items: center;
+  gap: 10px;
   font-size: 15px;
   cursor: pointer;
+}
+
+/* La marca de cada ajuste: un ícono de un solo color, apagado, antes del nombre. */
+.setting__label .pixel-icon {
+  flex: none;
+  color: var(--muted);
 }
 
 .setting__control {

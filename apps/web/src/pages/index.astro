@@ -223,10 +223,10 @@ const stats = [
       <div class="workbench">
         <section class="prompts" aria-labelledby="prompts-title">
         <header class="section__head">
-          <h2 class="section__title" id="prompts-title">Prompts</h2>
+          <h2 class="section__title" id="prompts-title">Preparar la pelea</h2>
           <p class="section__hint">
-            Escribe qué quiere lograr cada agente y cómo, y elige su kit. Cualquiera puede editarlos; valen desde la próxima pelea.
-            Con el kit "Personalizado", mira en <a href="/items">la lista de ítems</a> cuáles se pueden pedir.
+            Ajusta la partida y dile a cada agente qué quiere lograr, con qué kit y con qué modelo. Cualquiera puede
+            editarlo; vale desde la próxima pelea. Los ítems que existen están en <a href="/items">la lista de ítems</a>.
           </p>
         </header>
 
@@ -243,7 +243,7 @@ const stats = [
 
             <div class="setting">
               <div class="setting__text">
-                <label class="setting__label" for="rounds-count">Rondas</label>
+                <label class="setting__label" for="rounds-count"><PixelIcon name="pips" />Rondas</label>
                 <p class="setting__help" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
               </div>
               <div class="setting__control">
@@ -267,7 +267,7 @@ const stats = [
 
             <div class="setting">
               <div class="setting__text">
-                <label class="setting__label" for="timer">Límite de tiempo</label>
+                <label class="setting__label" for="timer"><PixelIcon name="timer" />Límite de tiempo</label>
                 <p class="setting__help" id="timer-description">{TIMER_LABELS.on}</p>
               </div>
               <div class="setting__control">
@@ -297,7 +297,7 @@ const stats = [
 
             <div class="setting setting--wide">
               <div class="setting__text">
-                <label class="setting__label" for="comms">Comunicación entre agentes</label>
+                <label class="setting__label" for="comms"><PixelIcon name="talk" />Comunicación entre agentes</label>
                 <p class="setting__help" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
               </div>
               <div class="setting__control">
@@ -309,7 +309,7 @@ const stats = [
 
             <div class="setting">
               <div class="setting__text">
-                <label class="setting__label" for="voice">Voz de los agentes</label>
+                <label class="setting__label" for="voice"><PixelIcon name="speaking" />Voz de los agentes</label>
                 <p class="setting__help" id="voice-description">{VOICE_LABELS.off}</p>
               </div>
               <div class="setting__control">
@@ -329,7 +329,7 @@ const stats = [
             <!-- Pre-ajustes: configuraciones guardadas de benchmark (scripts/presetpicker.ts). -->
             <div class="setting setting--wide" id="main-preset-field">
               <div class="setting__text">
-                <label class="setting__label" for="main-preset">Pre-ajuste</label>
+                <label class="setting__label" for="main-preset"><PixelIcon name="bookmark" />Pre-ajuste</label>
                 <p class="setting__help" id="main-preset-description"></p>
                 <p class="setting__help setting__help--strong" id="main-preset-status" role="status" hidden></p>
               </div>
@@ -343,7 +343,7 @@ const stats = [
 
             <div class="setting">
               <div class="setting__text">
-                <label class="setting__label" for="scenario">Escenario</label>
+                <label class="setting__label" for="scenario"><PixelIcon name="arena" />Escenario</label>
                 <p class="setting__help" id="scenario-description">{SCENARIOS[DEFAULT_SCENARIO].description}</p>
                 <p class="setting__help setting__help--strong" id="scenario-hint" hidden></p>
               </div>
@@ -358,7 +358,7 @@ const stats = [
             <div class="settings__series" id="series-options">
               <div class="setting">
                 <div class="setting__text">
-                  <label class="setting__label" for="horizon">Horizonte</label>
+                  <label class="setting__label" for="horizon"><PixelIcon name="eye" />Horizonte</label>
                   <p class="setting__help">Si los agentes saben cuántas rondas quedan.</p>
                 </div>
                 <div class="setting__control">
@@ -369,7 +369,7 @@ const stats = [
               </div>
               <div class="setting">
                 <div class="setting__text">
-                  <label class="setting__label" for="series-win">Gana la serie</label>
+                  <label class="setting__label" for="series-win"><PixelIcon name="crown" />Gana la serie</label>
                   <p class="setting__help">Cómo se decide quién se lleva la serie.</p>
                   <p class="setting__help" id="series-description"></p>
                 </div>
@@ -381,7 +381,7 @@ const stats = [
               </div>
               <div class="setting">
                 <div class="setting__text">
-                  <label class="setting__label" for="refill-kit">Reponer el kit</label>
+                  <label class="setting__label" for="refill-kit"><PixelIcon name="refill" />Reponer el kit</label>
                   <p class="setting__help">Antes de cada ronda. Si no, lo gastado no vuelve.</p>
                 </div>
                 <div class="setting__control">
@@ -395,7 +395,7 @@ const stats = [
 
             <div class="setting">
               <div class="setting__text">
-                <label class="setting__label" for="judge">Juez</label>
+                <label class="setting__label" for="judge"><PixelIcon name="star" />Juez</label>
                 <p class="setting__help" id="judge-description">
                   Al terminar la partida, un LLM lee la transcripción y califica a cada agente (necesita un LLM real).
                 </p>
