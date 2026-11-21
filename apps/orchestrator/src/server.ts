@@ -11,6 +11,7 @@ import {
   formatTranscript,
   parseTranscript,
   type AgentConfig,
+  type BenchReport,
   type FlagBody,
   type FlaggedPrompt,
   type MatchSettings,
@@ -25,6 +26,7 @@ import {
 } from "@phack/protocol";
 import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
+import type { JudgeOutcome } from "./judge";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
 import { isTranscriptId } from "./transcript";
@@ -53,6 +55,10 @@ export type ServerDeps = {
     edit(matchId: string, side: Side, body: FlagBody, now: number): Promise<FlaggedPrompt | null>;
     remove(matchId: string, side: Side): Promise<boolean>;
   };
+  /** Tablero de benchmarks (ver buildBenchReport); opcional para los tests que no lo usan. */
+  bench?: { report(): Promise<BenchReport> };
+  /** Califica una pelea con el LLM juez; null si esa pelea no existe. */
+  judge?: (matchId: string) => Promise<JudgeOutcome | null>;
   /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
   transcripts: { read(matchId: string): Promise<string | null> };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
@@ -219,7 +225,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              "Cuerpo inválido: se espera un JSON { comms?, timer?, mode? } con comms = none, thoughts o chat, timer = true o false y mode = single o rounds",
+              "Cuerpo inválido: se espera un JSON { comms?, timer?, mode?, scenario?, rounds?, horizon?, judge?, rules? } con comms = none, thoughts o chat, timer = true o false, mode = single o rounds y rounds de 2 a 5",
             ),
           );
       }
@@ -228,6 +234,16 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (body.data.comms !== undefined) change.comms = body.data.comms;
       if (body.data.timer !== undefined) change.timer = body.data.timer;
       if (body.data.mode !== undefined) change.mode = body.data.mode;
+      const b = body.data;
+      if (b.scenario !== undefined) change.scenario = b.scenario;
+      if (b.rounds !== undefined) change.rounds = b.rounds;
+      if (b.horizon !== undefined) change.horizon = b.horizon;
+      if (b.judge !== undefined) change.judge = b.judge;
+      if (b.rules !== undefined) {
+        // Las reglas van por lado: el lado que no viene conserva las suyas.
+        const current = settings.get().rules;
+        change.rules = { red: b.rules.red ?? current.red, blue: b.rules.blue ?? current.blue };
+      }
       const updated = await settings.update(change);
       deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
       return updated;
@@ -307,6 +323,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (!side.success) return reply.code(400).send(errorBody(INVALID_SIDE));
       await flags.remove(req.params.id, side.data);
       return { ok: true };
+    });
+  }
+
+  const bench = deps.bench;
+  if (bench) {
+    app.get(API_ROUTES.bench, async (_req, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return bench.report();
+    });
+  }
+
+  const judge = deps.judge;
+  if (judge) {
+    app.post<{ Params: { id: string } }>("/api/matches/:id/judge", async (req, reply) => {
+      const id = req.params.id;
+      if (!isTranscriptId(id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
+      const outcome = await judge(id);
+      if (outcome === null) return reply.code(404).send(errorBody("Esa pelea no está en el historial"));
+      if (!outcome.ok) return reply.code(400).send(errorBody(`No se pudo calificar: ${outcome.reason}`));
+      return outcome.judgement;
     });
   }
 

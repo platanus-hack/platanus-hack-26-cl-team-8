@@ -47,3 +47,10 @@ describe("seriesObservation", () => {
     });
   });
 });
+
+describe("seriesObservation: benchmarks", () => {
+  it("con horizonte desconocido oculta maxRounds y suma los puntos", () => {
+    const obs = seriesObservation({ round: 2, won: 1, lost: 0, drawn: 0, maxRounds: 5, hideMax: true, points: { mine: 5, rival: 0 } });
+    expect(obs).toEqual({ round: 2, roundsWon: 1, roundsLost: 0, roundsDrawn: 0, myPoints: 5, rivalPoints: 0 });
+  });
+});

@@ -428,3 +428,38 @@ describe("buildSystemPrompt: modo por rondas", () => {
     expect(await pick({ maxRounds: MAX_ROUNDS })).toBe("approach");
   });
 });
+
+describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: KITS.classic,
+    strategy: "Gana la serie.",
+    tickMs: 1500,
+    durationSeconds: 60,
+    comms: "chat" as const,
+  };
+
+  it("un escenario con puntos dice cómo se reparten y que gana el total", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, scenario: "dilemma" } });
+    expect(prompt).toContain("una serie de hasta 4 rondas");
+    expect(prompt).toContain("Si ninguno ataca: 3 puntos cada uno");
+    expect(prompt).toContain("Gana la serie quien sume más puntos");
+    expect(prompt).toContain('"myPoints" y "rivalPoints"');
+    expect(prompt).not.toContain("Gana quien haya ganado más rondas");
+  });
+
+  it("con horizonte desconocido no dice cuántas rondas hay", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, horizon: "unknown" } });
+    expect(prompt).toContain("cuyo número no conoces");
+    expect(prompt).not.toContain("hasta 4 rondas");
+  });
+
+  it("las reglas del entrenador van después de sus instrucciones", () => {
+    const prompt = buildSystemPrompt({ ...base, rules: ["no_lava", "no_first_strike"] });
+    expect(prompt).toContain("Nunca uses la herramienta lava.");
+    expect(prompt.indexOf("Nunca uses la herramienta lava.")).toBeGreaterThan(prompt.indexOf("</instrucciones>"));
+    expect(buildSystemPrompt(base)).not.toContain("tu entrenador te exige");
+  });
+});

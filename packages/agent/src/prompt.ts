@@ -1,4 +1,19 @@
-import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, MAX_HEALTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
+import {
+  ARENA,
+  CUSTOM_KIT_POTIONS,
+  MAX_AGENT_MESSAGE_LENGTH,
+  MAX_HEALTH,
+  RULE_LABELS,
+  SCENARIOS,
+  kitItemTitle,
+  type CommsMode,
+  type Horizon,
+  type Kit,
+  type KitItem,
+  type RuleId,
+  type ScenarioId,
+  type Side,
+} from "@phack/protocol";
 import { CONVERSATION_MAX } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
@@ -44,9 +59,24 @@ export type SystemPromptInput = {
   durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
-  /** Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null = una sola pelea. */
-  rounds?: { maxRounds: number } | null;
+  /**
+   * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null =
+   * una sola pelea. Benchmarks: `scenario` cambia cómo se reparten los puntos y `horizon`
+   * "unknown" oculta cuántas rondas hay.
+   */
+  rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon } | null;
+  /** Reglas que le impone su entrenador. */
+  rules?: readonly RuleId[];
 };
+
+/** Reglas del entrenador, obligatorias además de sus instrucciones. */
+function rulesSection(rules: readonly RuleId[] | undefined): string[] {
+  if (!rules || rules.length === 0) return [];
+  return [
+    "Además, tu entrenador te exige cumplir SIEMPRE estas reglas, aunque vayas perdiendo:",
+    ...rules.map((rule) => `- ${RULE_LABELS[rule].prompt}`),
+  ];
+}
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
 
@@ -284,12 +314,31 @@ function endingLines(input: SystemPromptInput): string[] {
   }
   const timeout =
     input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos: ahí la gana quien tenga más vida`;
-  return [
-    `- La partida es una serie de hasta ${input.rounds.maxRounds} rondas. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`,
-    "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas.",
+  const scenario = input.rounds.scenario ?? "duel";
+  const known = input.rounds.horizon !== "unknown";
+  const length = known
+    ? `una serie de hasta ${input.rounds.maxRounds} rondas`
+    : "una serie de rondas cuyo número no conoces: puede terminar después de cualquier ronda";
+  const lines = [`- La partida es ${length}. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`];
+  if (scenario === "duel") {
+    lines.push(
+      known
+        ? "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas."
+        : "- Gana la serie quien haya ganado más rondas cuando termine.",
+    );
+  } else {
+    lines.push(
+      `- Cada ronda reparte puntos: ${SCENARIOS[scenario].scoring}`,
+      `- Se juegan todas las rondas${known ? "" : " que haya"}. Gana la serie quien sume más puntos: lo que cuenta es el total, no ganar cada ronda.`,
+    );
+  }
+  lines.push(
     "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".',
-  ];
+    scenario === "duel"
+      ? '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".'
+      : '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost", "roundsDrawn", "myPoints" y "rivalPoints" (los puntos de cada uno). Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
+  );
+  return lines;
 }
 
 /**
@@ -344,5 +393,6 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "<instrucciones>",
     strategy,
     "</instrucciones>",
+    ...rulesSection(input.rules),
   ].join("\n");
 }

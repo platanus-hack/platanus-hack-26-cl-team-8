@@ -1,4 +1,4 @@
-import type { CommsMode, Kit, Side } from "@phack/protocol";
+import type { CommsMode, Horizon, Kit, RuleId, ScenarioId, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 import type { Observation } from "./observation";
 import type { ContextProfile } from "./context-profile";
@@ -62,7 +62,9 @@ export type FighterOptions = {
    * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas (se ofrece
    * "surrender" y la observación trae cómo va la serie). null = una sola pelea.
    */
-  rounds: { maxRounds: number } | null;
+  rounds: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon } | null;
+  /** Benchmarks: reglas que le impone su entrenador (van al prompt). */
+  rules?: readonly RuleId[];
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;

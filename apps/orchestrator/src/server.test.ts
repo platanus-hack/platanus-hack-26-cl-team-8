@@ -6,6 +6,8 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   API_ROUTES,
+  DEFAULT_SETTINGS,
+  buildBenchReport,
   type AgentStatus,
   type MatchRecord,
   type MatchState,
@@ -90,14 +92,14 @@ type ServerOptions = {
 };
 
 /** Ajustes guardados por PUT /api/settings; cada servidor de prueba parte de los de por defecto. */
-let settings: MatchSettings = { comms: "none", timer: true, mode: "single" };
+let settings: MatchSettings = { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" };
 
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
-  settings = { comms: "none", timer: true, mode: "single" };
+  settings = { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" };
   app = await buildServer({
     hub: new Hub(),
     match: {
@@ -118,6 +120,9 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
+    bench: { report: async () => buildBenchReport(opts.history ?? [], 42) },
+    judge: async (id) =>
+      id === ID ? { ok: false, reason: "el juez necesita un LLM real" } : id === JUDGED ? { ok: true, judgement: JUDGEMENT } : null,
     settings: {
       get: () => ({ ...settings }),
       update: async (change) => {
@@ -129,35 +134,74 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   return app;
 }
 
+const JUDGED = "0f9e8d7c-6b5a-4f3e-9d2c-1b0a99887766";
+const JUDGEMENT = {
+  model: "juez",
+  at: 1,
+  red: { strategy: 1, adaptation: 1, coherence: 1, deception: 1, persuasion: 1, environment: 1, comment: "" },
+  blue: { strategy: 2, adaptation: 2, coherence: 2, deception: 2, persuasion: 2, environment: 2, comment: "" },
+  summary: "s",
+};
+
+describe("benchmarks: GET /api/bench y POST /api/matches/:id/judge", () => {
+  it("el tablero se calcula con el historial", async () => {
+    const s = await server();
+    const res = await s.inject({ method: "GET", url: "/api/bench" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ generatedAt: 42, matches: 0, models: [] });
+  });
+
+  it("el juez: 400 si no puede, 404 si la pelea no existe, la nota si califica", async () => {
+    const s = await server();
+    expect((await s.inject({ method: "POST", url: `/api/matches/${ID}/judge` })).statusCode).toBe(400);
+    expect((await s.inject({ method: "POST", url: "/api/matches/11111111-2222-4333-8444-555555555555/judge" })).statusCode).toBe(404);
+    expect((await s.inject({ method: "POST", url: "/api/matches/no-es-id/judge" })).statusCode).toBe(400);
+    const ok = await s.inject({ method: "POST", url: `/api/matches/${JUDGED}/judge` });
+    expect(ok.json()).toMatchObject({ summary: "s" });
+  });
+});
+
 describe("PUT /api/settings", () => {
   const put = (s: FastifyInstance, payload: Record<string, unknown>) =>
     s.inject({ method: "PUT", url: "/api/settings", payload });
 
   it("cambia solo lo que viene: apagar el límite de tiempo no toca la comunicación", async () => {
     const s = await server();
-    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true, mode: "single" });
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false, mode: "single" });
-    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect((await put(s, { comms: "chat" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" });
+    expect((await put(s, { timer: false })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: false, mode: "single" });
+    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
   });
 
   it("acepta el modo de la partida y cambia solo eso", async () => {
     const s = await server();
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
-    expect((await put(s, { mode: "rounds" })).json()).toEqual({ comms: "none", timer: false, mode: "rounds" });
-    expect((await put(s, { mode: "single" })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
+    expect((await put(s, { timer: false })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, mode: "single" });
+    expect((await put(s, { mode: "rounds" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, mode: "rounds" });
+    expect((await put(s, { mode: "single" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, mode: "single" });
     const bad = await put(s, { mode: "torneo" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toContain("mode = single o rounds");
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: false, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, mode: "single" });
+  });
+
+  it("guarda los ajustes de benchmark; las reglas de un lado no pisan las del otro", async () => {
+    const s = await server();
+    expect((await put(s, { scenario: "dilemma", rounds: 4, horizon: "unknown", judge: true })).json()).toMatchObject({
+      scenario: "dilemma",
+      rounds: 4,
+      horizon: "unknown",
+      judge: true,
+    });
+    await put(s, { rules: { red: ["no_lava"] } });
+    expect((await put(s, { rules: { blue: ["no_bow", "no_pearl"] } })).json().rules).toEqual({ red: ["no_lava"], blue: ["no_bow", "no_pearl"] });
   });
 
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
     const s = await server();
-    for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }]) {
+    for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }, { rounds: 1 }, { rounds: 6 }, { scenario: "batalla" }, { rules: { red: ["volar"] } }]) {
       const res = await put(s, payload);
       expect(res.statusCode).toBe(400);
     }
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
   });
 });
 
@@ -257,7 +301,7 @@ function matchRecord(id: string): MatchRecord {
     durationMs: 4000,
     configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
     final: { red: agentStatus("red"), blue: agentStatus("blue") },
-    settings: { comms: "none", timer: true, mode: "single" },
+    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" },
     series: null,
     result: { winner: "blue", reason: "kill" },
   };
@@ -272,7 +316,7 @@ function liveState(id: string): MatchState {
     countdownEndsAt: null,
     agents: { red: agentStatus("red"), blue: agentStatus("blue") },
     configs: { red: { side: "red", prompt: "en vivo rojo" }, blue: { side: "blue", prompt: "en vivo azul" } },
-    settings: { comms: "chat", timer: false, mode: "single" },
+    settings: { ...DEFAULT_SETTINGS, comms: "chat", timer: false, mode: "single" },
     series: null,
     result: null,
   };
@@ -299,7 +343,7 @@ describe("rutas de prompts marcados", () => {
       note: "aguantó",
       config: { side: "blue", prompt: "en vivo azul" },
       rival: { side: "red", prompt: "en vivo rojo" },
-      settings: { comms: "chat", timer: false, mode: "single" },
+      settings: { ...DEFAULT_SETTINGS, comms: "chat", timer: false, mode: "single" },
       outcome: null,
     });
     const list = await s.inject({ method: "GET", url: API_ROUTES.flags });

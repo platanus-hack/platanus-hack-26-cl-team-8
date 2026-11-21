@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from "@phack/protocol";
 import { describe, expect, it } from "vitest";
 import type { AgentStatus, MatchRecord, MatchResult, RoundResult, Side } from "@phack/protocol";
 import {
@@ -45,7 +46,7 @@ function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Parti
       },
       blue: { side: "blue", prompt: "Eres defensivo:\n\nmantén distancia y usa el arco." },
     },
-    settings: { comms: "none", timer: true, mode: "single" },
+    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" },
     series: null,
     final: { red: status("red", red), blue: status("blue", blue) },
     result,
@@ -203,8 +204,8 @@ describe("modo por rondas", () => {
     const wins = { red: rounds.filter((r) => r.winner === "red").length, blue: rounds.filter((r) => r.winner === "blue").length };
     return {
       ...record(result, red, blue),
-      settings: { comms: "none", timer: true, mode: "rounds" },
-      series: { round: rounds.length, maxRounds: 5, wins, rounds, roundStartedAt: null },
+      settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "rounds" },
+      series: { round: rounds.length, maxRounds: 5, wins, rounds, roundStartedAt: null, points: { red: 0, blue: 0 } },
     };
   }
   const threeToOne = [round(1, "red", "kill"), round(2, "blue", "timeout_health"), round(3, "red", "surrender"), round(4, "red", "kill")];

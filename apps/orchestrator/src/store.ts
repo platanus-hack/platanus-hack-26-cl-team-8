@@ -243,6 +243,20 @@ export class MatchStore {
     return structuredClone(this.recent);
   }
 
+  /** Todo el historial guardado (para el tablero de benchmarks), más recientes primero. */
+  async all(): Promise<MatchRecord[]> {
+    const raw = await readIfExists(this.file);
+    if (raw === null) return this.latest();
+    return parseMatchLines(raw, Number.POSITIVE_INFINITY);
+  }
+
+  /** Una pelea por id: de las recientes o, si no, del archivo completo. */
+  async find(id: string): Promise<MatchRecord | null> {
+    const recent = this.recent.find((record) => record.id === id);
+    if (recent) return structuredClone(recent);
+    return (await this.all()).find((record) => record.id === id) ?? null;
+  }
+
   async append(record: MatchRecord): Promise<void> {
     this.recent = [record, ...this.recent].slice(0, MAX_HISTORY);
     await this.writeLine(record, "No se pudo guardar la pelea en el historial");

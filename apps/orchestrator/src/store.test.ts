@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPTS, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
+import { DEFAULT_SETTINGS, DEFAULT_PROMPTS, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
 import {
   MatchStore,
   defaultPrompts,
@@ -43,7 +43,7 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende" },
     },
     final: { red: status("red"), blue: status("blue") },
-    settings: { comms: "none", timer: true, mode: "single" },
+    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" },
     series: null,
     result: { winner: "red", reason: "kill" },
   };
@@ -318,19 +318,19 @@ describe("MatchStore.update", () => {
 
 describe("parseSettings", () => {
   it("vuelve a los ajustes por defecto si el archivo está corrupto o trae basura", () => {
-    expect(parseSettings("{no")).toEqual({ comms: "none", timer: true, mode: "single" });
-    expect(parseSettings("{}")).toEqual({ comms: "none", timer: true, mode: "single" });
-    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none", timer: true, mode: "single" });
-    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat", timer: true, mode: "single" });
+    expect(parseSettings("{no")).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
+    expect(parseSettings("{}")).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
+    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
+    expect(parseSettings('{"comms":"chat"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" });
   });
 
   it("guarda el límite de tiempo apagado; un archivo de antes lo trae encendido", () => {
-    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ comms: "chat", timer: false, mode: "single" });
-    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: false, mode: "single" });
+    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
   });
 
   it("un registro de historial sin ajustes vale como sin comunicación", () => {
     const { settings: _omit, ...old } = record("viejo");
-    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none", timer: true, mode: "single" });
+    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" });
   });
 });

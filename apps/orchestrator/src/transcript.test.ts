@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatTranscript, parseTranscript, type TranscriptEntry } from "@phack/protocol";
+import { DEFAULT_SETTINGS, formatTranscript, parseTranscript, type TranscriptEntry } from "@phack/protocol";
 import { TranscriptStore, isTranscriptId } from "./transcript";
 
 let dir = "";
@@ -83,7 +83,7 @@ describe("TranscriptStore", () => {
         at: 0,
         matchId: id,
         configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
-        settings: { comms: "chat", timer: true, mode: "single" },
+        settings: { ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" },
         systemPrompts: { red: "sistema rojo", blue: "sistema azul" },
         tickMs: 1500,
         durationSeconds: 180,

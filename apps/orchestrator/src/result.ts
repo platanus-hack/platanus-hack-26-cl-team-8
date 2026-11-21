@@ -40,6 +40,13 @@ export function seriesResult(series: Pick<Series, "wins">): MatchResult {
   return leader ? { winner: leader, reason: "rounds" } : { winner: null, reason: "draw" };
 }
 
+/** Benchmarks: en un escenario con puntos gana la serie quien sumó más; con los mismos, empate. */
+export function pointsResult(series: Pick<Series, "points">): MatchResult {
+  const { red, blue } = series.points;
+  if (red === blue) return { winner: null, reason: "draw" };
+  return { winner: red > blue ? "red" : "blue", reason: "rounds" };
+}
+
 /**
  * Cómo terminó una ronda, contado a uno de los agentes ("la ganaste", "la perdiste").
  * Le llega al reanudar, como resultado de su última acción.
