@@ -5,6 +5,7 @@ import {
   buildBenchReport,
   roundPoints,
   seriesByPoints,
+  type BenchOptions,
   type BenchReport,
   type Judgement,
   type MatchRecord,
@@ -299,12 +300,12 @@ for (const [i, winner] of (["red", "blue", "red"] as const).entries()) {
 
 const JUDGED = new Map<string, Judgement>();
 
-export function mockBenchReport(): BenchReport {
+export function mockBenchReport(options: BenchOptions = {}): BenchReport {
   const all = records.map((record) => {
     const judgement = JUDGED.get(record.id);
     return judgement ? { ...record, judgement } : record;
   });
-  return buildBenchReport(all);
+  return buildBenchReport(all, Date.now(), options);
 }
 
 /** En la maqueta el juez responde siempre una nota de ejemplo. */

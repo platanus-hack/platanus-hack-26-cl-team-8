@@ -251,3 +251,32 @@ describe("buildBenchReport", () => {
     expect(report.models[0]).toMatchObject({ matches: 1, latencyP50: null, costUsd: null });
   });
 });
+
+describe("buildBenchReport: filtro y partidas mínimas", () => {
+  const many = (n: number, red: string, blue: string, scenario: "duel" | "dilemma") =>
+    Array.from({ length: n }, () => record({ red, blue, winner: "red", settings: { scenario } }));
+
+  it("filtra por escenario y cuenta las partidas de cada uno antes de filtrar", () => {
+    const all = [...many(3, "a", "b", "duel"), ...many(2, "c", "d", "dilemma")];
+    const report = buildBenchReport(all, 0, { scenario: "dilemma" });
+    expect(report.scenario).toBe("dilemma");
+    expect(report.matches).toBe(2);
+    expect(report.models.map((m) => m.model).sort()).toEqual(["c", "d"]);
+    expect(report.scenarios).toMatchObject({ duel: 3, dilemma: 2, surrender: 0, injection: 0 });
+  });
+
+  it("los modelos con pocas partidas van al final, aunque tengan más puntos", () => {
+    // "nuevo" gana su única partida (3 puntos por ronda); "veterano" gana 5 de 6.
+    const all = [
+      record({ red: "nuevo", blue: "x", winner: "red" }),
+      ...many(5, "veterano", "y", "duel"),
+      record({ red: "veterano", blue: "y", winner: "blue" }),
+    ];
+    const report = buildBenchReport(all, 0, { minMatches: 5 });
+    expect(report.minMatches).toBe(5);
+    expect(report.models[0]).toMatchObject({ model: "veterano", enoughData: true });
+    expect(report.models.find((m) => m.model === "nuevo")).toMatchObject({ enoughData: false, avgPoints: 3 });
+    expect(report.models.findIndex((m) => m.model === "nuevo")).toBeGreaterThan(0);
+    expect(buildBenchReport(all, 0, { minMatches: 1 }).models[0]?.model).toBe("nuevo");
+  });
+});

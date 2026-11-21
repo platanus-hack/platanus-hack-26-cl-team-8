@@ -2,7 +2,7 @@
 // Tablero de benchmarks: lo que se midió de cada modelo en el historial de peleas. Lo
 // calcula el orquestador (GET /api/bench) y lo dibuja scripts/bench.ts.
 import "@fontsource-variable/instrument-sans";
-import { JUDGE_CRITERIA, JUDGE_LABELS } from "@phack/protocol";
+import { DEFAULT_MIN_MATCHES, JUDGE_CRITERIA, JUDGE_LABELS, SCENARIOS, SCENARIO_IDS } from "@phack/protocol";
 import "../styles/global.css";
 ---
 
@@ -27,6 +27,17 @@ import "../styles/global.css";
           peleas detenidas o con error no cuentan. Configura escenario, rondas, reglas y juez en la página principal.
         </p>
         <div class="bench__bar">
+          <label class="field bench__filter">
+            <span class="field__label">Escenario</span>
+            <select id="bench-scenario">
+              <option value="all">Todos los escenarios</option>
+              {SCENARIO_IDS.map((id) => <option value={id}>{SCENARIOS[id].name}</option>)}
+            </select>
+          </label>
+          <label class="field bench__filter">
+            <span class="field__label">Partidas mínimas</span>
+            <input id="bench-min" type="number" min="1" max="1000" step="1" value={DEFAULT_MIN_MATCHES} inputmode="numeric" />
+          </label>
           <button type="button" class="btn btn--small" id="bench-refresh">Actualizar</button>
           <span class="bench__status" id="bench-status" role="status">Cargando…</span>
         </div>
@@ -34,7 +45,12 @@ import "../styles/global.css";
 
       <section class="bench__section" aria-labelledby="t-models">
         <h2 class="bench__title" id="t-models">Ranking de modelos</h2>
-        <p class="bench__hint">Ordenado por puntos por ronda. Latencia = lo que tarda el modelo en decidir (p50 y p95 por pelea, promediados).</p>
+        <p class="bench__hint">
+          Ordenado por puntos por ronda; si empatan, por porcentaje de victorias y después por partidas jugadas. Solo
+          entran al ranking los modelos con las partidas mínimas; el resto va abajo como "pocos datos". Los puntos de cada
+          escenario están en la página principal; con "Todos los escenarios" se mezclan escalas distintas (el dilema da hasta
+          5 por ronda), así que para comparar conviene filtrar. Latencia = lo que tarda el modelo en decidir (p50 y p95).
+        </p>
         <div class="bench__scroll"><table class="bench__table" id="tbl-models"></table></div>
       </section>
 
@@ -117,6 +133,41 @@ import "../styles/global.css";
     gap: 16px;
     align-items: center;
     margin-top: 12px;
+  }
+
+  .bench__bar {
+    flex-wrap: wrap;
+    align-items: end;
+  }
+
+  .bench__filter select,
+  .bench__filter input {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .bench__filter input {
+    width: 88px;
+  }
+
+  /* En el ranking la primera columna es la posición: el modelo va en la segunda. */
+  #tbl-models th:nth-child(2),
+  #tbl-models td:nth-child(2) {
+    text-align: left;
+  }
+
+  .bench__table tr.is-few td {
+    color: var(--faint);
+  }
+
+  .bench__table tr.bench__divider td {
+    padding-top: 14px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: left;
   }
 
   .bench__status {

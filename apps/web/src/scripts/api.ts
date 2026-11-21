@@ -20,6 +20,7 @@ import {
   type FlagBody,
   type FlaggedPrompt,
   JudgementSchema,
+  type BenchOptions,
   type BenchReport,
   type Judgement,
 } from "@phack/protocol";
@@ -168,8 +169,12 @@ export function fetchModels(): Promise<ModelsResponse> {
 }
 
 /** Tablero de benchmarks, calculado por el servidor con todo el historial. */
-export function fetchBench(): Promise<BenchReport> {
-  return request(API_ROUTES.bench, {
+export function fetchBench(options: BenchOptions = {}): Promise<BenchReport> {
+  const query = new URLSearchParams();
+  if (options.scenario) query.set("scenario", options.scenario);
+  if (options.minMatches !== undefined) query.set("min", String(options.minMatches));
+  const path = query.size > 0 ? `${API_ROUTES.bench}?${query}` : API_ROUTES.bench;
+  return request(path, {
     parse: (data) => {
       const report = data as BenchReport;
       if (typeof report !== "object" || report === null || !Array.isArray(report.models)) throw new Error("formato");

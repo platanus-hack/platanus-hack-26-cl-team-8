@@ -122,7 +122,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
-    bench: { report: async () => buildBenchReport(opts.history ?? [], 42) },
+    bench: { report: async (options) => buildBenchReport(opts.history ?? [], 42, options) },
     judge: async (id) =>
       id === ID ? { ok: false as const, reason: "el juez necesita un LLM real", status: 400 as const } : id === JUDGED ? { ok: true as const, judgement: JUDGEMENT } : null,
     ...(opts.speech ? { speech: opts.speech } : {}),
@@ -151,7 +151,17 @@ describe("benchmarks: GET /api/bench y POST /api/matches/:id/judge", () => {
     const s = await server();
     const res = await s.inject({ method: "GET", url: "/api/bench" });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ generatedAt: 42, matches: 0, models: [] });
+    expect(res.json()).toMatchObject({ generatedAt: 42, matches: 0, models: [], scenario: null, minMatches: 5 });
+  });
+
+  it("filtra por escenario y fija las partidas mínimas; rechaza valores que no son", async () => {
+    const s = await server();
+    const ok = await s.inject({ method: "GET", url: "/api/bench?scenario=dilemma&min=3" });
+    expect(ok.json()).toMatchObject({ scenario: "dilemma", minMatches: 3 });
+    expect((await s.inject({ method: "GET", url: "/api/bench?scenario=all" })).json().scenario).toBeNull();
+    for (const query of ["scenario=batalla", "min=0", "min=2.5", "min=mucho"]) {
+      expect((await s.inject({ method: "GET", url: `/api/bench?${query}` })).statusCode).toBe(400);
+    }
   });
 
   it("el juez: 400 si no puede, 404 si la pelea no existe, la nota si califica", async () => {

@@ -52,6 +52,7 @@ import {
   FlagBodySchema,
   DEFAULT_PROMPTS,
   DEFAULT_SETTINGS,
+  ScenarioIdSchema,
   normalizeTags,
   type FlaggedPrompt,
   type MatchRecord,
@@ -852,9 +853,15 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;
   }
-  if (method === "GET" && path === API_ROUTES.bench) {
+  if (method === "GET" && path.split("?")[0] === API_ROUTES.bench) {
     const { mockBenchReport } = await import("./mockbench");
-    return mockBenchReport();
+    const query = new URLSearchParams(path.split("?")[1] ?? "");
+    const scenario = ScenarioIdSchema.safeParse(query.get("scenario"));
+    const min = Number(query.get("min"));
+    return mockBenchReport({
+      scenario: scenario.success ? scenario.data : null,
+      ...(Number.isInteger(min) && min > 0 ? { minMatches: min } : {}),
+    });
   }
   const judgePath = /^\/api\/matches\/([^/]+)\/judge$/.exec(path);
   if (judgePath && method === "POST") {

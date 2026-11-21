@@ -5,6 +5,9 @@ import {
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
   API_ROUTES,
+  DEFAULT_MIN_MATCHES,
+  SCENARIO_IDS,
+  ScenarioIdSchema,
   FlagBodySchema,
   MAX_PROMPT_LENGTH,
   SideSchema,
@@ -13,6 +16,7 @@ import {
   formatTranscript,
   parseTranscript,
   type AgentConfig,
+  type BenchOptions,
   type BenchReport,
   type FlagBody,
   type FlaggedPrompt,
@@ -59,7 +63,7 @@ export type ServerDeps = {
     remove(matchId: string, side: Side): Promise<boolean>;
   };
   /** Tablero de benchmarks (ver buildBenchReport); opcional para los tests que no lo usan. */
-  bench?: { report(): Promise<BenchReport> };
+  bench?: { report(options: BenchOptions): Promise<BenchReport> };
   /** Califica una pelea con el LLM juez; null si esa pelea no existe. */
   judge?: (matchId: string) => Promise<JudgeOutcome | null>;
   /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
@@ -380,9 +384,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
   const bench = deps.bench;
   if (bench) {
-    app.get(API_ROUTES.bench, async (_req, reply) => {
+    // ?scenario=dilemma filtra por escenario ("all" o ausente = todos); ?min=5 son las
+    // partidas mínimas para entrar al ranking.
+    app.get<{ Querystring: { scenario?: string; min?: string } }>(API_ROUTES.bench, async (req, reply) => {
+      const rawScenario = req.query.scenario;
+      const scenario = rawScenario === undefined || rawScenario === "" || rawScenario === "all" ? null : ScenarioIdSchema.safeParse(rawScenario);
+      if (scenario && !scenario.success) {
+        return reply.code(400).send(errorBody(`Escenario inválido: usa all, ${SCENARIO_IDS.join(", ")}`));
+      }
+      const rawMin = req.query.min;
+      const min = rawMin === undefined || rawMin === "" ? DEFAULT_MIN_MATCHES : Number(rawMin);
+      if (!Number.isInteger(min) || min < 1 || min > 1000) {
+        return reply.code(400).send(errorBody("min debe ser un entero entre 1 y 1000"));
+      }
       reply.header("Cache-Control", "no-store");
-      return bench.report();
+      return bench.report({ scenario: scenario ? scenario.data : null, minMatches: min });
     });
   }
 

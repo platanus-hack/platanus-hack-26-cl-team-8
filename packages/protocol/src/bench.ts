@@ -1,5 +1,6 @@
 import {
   COMMS_MODES,
+  SCENARIO_IDS,
   JUDGE_CRITERIA,
   SIDES,
   type CommsMode,
@@ -95,6 +96,8 @@ export type ModelBench = {
   learning: { series: number; slope: Rate; shift: Rate };
   comms: Record<CommsMode, { matches: number; winRate: Rate; avgPoints: Rate }>;
   judge: { count: number; avg: Record<JudgeCriterion, number> | null };
+  /** Jugó al menos `minMatches` partidas: entra al ranking. Si no, va aparte como "pocos datos". */
+  enoughData: boolean;
 };
 
 export type RoundBench = {
@@ -149,8 +152,24 @@ export type RecentBench = {
   mirror: boolean;
 };
 
+/** Partidas mínimas para entrar al ranking, si no se pide otra cosa. */
+export const DEFAULT_MIN_MATCHES = 5;
+
+/** Qué parte del historial mirar. */
+export type BenchOptions = {
+  /** Solo las partidas de este escenario; null o ausente = todas. */
+  scenario?: ScenarioId | null;
+  /** Partidas mínimas para entrar al ranking (ver ModelBench.enoughData). */
+  minMatches?: number;
+};
+
 export type BenchReport = {
   generatedAt: number;
+  /** El filtro aplicado: escenario (null = todos) y partidas mínimas para el ranking. */
+  scenario: ScenarioId | null;
+  minMatches: number;
+  /** Partidas por escenario en todo el historial, antes de filtrar (para el selector). */
+  scenarios: Record<ScenarioId, number>;
   /** Partidas consideradas (las que terminaron de verdad: sin detenidas ni con error). */
   matches: number;
   rounds: number;
@@ -315,8 +334,19 @@ function newAcc(model: string): Acc {
  * con error no cuentan. Lo que falta en los registros de antes de los benchmarks
  * (métricas, puntos) simplemente no suma.
  */
-export function buildBenchReport(all: readonly MatchRecord[], now: number = Date.now()): BenchReport {
-  const records = all.filter(counted).sort((a, b) => a.startedAt - b.startedAt);
+export function buildBenchReport(
+  all: readonly MatchRecord[],
+  now: number = Date.now(),
+  options: BenchOptions = {},
+): BenchReport {
+  const scenario = options.scenario ?? null;
+  const minMatches = Math.max(1, Math.round(options.minMatches ?? DEFAULT_MIN_MATCHES));
+  const valid = all.filter(counted);
+  const scenarios = Object.fromEntries(SCENARIO_IDS.map((id) => [id, 0])) as Record<ScenarioId, number>;
+  for (const record of valid) scenarios[record.settings.scenario] += 1;
+  const records = valid
+    .filter((record) => scenario === null || record.settings.scenario === scenario)
+    .sort((a, b) => a.startedAt - b.startedAt);
   const accs = new Map<string, Acc>();
   const acc = (model: string): Acc => {
     let found = accs.get(model);
@@ -520,9 +550,18 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
       learning: { series: a.slopes.length, slope: mean(a.slopes), shift: mean(a.shifts) },
       comms,
       judge: { count: judged, avg: judgeAvg },
+      enoughData: a.matches >= minMatches,
     };
   });
-  models.sort((x, y) => (y.avgPoints ?? -1) - (x.avgPoints ?? -1) || (y.winRate ?? -1) - (x.winRate ?? -1) || y.matches - x.matches);
+  // Primero los que tienen datos suficientes; dentro de cada grupo, por puntos por ronda,
+  // después por porcentaje de victorias y después por partidas jugadas.
+  models.sort(
+    (x, y) =>
+      Number(y.enoughData) - Number(x.enoughData) ||
+      (y.avgPoints ?? -1) - (x.avgPoints ?? -1) ||
+      (y.winRate ?? -1) - (x.winRate ?? -1) ||
+      y.matches - x.matches,
+  );
 
   const recent: RecentBench[] = [...records]
     .reverse()
@@ -543,7 +582,7 @@ export function buildBenchReport(all: readonly MatchRecord[], now: number = Date
       };
     });
 
-  return { generatedAt: now, matches: records.length, rounds: totalRounds, models, series, mirror, recent };
+  return { generatedAt: now, scenario, minMatches, scenarios, matches: records.length, rounds: totalRounds, models, series, mirror, recent };
 }
 
 /**
