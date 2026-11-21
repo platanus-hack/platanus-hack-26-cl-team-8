@@ -400,11 +400,13 @@ describe("MatchManager: kits", () => {
   it("al terminar la pelea borra los bloques que colocaron los peleadores", async () => {
     const t = setup();
     await startRunning(t);
-    expect(t.rconCommands.some((c) => c.includes("replace minecraft:oak_planks"))).toBe(false);
+    expect(t.rconCommands.some((c) => c.includes("air replace"))).toBe(false);
     await t.manager.stop();
-    await vi.waitFor(() =>
-      expect(t.rconCommands.some((c) => c.endsWith("minecraft:air replace minecraft:oak_planks"))).toBe(true),
-    );
+    await vi.waitFor(() => {
+      for (const filter of ["#minecraft:planks", "#minecraft:wool", "minecraft:water", "minecraft:lava"]) {
+        expect(t.rconCommands.some((c) => c.endsWith(`minecraft:air replace ${filter}`))).toBe(true);
+      }
+    });
   });
 });
 

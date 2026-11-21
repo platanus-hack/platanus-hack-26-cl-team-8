@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, KITS, KIT_LIST } from "@phack/protocol";
 import {
   arenaBuildCommands,
-  clearPlacedBlocksCommand,
+  clearPlacedBlocksCommands,
   fighterKitCommands,
   prepareFighter,
   runCountdown,
@@ -230,10 +230,14 @@ describe("arena", () => {
     );
   });
 
-  it("al terminar borra solo los tablones, y solo dentro de la arena", () => {
-    expect(clearPlacedBlocksCommand()).toBe(
-      `fill ${min.x + 1} ${ARENA.center.y + 1} ${min.z + 1} ${max.x - 1} ${wallTop} ${max.z - 1} ` +
-        "minecraft:air replace minecraft:oak_planks",
-    );
+  it("al terminar borra bloques, agua, lava y fuego, y solo dentro de la arena", () => {
+    const box = `fill ${min.x + 1} ${ARENA.center.y + 1} ${min.z + 1} ${max.x - 1} ${wallTop} ${max.z - 1} minecraft:air replace`;
+    expect(clearPlacedBlocksCommands()).toEqual([
+      `${box} #minecraft:planks`,
+      `${box} #minecraft:wool`,
+      `${box} minecraft:water`,
+      `${box} minecraft:lava`,
+      `${box} minecraft:fire`,
+    ]);
   });
 });

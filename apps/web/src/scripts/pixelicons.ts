@@ -31,6 +31,8 @@ export const MATERIALS = {
   diamond: { a: "#b5fbf2", b: "#4fe0d2", c: "#1f9c93" },
   wood: { a: "#d2a468", b: "#a97c44", c: "#7b5730" },
   chainmail: { a: "#a7adb8", b: "#6a717d", c: "#3e434c" },
+  /** Lana (un solo tono neutro para todos los colores: el nombre del ítem dice cuál es). */
+  wool: { a: "#f4f1ea", b: "#d9d4c8", c: "#a9a397" },
 } satisfies Record<string, MaterialColors>;
 
 export type Material = keyof typeof MATERIALS;
@@ -38,6 +40,22 @@ export type Material = keyof typeof MATERIALS;
 const OUTLINE = "#17120e";
 /** Mango de madera de espadas y hachas. */
 const HANDLE = "#99632f";
+
+/** Cubo visto de frente: `w`/`h` son el líquido (y su brillo), `m`/`l`/`d` el metal. */
+const BUCKET_ROWS = [
+  "...........",
+  ".kkkkkkkkk.",
+  ".kwwwwwwwk.",
+  ".kwwhwwwwk.",
+  ".kmmmmmmmk.",
+  "..kmmmmmk..",
+  "..kmlmmmk..",
+  "..kmmmmdk..",
+  "..kmmmmdk..",
+  "...kkkkk...",
+  "...........",
+];
+const BUCKET_METAL = { m: "#c7ced8", l: "#eef1f5", d: "#7d8794" };
 
 export const ICONS = {
   food: {
@@ -302,6 +320,31 @@ export const ICONS = {
       "..kpddddk..",
       "...kkkkk...",
     ],
+  },
+  // Escudo: tablas de madera con borde de hierro y una franja en cruz.
+  shield: {
+    palette: { k: OUTLINE, b: "#9ea9b8", a: "#a97c44", d: "#7b5730" },
+    rows: [
+      ".kkkkkkkkk.",
+      ".kbbbbbbbk.",
+      ".kbaadaabk.",
+      ".kbaadaabk.",
+      ".kbaadaabk.",
+      ".kbdddddbk.",
+      ".kbaadaabk.",
+      "..kbadabk..",
+      "..kbbabbk..",
+      "...kbbbk...",
+      "....kkk....",
+    ],
+  },
+  water_bucket: {
+    palette: { k: OUTLINE, ...BUCKET_METAL, w: "#3f76e4", h: "#8fb4ff" },
+    rows: BUCKET_ROWS,
+  },
+  lava_bucket: {
+    palette: { k: OUTLINE, ...BUCKET_METAL, w: "#e2591b", h: "#ffc23d" },
+    rows: BUCKET_ROWS,
   },
   // Un bloque visto de frente (un cubo en perspectiva no se entiende a 11 px). Sin material, madera.
   tile: {
