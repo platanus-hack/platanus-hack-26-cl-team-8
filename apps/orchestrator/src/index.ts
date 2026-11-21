@@ -118,7 +118,7 @@ async function main(): Promise<void> {
     history,
     flags,
     transcripts,
-    bench: { report: async () => buildBenchReport(await history.all()) },
+    bench: { report: async (options) => buildBenchReport(await history.all(), Date.now(), options) },
     judge: async (id) => {
       const record = await history.find(id);
       return record ? match.judgeRecord(record) : null;

@@ -6,7 +6,10 @@ import {
   JUDGE_LABELS,
   SCENARIOS,
   SIDES,
+  DEFAULT_MIN_MATCHES,
+  ScenarioIdSchema,
   type BenchReport,
+  type ScenarioId,
   type ModelBench,
   type Rate,
   type SeriesBench,
@@ -123,6 +126,7 @@ function renderModels(models: ModelBench[]): void {
   table(
     byId<HTMLTableElement>("tbl-models"),
     [
+      { label: "#", tip: "Posición en el ranking (solo con partidas suficientes)." },
       { label: "Modelo" },
       { label: "Peleas" },
       { label: "V / D / E", tip: "Victorias, derrotas y empates." },
@@ -137,7 +141,8 @@ function renderModels(models: ModelBench[]): void {
       { label: "Costo total" },
       { label: "Costo/victoria" },
     ],
-    models.map((m) => [
+    models.map((m, i) => [
+      m.enoughData ? String(i + 1) : "–",
       modelNode(m.model),
       String(m.matches),
       `${m.wins} / ${m.losses} / ${m.draws}`,
@@ -349,6 +354,67 @@ function renderJudge(report: BenchReport): void {
   );
 }
 
+/**
+ * Modelos con menos partidas que el mínimo: sus filas quedan apagadas en todas las tablas
+ * por modelo, y en el ranking van después de una línea que lo explica. Las filas de esas
+ * tablas siguen el orden de `models`.
+ */
+function markFewData(tableId: string, models: ModelBench[], divider: string | null): void {
+  const rows = Array.from(byId<HTMLTableElement>(tableId).querySelectorAll<HTMLTableRowElement>("tbody tr"));
+  models.forEach((m, i) => {
+    const row = rows[i];
+    if (!row || m.enoughData) return;
+    row.classList.add("is-few");
+    row.dataset.tip = "Pocos datos: todavía no entra al ranking.";
+  });
+  const first = models.findIndex((m) => !m.enoughData);
+  const at = rows[first];
+  if (divider === null || first < 0 || !at) return;
+  const line = el("tr", "bench__divider");
+  const td = el("td", "", divider);
+  td.colSpan = at.cells.length;
+  line.append(td);
+  at.before(line);
+}
+
+// ---------- Filtros ----------
+
+const scenarioSelect = byId<HTMLSelectElement>("bench-scenario");
+const minInput = byId<HTMLInputElement>("bench-min");
+
+/** El filtro vive en la URL (?scenario=dilemma&min=3): así un enlace muestra lo mismo. */
+function readFilters(): { scenario: ScenarioId | null; minMatches: number } {
+  const params = new URLSearchParams(window.location.search);
+  const scenario = ScenarioIdSchema.safeParse(params.get("scenario"));
+  const min = Number(params.get("min"));
+  return {
+    scenario: scenario.success ? scenario.data : null,
+    minMatches: Number.isInteger(min) && min >= 1 && min <= 1000 ? min : DEFAULT_MIN_MATCHES,
+  };
+}
+
+function writeFilters(): void {
+  const params = new URLSearchParams(window.location.search);
+  const scenario = ScenarioIdSchema.safeParse(scenarioSelect.value);
+  if (scenario.success) params.set("scenario", scenario.data);
+  else params.delete("scenario");
+  const min = Math.round(Number(minInput.value));
+  if (Number.isInteger(min) && min >= 1 && min !== DEFAULT_MIN_MATCHES) params.set("min", String(Math.min(1000, min)));
+  else params.delete("min");
+  const query = params.toString();
+  window.history.replaceState(null, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
+}
+
+/** Cuántas partidas hay de cada escenario, en el selector ("Dilema del prisionero (12)"). */
+function renderScenarioCounts(report: BenchReport): void {
+  const total = Object.values(report.scenarios).reduce((a, b) => a + b, 0);
+  for (const option of Array.from(scenarioSelect.options)) {
+    const id = ScenarioIdSchema.safeParse(option.value);
+    const name = id.success ? SCENARIOS[id.data].name : "Todos los escenarios";
+    option.textContent = `${name} (${id.success ? report.scenarios[id.data] : total})`;
+  }
+}
+
 // ---------- Carga ----------
 
 const status = byId("bench-status");
@@ -356,19 +422,39 @@ const status = byId("bench-status");
 async function load(): Promise<void> {
   setText(status, "Cargando…");
   try {
-    const report = await fetchBench();
+    const filters = readFilters();
+    const report = await fetchBench(filters);
+    renderScenarioCounts(report);
     renderModels(report.models);
     renderSocial(report.models);
     renderPressure(report.models);
     renderComms(report.models);
+    const few = `Pocos datos: menos de ${report.minMatches} ${report.minMatches === 1 ? "partida" : "partidas"}, no entran al ranking`;
+    markFewData("tbl-models", report.models, few);
+    for (const id of ["tbl-social", "tbl-pressure", "tbl-comms"]) markFewData(id, report.models, null);
     renderSeries(report.series);
     renderMirror(report);
     renderJudge(report);
-    setText(status, `${report.matches} partidas · ${report.rounds} rondas · actualizado ${formatDateTime(report.generatedAt)}`);
+    const which = report.scenario ? SCENARIOS[report.scenario].name : "todos los escenarios";
+    const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+    setText(status, `${which} · ${plural(report.matches, "partida", "partidas")} · ${plural(report.rounds, "ronda", "rondas")} · actualizado ${formatDateTime(report.generatedAt)}`);
   } catch (err) {
     setText(status, `No se pudo cargar el tablero: ${describeError(err)}`);
   }
 }
 
 byId("bench-refresh").addEventListener("click", () => void load());
+{
+  const initial = readFilters();
+  scenarioSelect.value = initial.scenario ?? "all";
+  minInput.value = String(initial.minMatches);
+}
+scenarioSelect.addEventListener("change", () => {
+  writeFilters();
+  void load();
+});
+minInput.addEventListener("change", () => {
+  writeFilters();
+  void load();
+});
 void load();
