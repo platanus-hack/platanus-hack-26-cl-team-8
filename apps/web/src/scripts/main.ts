@@ -12,8 +12,9 @@ import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
 import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
-import { initSound, playEnd, playHit, playKnockout, playStart } from "./sound";
-import { initThoughts, markFallen, pushAction, pushThought, syncThoughts } from "./thoughts";
+import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } from "./sound";
+import { initThoughts, markFallen, pushAction, pushMessage, pushThought, syncThoughts } from "./thoughts";
+import { initTranscriptLink, setTranscriptMatch } from "./transcriptlink";
 
 const STATE_POLL_MS = 5000;
 
@@ -58,6 +59,7 @@ function applyState(state: MatchState): void {
   renderState(state);
   syncThoughts(state);
   setPhase(state.phase);
+  setTranscriptMatch(state.id);
   updateCountdown(state);
 
   if (lastPhase !== null && lastPhase !== state.phase) {
@@ -84,6 +86,8 @@ function handleEvent(event: ArenaEvent): void {
       applyRemoteSettings(event.settings);
       break;
     case "message":
+      playMessage(event.side);
+      pushMessage(event.side, event.text, event.at);
       addFeed({ at: event.at, kind: "message", side: event.side, text: event.text });
       break;
     case "thought":
@@ -228,7 +232,12 @@ function pollState(): void {
     .then((state) => {
       // Mientras se esperaba la respuesta llegó algo por el websocket: esto ya es más viejo.
       if (lastLiveEventAt >= sentAt) return;
-      enqueue({ type: "state", at: serverNow(), state });
+      const event: ArenaEvent = { type: "state", at: serverNow(), state };
+      // Sin ningún evento del websocket todavía no se conoce la hora del servidor: la de
+      // este estado sería la del navegador, y con un reloj adelantado dejaría la cola
+      // entera esperando. Se aplica de una vez; es lo primero que ve la página.
+      if (lastLiveEventAt === 0) handleEvent(event);
+      else enqueue(event);
     })
     .catch(() => {
       // Silencioso: el indicador de conexión ya informa el problema.
@@ -240,12 +249,15 @@ function init(): void {
   initThoughts();
   initCountdown(announceStart);
   initFeed();
+  initTranscriptLink();
   initPrompts();
   initSettings();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.
   initControls((state) => {
     drainPending(true);
+    // Una consulta por HTTP que iba en camino trae un estado anterior al del botón.
+    lastLiveEventAt = Date.now();
     applyState(state);
   });
   window.setInterval(drainPending, DRAIN_MS);

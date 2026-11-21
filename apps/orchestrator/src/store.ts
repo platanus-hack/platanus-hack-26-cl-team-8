@@ -41,20 +41,29 @@ export function normalizeConfig(side: Side, body: UpdatePromptBody): AgentConfig
 
 /**
  * Adapta una configuración guardada antes de que quedaran solo los proveedores "mock" y
- * "vercel": "gateway" era el mismo servicio que "vercel"; cualquier otro proveedor que ya
- * no existe se borra (ese lado pasa a usar el proveedor por defecto). El prompt y el modelo
- * se conservan. Se aplica al leer, no reescribe archivos y repetirla no cambia nada.
+ * "vercel". "gateway" era el mismo servicio que "vercel", y los modelos de "openrouter" ya
+ * venían con el formato del gateway ("openai/gpt-…"): los dos pasan a "vercel" con su
+ * modelo. Con cualquier otro proveedor que ya no existe ("openai", "anthropic"…) se borran
+ * el proveedor y el modelo, que fuera de ese proveedor no significa nada: ese lado pasa a
+ * usar el proveedor y el modelo por defecto. El prompt se conserva siempre. Se aplica al
+ * leer, no reescribe archivos y repetirla no cambia nada.
+ * `keepModel`: para el historial, donde el modelo no se vuelve a usar y es la verdad de lo
+ * que peleó, se conserva igual.
  */
-export function migrateStoredConfig(raw: unknown): unknown {
+export function migrateStoredConfig(raw: unknown, keepModel = false): unknown {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
   const config = { ...(raw as Record<string, unknown>) };
   if (config.provider === undefined || ProviderSchema.safeParse(config.provider).success) return config;
-  if (config.provider === "gateway") config.provider = "vercel";
-  else delete config.provider;
+  if (config.provider === "gateway" || config.provider === "openrouter") {
+    config.provider = "vercel";
+  } else {
+    delete config.provider;
+    if (!keepModel) delete config.model;
+  }
   return config;
 }
 
-/** Aplica migrateStoredConfig a los dos lados de una pelea guardada. */
+/** Aplica migrateStoredConfig a los dos lados de una pelea guardada (conservando los modelos). */
 function migrateStoredRecord(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null) return raw;
   const record = raw as Record<string, unknown>;
@@ -63,7 +72,7 @@ function migrateStoredRecord(raw: unknown): unknown {
   const bySide = configs as Record<string, unknown>;
   return {
     ...record,
-    configs: { ...bySide, red: migrateStoredConfig(bySide.red), blue: migrateStoredConfig(bySide.blue) },
+    configs: { ...bySide, red: migrateStoredConfig(bySide.red, true), blue: migrateStoredConfig(bySide.blue, true) },
   };
 }
 

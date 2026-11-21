@@ -19,11 +19,14 @@ let onZero: (() => void) | null = null;
 let endsAt: number | null = null;
 /** Lo que está escrito ahora ("3", "¡Pelea!"): se anima y suena solo cuando cambia. */
 let shown = "";
+/** El número más bajo que ya se mostró en esta cuenta; null si aún no se muestra ninguno. */
+let lowest: number | null = null;
 let frame: number | undefined;
 
 function hide(): void {
   endsAt = null;
   shown = "";
+  lowest = null;
   if (frame !== undefined) window.cancelAnimationFrame(frame);
   frame = undefined;
   if (holder && !holder.hidden) {
@@ -44,7 +47,14 @@ function render(): void {
 
   const counting = remaining > 0;
   // Nunca más que el número inicial, aunque el estado se haya aplicado antes que la imagen.
-  const text = counting ? String(Math.min(COUNTDOWN_SECONDS, Math.ceil(remaining / 1000))) : GO_TEXT;
+  let text = GO_TEXT;
+  if (counting) {
+    // La cuenta solo baja. Si la página abre (o el video vuelve) a mitad de cuenta, el
+    // instante que se ve retrocede de golpe; sin esto el número subiría y sonaría de nuevo.
+    const step = Math.min(COUNTDOWN_SECONDS, Math.ceil(remaining / 1000), lowest ?? COUNTDOWN_SECONDS);
+    lowest = step;
+    text = String(step);
+  }
   if (text !== shown) {
     shown = text;
     // Un elemento nuevo por paso: así la animación de entrada parte de nuevo cada vez.

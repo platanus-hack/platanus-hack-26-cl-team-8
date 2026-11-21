@@ -268,9 +268,21 @@ const stats = [
       </section>
 
         <aside class="feed" aria-label="Eventos en vivo">
-          <h2 class="feed__title">Eventos</h2>
+          <header class="feed__head">
+            <h2 class="feed__title">Eventos</h2>
+            <a
+              class="feed__transcript"
+              id="transcript-link"
+              target="_blank"
+              rel="noopener"
+              data-tip="Todo lo que pasó en esta pelea, paso a paso: qué vio, pensó, dijo e hizo cada agente."
+              hidden
+            >
+              Ver transcripción
+            </a>
+          </header>
           <ol class="feed__list" id="feed-list" aria-live="off">
-            <li class="feed__empty">Aquí aparecerán los pensamientos, acciones y golpes de cada agente.</li>
+            <li class="feed__empty">Aquí aparecerá lo que cada agente piensa, dice y hace.</li>
           </ol>
           <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
         </aside>

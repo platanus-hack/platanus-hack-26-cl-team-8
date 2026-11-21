@@ -42,6 +42,34 @@ const EnvSchema = z.object({
 
 export type Env = z.infer<typeof EnvSchema>;
 
+/** Proveedores que existieron y se quitaron: un `.env` viejo todavía puede nombrarlos. */
+const REMOVED_PROVIDERS = ["openai", "anthropic", "openrouter"];
+
+/**
+ * Deja un `.env` de antes en la forma de hoy, sin tocar el original:
+ * - "gateway" era Vercel AI Gateway con otro nombre: ahora es "vercel", y su clave
+ *   (AI_GATEWAY_API_KEY) vale como VERCEL_API_KEY si esta no está.
+ * - Los demás proveedores quitados no tienen reemplazo automático: el error dice qué poner.
+ */
+function withLegacyNames(source: Record<string, string | undefined>): Record<string, string | undefined> {
+  const env = { ...source };
+  const provider = (env.LLM_PROVIDER ?? "").trim().toLowerCase();
+  if (provider === "gateway") env.LLM_PROVIDER = "vercel";
+  if (REMOVED_PROVIDERS.includes(provider)) {
+    throw new Error(
+      `Variables de entorno inválidas: LLM_PROVIDER="${provider}" ya no existe. Usa "vercel" (Vercel AI Gateway, con su clave en VERCEL_API_KEY) o "mock" (LLM simulado).`,
+    );
+  }
+  if (!(env.VERCEL_API_KEY ?? "").trim() && (env.AI_GATEWAY_API_KEY ?? "").trim()) {
+    env.VERCEL_API_KEY = env.AI_GATEWAY_API_KEY;
+  }
+  return env;
+}
+
+function issuesText(error: z.ZodError): string {
+  return error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+}
+
 /**
  * Sin argumentos: carga primero el `.env` de la raíz del repo (si existe) y luego lee
  * `process.env`. Así `pnpm dev` fuera de Docker usa el mismo `.env` que docker-compose.
@@ -49,10 +77,23 @@ export type Env = z.infer<typeof EnvSchema>;
  */
 export function loadEnv(source?: Record<string, string | undefined>): Env {
   if (source === undefined) loadDotEnv();
-  const parsed = EnvSchema.safeParse(source ?? process.env);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
-    throw new Error(`Variables de entorno inválidas: ${issues}`);
-  }
+  const parsed = EnvSchema.safeParse(withLegacyNames(source ?? process.env));
+  if (!parsed.success) throw new Error(`Variables de entorno inválidas: ${issuesText(parsed.error)}`);
   return parsed.data;
+}
+
+/**
+ * Igual que `loadEnv`, pero solo lee y valida las variables pedidas. Para procesos que
+ * usan una parte (la cámara no habla con ningún LLM): un valor malo en una variable que
+ * no les toca no les impide arrancar.
+ */
+export function loadEnvKeys<K extends keyof Env>(
+  keys: readonly K[],
+  source?: Record<string, string | undefined>,
+): Pick<Env, K> {
+  if (source === undefined) loadDotEnv();
+  const mask = Object.fromEntries(keys.map((key) => [key, true])) as { [key in keyof Env]?: true };
+  const parsed = EnvSchema.pick(mask).safeParse(source ?? process.env);
+  if (!parsed.success) throw new Error(`Variables de entorno inválidas: ${issuesText(parsed.error)}`);
+  return parsed.data as Pick<Env, K>;
 }

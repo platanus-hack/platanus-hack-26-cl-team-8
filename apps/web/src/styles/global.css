@@ -361,7 +361,8 @@ textarea {
 .hud {
   position: absolute;
   inset: 56px var(--gutter) auto var(--gutter);
-  z-index: 3;
+  /* Sobre las columnas de pensamientos: la ayuda de las estadísticas se abre encima de ellas. */
+  z-index: 4;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: start;
@@ -788,6 +789,63 @@ textarea {
 }
 
 /*
+ * Lo que el agente le dice en voz alta al otro (modo "chat"): un globo claro dentro de su
+ * columna, con la cola hecha de bloques de 4 px. Es lo único con forma de globo en la
+ * pantalla: lo que piensa va sobre el velo oscuro, lo que dice va sobre papel.
+ */
+.thoughts__col .thought--said {
+  position: relative;
+  margin-top: 8px;
+  padding: 8px 13px 9px 11px;
+  border-left-width: 4px;
+  background: var(--text);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
+  color: #0b0b0d;
+}
+
+.thoughts__col--blue .thought--said {
+  padding: 8px 11px 9px 13px;
+  border-right-width: 4px;
+  /* El globo va pegado al borde, pero su texto se lee de izquierda a derecha. */
+  text-align: left;
+}
+
+.thought--said::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: 10px;
+  width: 4px;
+  height: 4px;
+  background: var(--text);
+  box-shadow:
+    0 4px 0 var(--text),
+    4px 4px 0 var(--text),
+    0 8px 0 var(--text),
+    4px 8px 0 var(--text),
+    8px 8px 0 var(--text);
+}
+
+.thoughts__col--blue .thought--said::before {
+  left: auto;
+  right: 10px;
+  box-shadow:
+    0 4px 0 var(--text),
+    -4px 4px 0 var(--text),
+    0 8px 0 var(--text),
+    -4px 8px 0 var(--text),
+    -8px 8px 0 var(--text);
+}
+
+/* Un mensaje se lee entero mientras es el más nuevo; el texto completo queda en "Eventos". */
+.thought--said .thought__text {
+  -webkit-line-clamp: 9;
+  font-weight: 600;
+  text-shadow: none;
+  white-space: pre-line;
+}
+
+/*
  * Mientras un pensamiento se escribe letra a letra, lo que falta ya está en la página
  * pero invisible: el pensamiento ocupa su alto final desde el principio.
  */
@@ -1156,6 +1214,33 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 /* La lista llena el alto de la columna de prompts, sin estirarla. */
+.feed__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Transcripción de la pelea que está (o estuvo recién) en pantalla. */
+.feed__transcript {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+.feed__transcript:hover,
+.feed__transcript:focus-visible {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.feed__transcript[data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
 .feed__list {
   position: absolute;
   inset: 44px 0 0 28px;

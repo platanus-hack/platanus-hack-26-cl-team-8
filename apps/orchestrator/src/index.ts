@@ -11,6 +11,7 @@ import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
 import { MatchStore, PromptStore, SettingsStore } from "./store";
+import { TranscriptStore } from "./transcript";
 import { errorMessage, sleep, type LogFn } from "./util";
 
 const log: LogFn = (level, text) => {
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   await prompts.load();
   await settings.load();
   await history.load();
+  const transcripts = new TranscriptStore(dataDir, log);
 
   const rcon = new RconClient({
     host: env.RCON_HOST,
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
     prompts,
     settings,
     history,
+    transcripts,
     createFighter,
     createLlmClient,
     models,
@@ -74,7 +77,17 @@ async function main(): Promise<void> {
   });
   hub.start();
 
-  const app = await buildServer({ hub, match, prompts, settings, history, defaults, models });
+  const app = await buildServer({
+    hub,
+    match,
+    prompts,
+    settings,
+    history,
+    transcripts,
+    defaults,
+    models,
+    vercelKeyConfigured: env.VERCEL_API_KEY.trim() !== "",
+  });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 
@@ -90,6 +103,8 @@ async function main(): Promise<void> {
     void (async () => {
       try {
         await match.shutdown();
+        // Lo último de la pelea (su "end") queda escrito antes de salir.
+        await transcripts.flush();
         models.stop();
         hub.close();
         await app.close();

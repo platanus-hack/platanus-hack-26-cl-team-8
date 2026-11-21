@@ -49,6 +49,13 @@ export function playHit(): void {
   tone("triangle", 120, 50, 0.14, 0.2);
 }
 
+/** Un agente le habla al otro: dos notas cortas, más graves para Rojo y más agudas para Azul. */
+export function playMessage(side: "red" | "blue"): void {
+  const pitch = side === "red" ? 392 : 523;
+  tone("square", pitch, pitch, 0.045, 0.07);
+  tone("square", pitch * 1.19, pitch * 1.19, 0.06, 0.07, 0.07);
+}
+
 /** Caída de un agente: cuatro notas que bajan. */
 export function playKnockout(): void {
   [440, 330, 247, 147].forEach((frequency, index) => {

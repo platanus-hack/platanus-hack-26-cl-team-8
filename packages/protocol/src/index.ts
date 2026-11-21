@@ -559,7 +559,11 @@ export const AgentConfigSchema = z.object({
   side: SideSchema,
   prompt: z.string().max(MAX_PROMPT_LENGTH),
   /** Vacío = usar LLM_PROVIDER / LLM_MODEL del entorno. */
-  provider: ProviderSchema.optional(),
+  /**
+   * Un proveedor que ya no existe (un servidor más viejo que la web, o un registro
+   * guardado de antes) se lee como "sin proveedor" en vez de invalidar todo el dato.
+   */
+  provider: ProviderSchema.optional().catch(undefined),
   model: z.string().max(100).optional(),
   /**
    * Kit con el que pelea este lado. Opcional y tolerante: si falta (registros viejos,
@@ -574,7 +578,10 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
-export const UpdatePromptBodySchema = AgentConfigSchema.omit({ side: true, customKit: true });
+/** Lo que manda la web al guardar. Aquí el proveedor sí se valida: uno desconocido es un 400. */
+export const UpdatePromptBodySchema = AgentConfigSchema.omit({ side: true, customKit: true }).extend({
+  provider: ProviderSchema.optional(),
+});
 export type UpdatePromptBody = z.infer<typeof UpdatePromptBodySchema>;
 
 export const DEFAULT_PROMPTS: Record<Side, string> = {
@@ -608,8 +615,13 @@ export const COMMS_LABELS: Record<CommsMode, { name: string; description: string
   },
 };
 
-/** Largo máximo de un mensaje entre agentes (modo "chat"). */
-export const MAX_AGENT_MESSAGE_LENGTH = 240;
+/**
+ * Largo máximo de un mensaje entre agentes (modo "chat"). Es un tope técnico (que una
+ * respuesta desbocada no llene la pantalla ni el registro), no una regla sobre el
+ * contenido: qué decir, cómo, en qué idioma y cuándo lo decide cada agente, y el sistema
+ * lo entrega tal cual, sin filtrarlo ni reescribirlo.
+ */
+export const MAX_AGENT_MESSAGE_LENGTH = 500;
 
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
@@ -706,6 +718,33 @@ export type MatchRecord = z.infer<typeof MatchRecordSchema>;
 
 // ---------- Eventos en tiempo real (WS orquestador -> web) ----------
 
+const ThoughtEventSchema = z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() });
+/** Modo "chat": `side` le dijo `text` al rival. */
+const MessageEventSchema = z.object({ type: z.literal("message"), at: z.number(), side: SideSchema, text: z.string() });
+const ActionEventSchema = z.object({
+  type: z.literal("action"),
+  at: z.number(),
+  side: SideSchema,
+  tool: z.string(),
+  args: z.record(z.unknown()),
+  result: z.string(),
+});
+const DamageEventSchema = z.object({
+  type: z.literal("damage"),
+  at: z.number(),
+  /** Quién recibió el daño. */
+  side: SideSchema,
+  amount: z.number(),
+  health: z.number(),
+});
+const DeathEventSchema = z.object({ type: z.literal("death"), at: z.number(), side: SideSchema });
+const LogEventSchema = z.object({
+  type: z.literal("log"),
+  at: z.number(),
+  level: z.enum(["info", "warn", "error"]),
+  text: z.string(),
+});
+
 export const ArenaEventSchema = z.discriminatedUnion("type", [
   /** Se envía al conectar y cada vez que cambia el estado (como máximo ~4/s). */
   z.object({ type: z.literal("state"), at: z.number(), state: MatchStateSchema }),
@@ -717,30 +756,101 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   }),
   /** Ajustes pendientes para la PRÓXIMA pelea cambiaron. */
   z.object({ type: z.literal("settings"), at: z.number(), settings: MatchSettingsSchema }),
-  z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() }),
-  /** Modo "chat": `side` le dijo `text` al rival. */
-  z.object({ type: z.literal("message"), at: z.number(), side: SideSchema, text: z.string() }),
-  z.object({
-    type: z.literal("action"),
-    at: z.number(),
-    side: SideSchema,
-    tool: z.string(),
-    args: z.record(z.unknown()),
-    result: z.string(),
-  }),
-  z.object({
-    type: z.literal("damage"),
-    at: z.number(),
-    /** Quién recibió el daño. */
-    side: SideSchema,
-    amount: z.number(),
-    health: z.number(),
-  }),
-  z.object({ type: z.literal("death"), at: z.number(), side: SideSchema }),
+  ThoughtEventSchema,
+  MessageEventSchema,
+  ActionEventSchema,
+  DamageEventSchema,
+  DeathEventSchema,
   z.object({ type: z.literal("match_end"), at: z.number(), record: MatchRecordSchema }),
-  z.object({ type: z.literal("log"), at: z.number(), level: z.enum(["info", "warn", "error"]), text: z.string() }),
+  LogEventSchema,
 ]);
 export type ArenaEvent = z.infer<typeof ArenaEventSchema>;
+
+// ---------- Transcripción de una pelea ----------
+//
+// Cada pelea deja un archivo DATA_DIR/transcripts/<id>.jsonl: una entrada por línea, en
+// el orden en que pasó, escrita mientras la pelea ocurre (si el servidor se cae, queda
+// lo que alcanzó a pasar). Es el registro completo; MatchRecord es solo el resumen.
+
+export const TranscriptEntrySchema = z.discriminatedUnion("type", [
+  /** Primera entrada: con qué se peleó. Los configs ya traen el proveedor, modelo y kit reales. */
+  z.object({
+    type: z.literal("start"),
+    at: z.number(),
+    matchId: z.string(),
+    configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
+    settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
+    /** Prompt de sistema completo de cada agente (el mundo + las instrucciones del usuario). */
+    systemPrompts: z.object({ red: z.string(), blue: z.string() }),
+    tickMs: z.number(),
+    durationSeconds: z.number(),
+  }),
+  z.object({ type: z.literal("phase"), at: z.number(), phase: MatchPhaseSchema }),
+  /**
+   * Una respuesta del LLM: qué vio el agente, qué respondió y cuánto costó. Lo que de
+   * ahí se ejecutó viene en las entradas "thought", "message" y "action" que le siguen
+   * para el mismo lado.
+   */
+  z.object({
+    type: z.literal("decision"),
+    at: z.number(),
+    side: SideSchema,
+    /** Lo que tardó el LLM en responder, en ms. */
+    ms: z.number(),
+    tokensIn: z.number().optional(),
+    tokensOut: z.number().optional(),
+    /** La observación que recibió el LLM, tal cual. */
+    observation: z.record(z.unknown()).optional(),
+    /**
+     * La respuesta del LLM tal cual llegó: su texto y TODAS las llamadas a herramientas,
+     * también las que no se ejecutaron o nombran una herramienta que no existe. Aquí queda
+     * lo que el modelo intentó hacer aunque el juego no se lo ofreciera.
+     */
+    response: z
+      .object({
+        text: z.string(),
+        toolCalls: z.array(z.object({ name: z.string(), args: z.record(z.unknown()) })),
+      })
+      .optional(),
+  }),
+  ThoughtEventSchema,
+  MessageEventSchema,
+  ActionEventSchema,
+  DamageEventSchema,
+  DeathEventSchema,
+  /** Cambio de vida, comida, ítem en la mano o conexión de un agente. */
+  z.object({
+    type: z.literal("status"),
+    at: z.number(),
+    side: SideSchema,
+    connected: z.boolean(),
+    alive: z.boolean(),
+    health: z.number(),
+    food: z.number(),
+    heldItem: z.string(),
+  }),
+  LogEventSchema,
+  z.object({ type: z.literal("end"), at: z.number(), record: MatchRecordSchema }),
+  /** El "por qué ganó", que llega unos segundos después del final. */
+  z.object({ type: z.literal("explanation"), at: z.number(), text: z.string() }),
+]);
+export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
+
+/** Interpreta un archivo de transcripción (JSONL). Las líneas corruptas se ignoran. */
+export function parseTranscript(raw: string): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = TranscriptEntrySchema.safeParse(JSON.parse(trimmed));
+      if (parsed.success) entries.push(parsed.data);
+    } catch {
+      // línea corrupta: se ignora
+    }
+  }
+  return entries;
+}
 
 // ---------- HTTP API del orquestador ----------
 //
@@ -755,6 +865,8 @@ export type ArenaEvent = z.infer<typeof ArenaEventSchema>;
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
+//   GET  /api/matches/:id/transcript -> transcripción de esa pelea: JSONL de TranscriptEntry;
+//                                       con ?format=text, texto para leer (404 si no existe)
 //   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
@@ -768,6 +880,7 @@ export const API_ROUTES = {
   matchStart: "/api/match/start",
   matchStop: "/api/match/stop",
   matches: "/api/matches",
+  transcript: (matchId: string) => `/api/matches/${matchId}/transcript`,
   defaults: "/api/defaults",
   models: "/api/models",
   ws: "/api/ws",
@@ -810,6 +923,8 @@ export const ModelsResponseSchema = z.object({
   updatedAt: z.number().nullable(),
 });
 export type ModelsResponse = z.infer<typeof ModelsResponseSchema>;
+
+export { formatTranscript } from "./transcript";
 
 export function parseArenaEvent(raw: string): ArenaEvent | null {
   try {

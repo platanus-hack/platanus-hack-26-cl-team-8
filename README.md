@@ -222,7 +222,7 @@ pnpm local --tunnel                 # + el túnel de Cloudflare (ver "Web en Clo
 - **Modo maqueta para diseñar la web sin backend:** `pnpm local web` y abrir `http://localhost:4321/?mock`. La página se llena con una pelea de mentira en bucle (golpes, pensamientos, eventos, prompts) y un video de relleno, sin orquestador, Minecraft ni transmisión. Variantes: `?mock=idle`, `?mock=preparing`, `?mock=finished`; `&signal=off` para ver el reproductor en "Sin señal"; `&static` para dejar todo quieto; `&delay=4000` para simular un video atrasado 4 s y probar que el marcador lo espera. Los botones "Iniciar pelea" y "Detener" cambian de fase localmente. Los datos están en `apps/web/src/scripts/mock.ts`; solo existe en `astro dev` (o compilando con `PUBLIC_MOCK=1`).
 - **Node 22, no 20 ni 24.** mineflayer exige Node >= 22 y `gl` (headless-gl, el render de la cámara) solo publica binarios precompilados hasta Node 22: con Node 24 intenta compilar y falla. `scripts/local/*.sh` buscan un Node 22 de nvm o de Homebrew y lo ponen primero en el `PATH`; si corres `pnpm install` a mano, hazlo con Node 22 activo (`nvm use`).
 - **Todo escucha solo en `127.0.0.1`**: el servidor de Minecraft está en modo offline y la API no tiene autenticación, así que nada queda expuesto a la red local.
-- El servidor de Minecraft (jar de Paper, mundo, `server.properties` generado) vive en `.local/minecraft/`, y el historial del orquestador en `.local/data/`. Ambas carpetas están fuera de git. Para empezar de cero, borra `.local/`.
+- El servidor de Minecraft (jar de Paper, mundo, `server.properties` generado) vive en `.local/minecraft/`, y el historial y las transcripciones del orquestador en `.local/data/`. Ambas carpetas están fuera de git. Para empezar de cero, borra `.local/`.
 - Las variables salen de `.env`, igual que en Docker. Los hosts internos (`MC_HOST`, `RCON_HOST`, `RTMP_URL`…) los fija `scripts/local/dev.mjs` apuntando a `127.0.0.1`.
 - Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero por Tailscale), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
 
@@ -255,6 +255,40 @@ Las herramientas son lo único que el LLM puede hacer en cada decisión. Todos l
 - Al entregar el kit, el orquestador revisa lo que el servidor de Minecraft responde a cada comando. Si no lo confirma (un objeto o un slot que el servidor no acepta), la pelea sigue, pero queda un aviso en el registro de eventos y en el log del orquestador.
 - Cuando los dos peleadores ya tienen su kit hay una cuenta regresiva de 3 segundos (`COUNTDOWN_SECONDS`). Dentro del juego no se muestra nada: el orquestador publica en el estado el instante en que termina (`countdownEndsAt`) y la web la dibuja sobre el video.
 - Los kits están en `KITS` (`packages/protocol/src/index.ts`); las herramientas de cada uno se deducen de sus objetos (`kitToolNames`, en `packages/agent/src/tools.ts`).
+
+## Comunicación entre agentes
+
+Se elige por pelea en la web (`GET`/`PUT /api/settings`, campo `comms`) y vale desde la próxima:
+
+- `none`: no hay comunicación.
+- `thoughts`: cada agente lee la mente del otro. El `reason` de cada decisión del rival le llega en el campo `rivalThoughts` de su observación.
+- `chat`: pueden hablarse. Todas las herramientas aceptan un argumento opcional `say`; lo dicho se ve en la web (evento `message`) y le llega al rival en `rivalMessages`. Su `reason` sigue siendo privado.
+
+### Qué hace y qué no hace el sistema con los mensajes
+
+Qué decir, cómo, en qué idioma y cuándo lo decide cada agente. El sistema lo entrega tal cual:
+
+- **Solo limpieza técnica** (`cleanMessage`, en `packages/agent/src/comms.ts`): unifica los saltos de línea, cambia tabuladores por espacios, quita caracteres de control (deja `\n`), recorta los espacios de los extremos y corta en `MAX_AGENT_MESSAGE_LENGTH` (500) caracteres, contados por punto de código para no partir un emoji. Ese tope existe para que una respuesta desbocada no llene la pantalla; un mensaje nunca se corta dos veces.
+- **No reescribe ni filtra.** No junta espacios ni líneas, no corrige, no resume, no revisa el contenido y no hace cumplir nada de lo que se digan. No hay límite de frecuencia ni filtro de repetidos: dos mensajes iguales seguidos llegan los dos.
+- **No se pierde nada.** Lo que llega del rival sale de la bandeja recién cuando responde el LLM que lo vio: si esa llamada falla o se corta, va de nuevo en la próxima observación. La bandeja guarda hasta 12 líneas.
+- **Memoria de la conversación.** En modo `chat` la observación trae también `conversation`: los últimos 12 mensajes de los dos lados (`from`: `"tú"` o `"rival"`), el más viejo primero, porque el historial de turnos que ve el LLM es corto.
+- **El prompt de sistema cuenta la mecánica, no aconseja.** Explica `say`, `rivalMessages`, `conversation` y que `reason` es privado. No sugiere qué decir, cómo leer lo que oye ni si creerle.
+- El proveedor `mock` no tiene modelo detrás: contesta con una frase fija cuando el rival le dijo algo y, si no, habla más o menos un turno de cada cuatro. Sirve para ver el modo `chat` sin claves.
+
+## Transcripciones
+
+Cada pelea deja su transcripción completa en `DATA_DIR/transcripts/<id>.jsonl`: una entrada por línea, en el orden en que pasó, escrita mientras la pelea ocurre (si el servidor se cae, queda lo que alcanzó a pasar). Parte con `start` (configs con el proveedor, modelo y kit reales, ajustes, el prompt de sistema completo de cada agente, tick y duración) y trae las fases, cada decisión, lo que pensó, dijo e hizo cada agente, el daño, los cambios de estado, el registro de eventos, el resultado (`end`) y el "por qué ganó" (`explanation`). También quedan las peleas que fallaron o se detuvieron antes de empezar. El formato es `TranscriptEntrySchema`, en `packages/protocol`.
+
+Cada `decision` guarda la observación que vio el LLM y su respuesta tal cual llegó: el texto y todas las llamadas a herramientas, también las que no se ejecutaron o nombran una herramienta que no existe. Ahí queda lo que el modelo intentó hacer aunque el juego no se lo ofreciera.
+
+Para leerla, el id es el de la pelea en `/api/matches` (o el `id` de `/api/state` para la que está en curso):
+
+```bash
+curl http://localhost:8787/api/matches/<id>/transcript              # JSONL, tal cual
+curl "http://localhost:8787/api/matches/<id>/transcript?format=text" # resumen para leer
+```
+
+El JSONL es el registro completo. Con `?format=text` sale un resumen legible (quién vio, pensó, dijo e hizo qué, con el tiempo desde que empezó el duelo), sin las observaciones enteras ni los cambios de estado. Funciona también con la pelea en curso. Un id que no es un UUID responde 400, y una pelea sin transcripción, 404.
 
 ## Configurar el proveedor de LLM
 

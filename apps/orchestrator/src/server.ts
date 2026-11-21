@@ -7,6 +7,8 @@ import {
   SideSchema,
   UpdatePromptBodySchema,
   UpdateSettingsBodySchema,
+  formatTranscript,
+  parseTranscript,
   type AgentConfig,
   type MatchSettings,
   type MatchRecord,
@@ -21,6 +23,7 @@ import {
 import type { Hub } from "./hub";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
+import { isTranscriptId } from "./transcript";
 
 export type ServerDeps = {
   hub: Hub;
@@ -39,10 +42,17 @@ export type ServerDeps = {
     update(change: Partial<MatchSettings>): Promise<MatchSettings>;
   };
   history: { latest(): MatchRecord[] };
+  /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
+  transcripts: { read(matchId: string): Promise<string | null> };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
   defaults: ServerDefaults;
   /** Lista de modelos permitidos (ver models.ts). */
   models: ModelPolicy & { snapshot(): ModelsResponse };
+  /**
+   * true si el servidor tiene la clave de Vercel AI Gateway (VERCEL_API_KEY). Sin ella solo
+   * se puede guardar el LLM simulado: cualquier pelea con "vercel" fallaría al empezar.
+   */
+  vercelKeyConfigured: boolean;
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
 };
@@ -74,6 +84,9 @@ export function applyModelPolicy(
 function errorBody(text: string): { error: string; message: string } {
   return { error: text, message: text };
 }
+
+const NO_VERCEL_KEY =
+  "El servidor no tiene configurada la clave de Vercel AI Gateway: por ahora solo está disponible el LLM simulado (mock)";
 
 /** Detrás de Cloudflare Tunnel + Caddy la IP real viene en cabeceras. */
 function clientIp(req: FastifyRequest): string {
@@ -169,6 +182,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (!body.success) {
       return reply.code(400).send(errorBody(describeBodyError(body.error.issues)));
     }
+    // Mismo criterio que la pelea: sin proveedor en el cuerpo vale el del servidor.
+    if ((body.data.provider ?? deps.defaults.provider) === "vercel" && !deps.vercelKeyConfigured) {
+      return reply.code(400).send(errorBody(NO_VERCEL_KEY));
+    }
     const update = applyModelPolicy(body.data, deps.defaults.provider, deps.models);
     if (!update) {
       return reply.code(400).send(errorBody("Modelo no permitido: elige uno de la lista"));
@@ -209,6 +226,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.post(API_ROUTES.matchStop, async () => deps.match.stop());
 
   app.get(API_ROUTES.matches, async () => deps.history.latest());
+
+  // Funciona también con la pelea en curso: devuelve lo que se lleva escrito.
+  app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
+    API_ROUTES.transcript(":id"),
+    async (req, reply) => {
+      const id = req.params.id;
+      if (!isTranscriptId(id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
+      const raw = await deps.transcripts.read(id);
+      if (raw === null) return reply.code(404).send(errorBody("No hay transcripción de esa pelea"));
+      reply.header("Cache-Control", "no-store");
+      if (req.query.format === "text") {
+        return reply.type("text/plain; charset=utf-8").send(formatTranscript(parseTranscript(raw)));
+      }
+      return reply.type("application/x-ndjson; charset=utf-8").send(raw);
+    },
+  );
 
   app.get(API_ROUTES.defaults, async () => deps.defaults);
 

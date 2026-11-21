@@ -1,3 +1,4 @@
+import type { ConversationLine } from "./comms";
 import { distance3, distanceToWall, round1, type Vec3Like } from "./geometry";
 
 export type ObservationInput = {
@@ -28,6 +29,8 @@ export type ObservationInput = {
   /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
   rivalThoughts?: string[];
   rivalMessages?: string[];
+  /** Modo "chat": últimos mensajes entre los dos, el más viejo primero. */
+  conversation?: ConversationLine[];
 };
 
 /**
@@ -64,6 +67,11 @@ export type Observation = {
   rivalThoughts?: string[];
   /** Modo "chat": mensajes que te mandó el rival desde tu decisión anterior (el más nuevo al final). */
   rivalMessages?: string[];
+  /**
+   * Modo "chat": los últimos mensajes que se mandaron los dos ("tú" = este agente), el más
+   * viejo primero. El historial de turnos que ve el LLM es corto; esto no se pierde con él.
+   */
+  conversation?: ConversationLine[];
   /**
    * Vida extra en corazones amarillos (la da la manzana dorada y no cuenta en `health`).
    * Solo aparece mientras queda alguna: comer otra manzana no la suma, solo la renueva.
@@ -128,6 +136,9 @@ export function buildObservation(input: ObservationInput): Observation {
   // Igual que las recargas: solo aparecen cuando traen algo nuevo.
   if (input.rivalThoughts && input.rivalThoughts.length > 0) observation.rivalThoughts = [...input.rivalThoughts];
   if (input.rivalMessages && input.rivalMessages.length > 0) observation.rivalMessages = [...input.rivalMessages];
+  if (input.conversation && input.conversation.length > 0) {
+    observation.conversation = input.conversation.map((line) => ({ ...line }));
+  }
   // Igual con los corazones amarillos: solo los tiene quien acaba de comer una manzana dorada.
   const absorption = self.absorption;
   if (absorption !== undefined && Number.isFinite(absorption) && absorption > 0) {

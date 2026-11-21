@@ -187,6 +187,8 @@ services:
         # Vacío = mismo origen (/api y /live detrás de Caddy). Ver .env.example.
         PUBLIC_API_BASE: ${PUBLIC_API_BASE:-}
         PUBLIC_HLS_URL: ${PUBLIC_HLS_URL:-/live/arena/index.m3u8}
+        # Calibración de la sincronía video/datos, en ms. Vacío = 400 (ver docs/handoff/medir-sincronia.md).
+        PUBLIC_STREAM_PIPELINE_MS: ${PUBLIC_STREAM_PIPELINE_MS:-}
     restart: unless-stopped
     volumes:
       # El Caddyfile del repo manda aunque la imagen traiga uno propio:

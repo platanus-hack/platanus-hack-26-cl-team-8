@@ -1,5 +1,6 @@
 import type { CommsMode, Kit, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
+import type { Observation } from "./observation";
 
 /** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
 export type DecisionReport = {
@@ -7,11 +8,21 @@ export type DecisionReport = {
   ms: number;
   /** Tokens de esa llamada; falta si el proveedor no los informó. */
   usage?: TokenUsage;
+  /** La observación que recibió el LLM en esa llamada. */
+  observation: Observation;
+  /**
+   * La respuesta tal cual llegó: el texto y TODAS las llamadas a herramientas, también las
+   * que no se ejecutaron o nombran una herramienta que no existe.
+   */
+  response: { text: string; toolCalls: { name: string; args: Record<string, unknown> }[] };
 };
 
 export type FighterEvents = {
-  /** `heldItem`: nombre de Minecraft del ítem en la mano principal ("" = mano vacía). */
-  onStatus(s: { connected: boolean; alive: boolean; health: number; food: number; heldItem: string }): void;
+  /**
+   * `heldItem`: nombre de Minecraft del ítem en la mano principal ("" = mano vacía).
+   * `absorption`: corazones amarillos (de la manzana dorada) que le quedan, aparte de `health`.
+   */
+  onStatus(s: { connected: boolean; alive: boolean; health: number; absorption: number; food: number; heldItem: string }): void;
   onDecision(d: DecisionReport): void;
   onThought(text: string): void;
   onAction(tool: string, args: Record<string, unknown>, result: string): void;
@@ -21,7 +32,7 @@ export type FighterEvents = {
    */
   onDamageTaken(amount: number, health: number, bySelf: boolean): void;
   onDeath(): void;
-  /** Modo "chat": el agente le dijo `text` al rival (ya recortado). */
+  /** Modo "chat": el agente le dijo `text` al rival (con limpieza técnica, ver cleanMessage). */
   onMessage(text: string): void;
   onLog(level: "info" | "warn" | "error", text: string): void;
 };
@@ -44,6 +55,8 @@ export type FighterOptions = {
 };
 
 export interface Fighter {
+  /** Prompt de sistema completo que recibe el LLM (el mundo + las instrucciones del usuario). */
+  readonly systemPrompt: string;
   /** Resuelve cuando el bot aparece en el mundo; rechaza si falla la conexión o se agota el tiempo. */
   connect(): Promise<void>;
   /** Comienza el bucle percibir -> LLM -> actuar. */

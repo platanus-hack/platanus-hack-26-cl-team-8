@@ -1,4 +1,4 @@
-import { loadEnv } from "@phack/env";
+import { loadEnvKeys } from "@phack/env";
 
 /**
  * Quién dibuja el video:
@@ -76,7 +76,20 @@ function toEven(value: number, min: number): number {
 }
 
 export function loadConfig(): CameraConfig {
-  const env = loadEnv();
+  // Solo lo que usa la cámara: una variable del LLM mal puesta no es asunto suyo.
+  const env = loadEnvKeys([
+    "MC_HOST",
+    "MC_PORT",
+    "MC_VERSION",
+    "RCON_HOST",
+    "RCON_PORT",
+    "RCON_PASSWORD",
+    "CAMERA_USERNAME",
+    "CAMERA_WIDTH",
+    "CAMERA_HEIGHT",
+    "CAMERA_FPS",
+    "RTMP_URL",
+  ]);
   return {
     mode: readMode(),
     clientUsername: readName("STREAM_CLIENT_USERNAME", "Camarografo"),
