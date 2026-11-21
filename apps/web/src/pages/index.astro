@@ -232,8 +232,8 @@ const stats = [
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
         <!--
-          Ajustes de la partida: una fila por ajuste, con su nombre y una línea de ayuda a la
-          izquierda y el control a la derecha. Los campos y sus ids son los de siempre
+          Ajustes de la partida: una fila por ajuste, con su nombre a la izquierda y el control
+          a la derecha. La ayuda de cada uno se abre con el botón "i" junto al nombre. Los campos y sus ids son los de siempre
           (scripts/settings.ts y scripts/benchsettings.ts); controls-enhance.ts les pone el
           contador y las opciones a la vista.
         -->
@@ -371,6 +371,7 @@ const stats = [
                 <div class="setting__text">
                   <label class="setting__label" for="series-win">Gana la serie</label>
                   <p class="setting__help">Cómo se decide quién se lleva la serie.</p>
+                  <p class="setting__help" id="series-description"></p>
                 </div>
                 <div class="setting__control">
                   <select id="series-win" aria-label="Gana la serie" aria-describedby="series-description" data-segmented>
@@ -390,7 +391,6 @@ const stats = [
                   </label>
                 </div>
               </div>
-              <p class="setting__note" id="series-description"></p>
             </div>
 
             <div class="setting">

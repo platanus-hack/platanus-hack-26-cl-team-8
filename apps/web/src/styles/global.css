@@ -1666,21 +1666,33 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 }
 
 /*
- * Primera línea: el nombre a la izquierda y el control a la derecha. Debajo, a todo el
- * ancho, la ayuda: así el texto nunca queda apretado en una columna angosta.
+ * Una fila por ajuste: el nombre a la izquierda y el control a la derecha, nada más. La
+ * ayuda de cada uno se abre con el botón "i" junto al nombre (controls-enhance.ts). Sin
+ * JavaScript la ayuda queda a la vista, bajo la fila.
  */
 .setting {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px 16px;
-  padding: 12px 0 13px;
+  gap: 8px 16px;
+  padding: 10px 0;
   border-top: 1px solid var(--line);
 }
 
 /* El nombre y la ayuda se ubican por separado en la cuadrícula de la fila. */
 .setting__text {
   display: contents;
+}
+
+/* El nombre con su botón de ayuda; el recuadro de ayuda se abre debajo. */
+.setting__head {
+  position: relative;
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .setting__label {
@@ -1694,13 +1706,17 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 }
 
 .setting__control {
+  display: flex;
   grid-column: 2;
   grid-row: 1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 /* Un control ancho (varias opciones a la vista) va en su propia línea, a todo el ancho. */
 .setting--wide .setting__label {
-  min-height: 0;
+  min-height: 24px;
 }
 
 .setting--wide .setting__control {
@@ -1716,8 +1732,7 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   flex: 1;
 }
 
-.setting__help,
-.setting__note {
+.setting__help {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--muted);
@@ -1725,15 +1740,62 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   line-height: 1.45;
 }
 
+/* Un aviso de estado: siempre a la vista, bajo la fila. */
 .setting__help--strong {
   color: var(--text);
 }
 
-.setting__control {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
+/* Botón de ayuda: una "i" en un cuadro chico, apagada hasta que se usa. */
+.info {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font: 600 12px/1 var(--sans);
+  cursor: pointer;
+}
+
+.info:hover,
+.info[aria-expanded="true"] {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.info[aria-expanded="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* El recuadro de ayuda, con el mismo aspecto que las ayudas al pasar el mouse. */
+.setting__info {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  width: max-content;
+  max-width: min(380px, 80vw);
+  padding: 9px 12px 10px;
+  border: 1px solid var(--line);
+  background: #24262b;
+}
+
+.setting__info[hidden] {
+  display: none;
+}
+
+.setting__info .setting__help {
+  color: var(--text);
+}
+
+.setting__info .setting__help:empty {
+  display: none;
 }
 
 /* Una acción suelta al pie del grupo (espejo): el botón y, a su lado, qué hace. */
@@ -1747,15 +1809,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 /* Las reglas de la serie solo existen con 2 rondas o más. */
 .settings__series[hidden] {
-  display: none;
-}
-
-.setting__note {
-  margin: 0;
-  padding: 0 0 11px;
-}
-
-.setting__note:empty {
   display: none;
 }
 
