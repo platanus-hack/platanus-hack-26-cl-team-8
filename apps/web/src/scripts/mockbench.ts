@@ -63,6 +63,7 @@ function sideMetrics(model: string, rand: () => number, over: Partial<SideMetric
     actionsPerMin: Math.round((actions / 2) * 10) / 10,
     toolCounts: { attack: aggressive(actions), retreat: actions - aggressive(actions) },
     invalidCalls: Math.round(rand() * 2),
+    toolCalls: actions + 2,
     damageDealt: 0,
     damagePerDecision: 0,
     tokensIn,
