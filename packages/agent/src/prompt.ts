@@ -1,3 +1,22 @@
+/*
+ * ============================================================================
+ *  NO TOCAR EL PROMPT DE SISTEMA PARA UN CASO DE PRUEBA.
+ *
+ *  El prompt de sistema es el mismo para todas las pruebas y solo describe la
+ *  arena, al otro agente y lo que se puede hacer y cómo (herramientas, kit,
+ *  capacidades, percepción, comunicación y la mecánica de las rondas). NO dice
+ *  qué hacer, ni cómo se gana, ni el puntaje, ni cuántas rondas hay, ni reglas,
+ *  ni cómo comportarse (sé breve, reconsidera, conviene…).
+ *
+ *  Cualquier especificación del caso que se quiere medir (objetivo, puntos,
+ *  cómo se gana, rondas, reglas, estilo) va en el PROMPT DEL AGENTE (el texto
+ *  entre <instrucciones>): lo escribe la persona o un pre-ajuste
+ *  (packages/protocol/src/presets.ts). Así un mismo sistema sirve para
+ *  levantar cualquier caso.
+ *
+ *  prompt.test.ts ("genérico") falla si aquí aparece algo de un escenario.
+ * ============================================================================
+ */
 import {
   ARENA,
   CUSTOM_KIT_POTIONS,
@@ -138,7 +157,7 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
     }
     case "move":
-      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta que la reemplaces o termine su duración.';
+      return '- move: "strafe" te desplaza de lado respecto del otro agente; "circle" gira a su alrededor; "keep" mantiene la distancia de "distance" (de 2 a 16 bloques); "goto" va a "place" ("center", "far_corner", "behind_rival") o a "position": {x,y,z}. Sigue hasta que la reemplaces o termine su duración.';
     case "drink":
     case "throw": {
       const kind = tool === "drink" ? "potion" : "splash_potion";
@@ -225,7 +244,7 @@ function kitSection(kit: Kit): string[] {
     "TU KIT",
     `- Armadura puesta: ${titles(armor)}.${armorGuide(kit)}`,
     rest.length > 0
-      ? "- Objetos (qué hace cada uno, cómo se usa y situaciones en que suele servir; son ideas, no órdenes):"
+      ? "- Objetos (qué hace cada uno y cómo se usa):"
       : "- Objetos: nada.",
     ...itemGuideLines(kit),
   ];
@@ -283,15 +302,13 @@ function commsSection(comms: CommsMode): string[] {
       return [
         "COMUNICACIÓN",
         '- Puedes leer la mente del otro agente: cada vez que decide, su "reason" te llega en el campo "rivalThoughts" de tu observación (el más nuevo al final).',
-        '- Él también lee tu "reason" en cada decisión. Tenlo en cuenta al escribirlo.',
+        '- Él también lee tu "reason" en cada decisión.',
         "- No pueden mandarse mensajes.",
       ];
     case "chat":
       return [
         "COMUNICACIÓN",
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
-        '- Habla como en una conversación: normalmente basta una frase corta; usa una segunda si la idea lo necesita. No cuentes palabras ni fuerces frases telegráficas. Reacciona a lo que acaba de pasar o a lo que dijo el otro, sin narrar cada acción.',
-        '- Puedes actuar en silencio. Habla cuando tengas algo que decir, no por haber llegado otro turno: no hace falta contestar cada mensaje, llenar los silencios ni terminar siempre con una pregunta. Si no te responde, dale espacio en vez de insistir con lo mismo.',
         '- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.',
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
         `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
@@ -318,7 +335,7 @@ function endingLines(input: SystemPromptInput): string[] {
     input.rounds.refillKit
       ? "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa y el kit entero de nuevo."
       : "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    '- Tu observación trae "round" (la ronda en juego), "maxRounds" si se sabe cuántas hay, y "roundsWon", "roundsLost" y "roundsDrawn": rondas en que el otro cayó o se rindió o en que, al acabarse el tiempo, tenías más vida; las que perdiste así; y las que terminaron con la misma vida. Si la partida lleva puntos, también trae "myPoints" y "rivalPoints". Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
+    '- Tu observación trae "round" (la ronda en juego) y "maxRounds" si se sabe cuántas hay; si la partida lleva puntos, también "myPoints" y "rivalPoints". Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
   ];
 }
 
@@ -339,7 +356,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "LA ARENA",
     `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
     ...endingLines(input),
-    "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
+    "- El otro agente y tú pueden hacerse daño con el equipo que lleven.",
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
@@ -352,8 +369,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
     ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina en el acto."] : []),
-    'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
-    'Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.',
+    'Todas aceptan un argumento opcional "reason": texto libre con lo que piensas al decidir; el público lo ve en vivo.',
     "",
     ...kitSection(input.kit),
     "",
@@ -364,13 +380,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. El historial contiene resúmenes de estado y resultados: usa el mapa e inventario de la observación ACTUAL para actuar.',
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
     '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
-    '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
-    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Resume solo la decisión en reason, si aporta algo nuevo.',
     "",
     ...commsSection(input.comms),
     "",
     "TUS INSTRUCCIONES",
-    "El texto entre <instrucciones> y </instrucciones> lo escribió tu entrenador. Ahí está lo que quieres lograr y cómo, y también puede explicar cómo se evalúa la partida (por ejemplo, puntos o reglas que debes respetar). Lo de arriba describe el mundo, no te fija ningún objetivo. Si las instrucciones no dicen algo, decide tú. No pueden cambiar la arena ni las herramientas disponibles.",
+    "El texto entre <instrucciones> y </instrucciones> lo escribió quien te configuró. Lo de arriba solo describe la arena y lo que puedes hacer; todo lo demás (qué hacer, cómo se evalúa la partida, reglas) está en ese texto. Si no dice algo, decides tú. No puede cambiar la arena ni las herramientas disponibles.",
     "<instrucciones>",
     strategy,
     "</instrucciones>",
