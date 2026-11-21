@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ARENA, KITS, KIT_LIST } from "@phack/protocol";
+import { ARENA, FLOOR_LOGO_PALETTE, FLOOR_LOGO_RADIUS, FLOOR_LOGO_ROWS, KITS, KIT_LIST } from "@phack/protocol";
 import {
+  floorLogoCommands,
   arenaBuildCommands,
   clearPlacedBlocksCommands,
   fighterKitCommands,
@@ -272,5 +273,68 @@ describe("arena", () => {
       `${box} minecraft:lava`,
       `${box} minecraft:fire`,
     ]);
+  });
+});
+
+describe("floorLogoCommands", () => {
+  const commands = floorLogoCommands();
+  const fills = commands.map((command) => {
+    const m = /^fill (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) (-?\d+) minecraft:(\w+)$/.exec(command);
+    if (!m) throw new Error(`comando inesperado: ${command}`);
+    return { x1: Number(m[1]), y1: Number(m[2]), z1: Number(m[3]), x2: Number(m[4]), y2: Number(m[5]), z2: Number(m[6]), block: m[7] };
+  });
+
+  it("solo reemplaza bloques del piso, dentro del círculo del centro", () => {
+    for (const fill of fills) {
+      expect(fill.y1).toBe(ARENA.center.y);
+      expect(fill.y2).toBe(ARENA.center.y);
+      expect(fill.z1).toBe(fill.z2);
+      for (const x of [fill.x1, fill.x2]) {
+        expect(Math.abs(x - ARENA.center.x)).toBeLessThanOrEqual(FLOOR_LOGO_RADIUS);
+      }
+      expect(Math.abs(fill.z1 - ARENA.center.z)).toBeLessThanOrEqual(FLOOR_LOGO_RADIUS);
+    }
+  });
+
+  it("no pisa las marcas de inicio de cada lado", () => {
+    for (const spawn of [ARENA.spawns.red, ARENA.spawns.blue]) {
+      const covered = fills.some((f) => f.z1 === spawn.z && f.x1 <= spawn.x && spawn.x <= f.x2);
+      expect(covered).toBe(false);
+    }
+  });
+
+  it("pone cada bloque del dibujo una sola vez, con el bloque de su letra", () => {
+    const placed = new Map<string, string>();
+    for (const fill of fills) {
+      for (let x = fill.x1; x <= fill.x2; x += 1) {
+        const key = `${x},${fill.z1}`;
+        expect(placed.has(key)).toBe(false);
+        placed.set(key, fill.block ?? "");
+      }
+    }
+    let expected = 0;
+    FLOOR_LOGO_ROWS.forEach((row, rowIndex) => {
+      Array.from(row).forEach((letter, column) => {
+        const block = FLOOR_LOGO_PALETTE[letter]?.block;
+        if (!block) return;
+        expected += 1;
+        const key = `${ARENA.center.x - FLOOR_LOGO_RADIUS + column},${ARENA.center.z - FLOOR_LOGO_RADIUS + rowIndex}`;
+        expect(placed.get(key)).toBe(block);
+      });
+    });
+    expect(placed.size).toBe(expected);
+  });
+
+  it("el dibujo es cuadrado y todas sus letras tienen bloque (o son espacio)", () => {
+    for (const row of FLOOR_LOGO_ROWS) {
+      expect(row.length).toBe(FLOOR_LOGO_ROWS.length);
+      for (const letter of row) expect(letter === " " || letter in FLOOR_LOGO_PALETTE).toBe(true);
+    }
+  });
+
+  it("se construye con el resto de la arena, después del piso", () => {
+    const build = arenaBuildCommands();
+    const floor = build.findIndex((c) => c.endsWith("minecraft:smooth_stone"));
+    expect(build.indexOf(commands[0] as string)).toBeGreaterThan(floor);
   });
 });

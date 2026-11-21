@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, DEFAULT_PROMPTS, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
+import { DEFAULT_SETTINGS, DEFAULT_PROMPTS, KITS, validateCustomKit, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
 import {
   MatchStore,
   defaultPrompts,
@@ -196,6 +196,22 @@ describe("normalizeConfig", () => {
       model: "m1",
       kit: "ender",
     });
+  });
+
+  it("guarda el inventario armado en la web solo con kit custom y si trae algo", () => {
+    const built = validateCustomKit({ items: [{ slot: "hotbar.0", item: "diamond_sword", count: 1 }] }).kit;
+    expect(normalizeConfig("red", { prompt: "hola", kit: "custom", customKit: built }).customKit).toEqual(built);
+    expect(normalizeConfig("red", { prompt: "hola", kit: "archer", customKit: built }).customKit).toBeUndefined();
+    expect(normalizeConfig("red", { prompt: "hola", kit: "custom", customKit: KITS.custom }).customKit).toBeUndefined();
+  });
+
+  it("un prompt guardado con inventario lo conserva; uno de antes sin él sigue igual", () => {
+    const built = validateCustomKit({ items: [{ slot: "hotbar.8", item: "arrow", count: 64 }] }).kit;
+    const prompts = parsePrompts(
+      JSON.stringify({ red: { side: "red", prompt: "a", kit: "custom", customKit: built }, blue: { side: "blue", prompt: "b", kit: "custom" } }),
+    );
+    expect(prompts.red.customKit?.items).toEqual(built.items);
+    expect(prompts.blue).toEqual({ side: "blue", prompt: "b", kit: "custom" });
   });
 });
 

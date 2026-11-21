@@ -27,12 +27,16 @@
 import {
   AGENT_USERNAMES,
   API_ROUTES,
+  FLOOR_LOGO_ROWS,
+  FLOOR_LOGO_RADIUS,
+  FLOOR_LOGO_PALETTE,
   MAX_HEALTH,
   COUNTDOWN_SECONDS,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
   UpdateSettingsBodySchema,
   kitOf,
+  validateCustomKit,
   type AgentConfig,
   type AgentStatus,
   type AllowedModel,
@@ -933,7 +937,7 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   for (const side of ["red", "blue"] as const) {
     if (method === "PUT" && path === API_ROUTES.prompt(side)) {
       const body = UpdatePromptBodySchema.safeParse(init?.body);
-      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }");
+      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit?, customKit? }");
       // Igual que el servidor: sin kit vale el kit por defecto, el simulado no lleva
       // modelo y un modelo que no está en la lista de permitidos se rechaza.
       const { prompt, provider, model } = body.data;
@@ -944,6 +948,12 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
           fail(400, "Modelo no permitido: elige uno de la lista");
         }
         config.model = model;
+      }
+      // El inventario armado en la web: solo con kit "custom", revisado como en el servidor.
+      if (config.kit === "custom" && body.data.customKit) {
+        const { kit, problems } = validateCustomKit(body.data.customKit);
+        if (problems.length > 0) fail(400, `Inventario inválido: ${problems[0]}`);
+        if (kit.items.length > 0 || kit.effects.length > 0) config.customKit = kit;
       }
       prompts[side] = config;
       emit?.({ type: "prompts", at: Date.now(), prompts });
@@ -1034,6 +1044,24 @@ export function startMockVideo(video: HTMLVideoElement): boolean {
       ctx.stroke();
     }
     ctx.restore();
+
+    // El logo del centro del piso, con el mismo dibujo que construye el servidor: cada
+    // letra es un bloque (la arena mide 25 de lado), aplastado como el piso en perspectiva.
+    const blockW = (rx * 2) / 25;
+    const blockH = (ry * 2) / 25;
+    FLOOR_LOGO_ROWS.forEach((row, rowIndex) => {
+      Array.from(row).forEach((letter, column) => {
+        const color = FLOOR_LOGO_PALETTE[letter]?.color;
+        if (!color) return;
+        ctx.fillStyle = color;
+        ctx.fillRect(
+          cx + (column - FLOOR_LOGO_RADIUS - 0.5) * blockW,
+          cy + (rowIndex - FLOOR_LOGO_RADIUS - 0.5) * blockH,
+          blockW + 0.6,
+          blockH + 0.6,
+        );
+      });
+    });
 
     // Dos peleadores que se persiguen en círculo.
     const fighters = [

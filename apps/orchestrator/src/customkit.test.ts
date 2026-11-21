@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LlmClient, LlmResponse } from "@phack/llm";
-import { buildCustomKit, KitSchema } from "@phack/protocol";
+import { buildCustomKit, customKitGroup, CUSTOM_KIT_ITEMS, KITS, KitSchema, validateCustomKit, type CustomKitDraft } from "@phack/protocol";
 import { fighterKitCommands } from "./arena";
 import { buildKitExtractionMessages, extractCustomKit } from "./customkit";
 
@@ -109,6 +109,130 @@ describe("buildCustomKit", () => {
       "item replace entity AgenteRojo hotbar.2 with minecraft:cooked_beef 8",
       "effect give AgenteRojo minecraft:strength infinite 0 true",
     ]);
+  });
+});
+
+describe("validateCustomKit", () => {
+  /** Kit que arma la web casillero por casillero (sin nombres: los pone el catálogo). */
+  const draft = (items: CustomKitDraft["items"], effects: CustomKitDraft["effects"] = []): CustomKitDraft => ({ items, effects });
+
+  it("un kit válido pasa sin problemas, con los nombres del catálogo", () => {
+    const { kit, problems } = validateCustomKit(
+      draft(
+        [
+          { slot: "armor.head", item: "diamond_helmet", count: 1, enchantments: [{ id: "protection", level: 4 }] },
+          { slot: "armor.feet", item: "netherite_boots", count: 1 },
+          { slot: "weapon.offhand", item: "shield", count: 1 },
+          { slot: "hotbar.0", item: "netherite_sword", count: 1, enchantments: [{ id: "sharpness", level: 5 }] },
+          { slot: "hotbar.1", item: "bow", count: 1 },
+          { slot: "hotbar.8", item: "arrow", count: 64 },
+          { slot: "hotbar.4", item: "splash_potion", count: 1, potion: "harming" },
+          { slot: "hotbar.5", item: "red_wool", count: 32 },
+        ],
+        [{ id: "speed", amplifier: 1 }],
+      ),
+    );
+    expect(problems).toEqual([]);
+    expect(kit.id).toBe("custom");
+    expect(kit.items).toHaveLength(8);
+    expect(kit.items.find((i) => i.slot === "hotbar.4")?.label).toBe("Poción arrojadiza de daño");
+    expect(kit.items.find((i) => i.slot === "hotbar.5")?.label).toBe("Lana roja");
+    expect(kit.effects).toEqual([{ id: "speed", amplifier: 1, label: "Velocidad II" }]);
+    expect(KitSchema.safeParse(kit).success).toBe(true);
+  });
+
+  it("un kit fijo también es un kit válido", () => {
+    for (const preset of [KITS.classic, KITS.archer, KITS.tank, KITS.ender, KITS.builder, KITS.berserker]) {
+      expect(validateCustomKit(preset).problems).toEqual([]);
+    }
+  });
+
+  it("un ítem que no está en el catálogo se descarta", () => {
+    const { kit, problems } = validateCustomKit(draft([{ slot: "hotbar.0", item: "tnt", count: 1 }]));
+    expect(kit.items).toEqual([]);
+    expect(problems).toEqual(["tnt: no está en la lista de ítems permitidos"]);
+  });
+
+  it("una cantidad mayor que el stack se recorta y se avisa", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([
+        { slot: "hotbar.8", item: "arrow", count: 65 },
+        { slot: "hotbar.0", item: "iron_sword", count: 2 },
+        { slot: "hotbar.1", item: "ender_pearl", count: 0 },
+      ]),
+    );
+    expect(kit.items.map((i) => i.count)).toEqual([64, 1, 1]);
+    expect(problems).toEqual(["Flechas: la cantidad va de 1 a 64", "Espada de hierro: la cantidad va de 1 a 1", "Perla de ender: la cantidad va de 1 a 16"]);
+  });
+
+  it("la armadura solo va en su lugar; en la mano secundaria solo el escudo", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([
+        { slot: "hotbar.3", item: "iron_helmet", count: 1 },
+        { slot: "armor.chest", item: "iron_helmet", count: 1 },
+        { slot: "armor.legs", item: "iron_sword", count: 1 },
+        { slot: "weapon.offhand", item: "bow", count: 1 },
+      ]),
+    );
+    expect(kit.items).toEqual([]);
+    expect(problems).toEqual([
+      "Casco de hierro: solo puede ir en la cabeza",
+      "Casco de hierro: solo puede ir en la cabeza",
+      "Espada de hierro: en las piernas solo va la pieza de armadura que le toca",
+      "Arco: en la mano secundaria solo va el escudo",
+    ]);
+  });
+
+  it("dos ítems en el mismo casillero: queda el primero", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([
+        { slot: "hotbar.0", item: "iron_sword", count: 1 },
+        { slot: "hotbar.0", item: "bow", count: 1 },
+      ]),
+    );
+    expect(kit.items.map((i) => i.item)).toEqual(["iron_sword"]);
+    expect(problems).toEqual(["Arco: ese casillero ya lo ocupa Espada de hierro"]);
+  });
+
+  it("una poción con un tipo que no existe se descarta", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([
+        { slot: "hotbar.0", item: "potion", count: 1, potion: "luck" },
+        { slot: "hotbar.1", item: "potion", count: 1 },
+      ]),
+    );
+    expect(kit.items).toEqual([]);
+    expect(problems).toEqual(["potion: falta el tipo de poción o no está permitido (luck)", "potion: falta el tipo de poción o no está permitido (sin tipo)"]);
+  });
+
+  it("un encantamiento sobre su nivel máximo se recorta; uno desconocido se descarta", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([{ slot: "hotbar.0", item: "diamond_sword", count: 1, enchantments: [{ id: "sharpness", level: 6 }, { id: "mending", level: 1 }] }]),
+    );
+    expect(kit.items[0]?.enchantments).toEqual([{ id: "sharpness", level: 5 }]);
+    expect(problems).toEqual(["encantamiento Filo: el nivel va de 1 a 5", "encantamiento mending: no permitido"]);
+  });
+
+  it("efectos: solo los permitidos, sin repetir y hasta el nivel máximo", () => {
+    const { kit, problems } = validateCustomKit(
+      draft([], [
+        { id: "speed", amplifier: 9 },
+        { id: "speed", amplifier: 0 },
+        { id: "invisibility", amplifier: 0 },
+      ]),
+    );
+    expect(kit.effects).toEqual([{ id: "speed", amplifier: 4, label: "Velocidad V" }]);
+    expect(problems).toHaveLength(3);
+  });
+
+  it("cada ítem del catálogo cae en un grupo de la web", () => {
+    const groups = new Set(Object.keys(CUSTOM_KIT_ITEMS).map(customKitGroup));
+    expect([...groups].sort()).toEqual(["armor", "block", "food", "offhand", "potion", "ranged", "utility", "weapon"]);
+    expect(customKitGroup("golden_sword")).toBe("weapon");
+    expect(customKitGroup("golden_helmet")).toBe("armor");
+    expect(customKitGroup("golden_apple")).toBe("food");
+    expect(customKitGroup("ender_pearl")).toBe("utility");
+    expect(customKitGroup("oak_planks")).toBe("block");
   });
 });
 

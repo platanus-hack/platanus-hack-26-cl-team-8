@@ -8,7 +8,9 @@ import {
   SIDES,
   UpdatePromptBodySchema,
   kitOf,
+  validateCustomKit,
   type AgentConfig,
+  type Kit,
   type KitId,
   type PromptsResponse,
   type Side,
@@ -17,13 +19,22 @@ import {
 import { describeError, fetchPrompts, savePrompt } from "./api";
 import { byId, setText } from "./dom";
 import { SIDE_LABEL } from "./format";
-import { renderInventory } from "./inventory";
+import { inventoryKey, renderInventory } from "./inventory";
 import { createModelPicker } from "./modelpicker";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
+import { createSlotPicker, type SlotPicker } from "./slotpicker";
 import { showToast } from "./toast";
 
-/** Contenido de un editor: lo que hay en sus campos y lo elegido en el selector de modelo. */
-type Draft = { prompt: string; provider: string; model: string; kit: KitId };
+/**
+ * Contenido de un editor: lo que hay en sus campos, lo elegido en el selector de modelo y,
+ * con el kit "custom", el inventario armado casillero por casillero (null = no se armó
+ * nada: el inventario se lee del prompt al iniciar la pelea).
+ */
+type Draft = { prompt: string; provider: string; model: string; kit: KitId; customKit: Kit | null };
+
+/** Ayuda del kit "Personalizado" en la web: las dos maneras de armarlo. */
+const CUSTOM_KIT_HELP =
+  "Haz clic en un casillero para elegir qué va ahí. O deja los casilleros vacíos y describe el inventario en el prompt (p. ej. \"armadura de diamante, arco y 32 flechas\"): se arma al iniciar la pelea.";
 
 type Editor = {
   form: HTMLFormElement;
@@ -35,9 +46,13 @@ type Editor = {
   provider: string;
   model: string;
   kit: HTMLSelectElement;
+  /** Inventario armado en los casilleros (solo con kit "custom"); no tiene campo en el formulario. */
+  customKit: Kit | null;
   kitDescription: HTMLElement;
   /** Inventario dibujado del kit elegido en el desplegable. */
   inventory: HTMLElement;
+  /** Panel para elegir qué va en cada casillero del inventario. */
+  slotPicker: SlotPicker;
   /** Logo + nombre del modelo que usará este prompt, según lo elegido en el selector. */
   modelTag: HTMLElement;
   count: HTMLElement;
@@ -57,7 +72,7 @@ type Editor = {
  * desplegable trae marcado en index.astro: si fueran distintos, la primera carga del
  * servidor parecería una edición local y saldría el aviso de conflicto.
  */
-const EMPTY: Draft = { prompt: "", provider: "", model: "", kit: DEFAULT_KIT };
+const EMPTY: Draft = { prompt: "", provider: "", model: "", kit: DEFAULT_KIT, customKit: null };
 
 let editors: Record<Side, Editor> | null = null;
 
@@ -70,28 +85,47 @@ function toDraft(config: AgentConfig): Draft {
     // Sin kit (o con uno que esta página no conoce) vale el kit por defecto, igual que en el
     // servidor. El desplegable no puede mostrar un valor sin opción: quedaría "sin guardar" para siempre.
     kit: kitOf(config).id,
+    // Un inventario vacío es lo mismo que ninguno: se lee del prompt.
+    customKit: config.kit === "custom" && inventoryKey(config.customKit ?? null) !== "" ? (config.customKit ?? null) : null,
   };
 }
 
 function sameDraft(a: Draft, b: Draft): boolean {
-  return a.prompt === b.prompt && a.provider === b.provider && a.model.trim() === b.model.trim() && a.kit === b.kit;
+  return (
+    a.prompt === b.prompt &&
+    a.provider === b.provider &&
+    a.model.trim() === b.model.trim() &&
+    a.kit === b.kit &&
+    inventoryKey(a.customKit) === inventoryKey(b.customKit)
+  );
 }
 
 function readDraft(editor: Editor): Draft {
   const kit = KitIdSchema.safeParse(editor.kit.value);
+  const id = kit.success ? kit.data : DEFAULT_KIT;
   return {
     prompt: editor.textarea.value,
     provider: editor.provider,
     model: editor.model,
-    kit: kit.success ? kit.data : DEFAULT_KIT,
+    kit: id,
+    customKit: id === "custom" ? editor.customKit : null,
   };
+}
+
+/** El kit que se dibuja: el del desplegable o, con "custom", lo armado en los casilleros. */
+function shownKit(draft: Draft): Kit {
+  if (draft.kit !== "custom") return KITS[draft.kit];
+  return draft.customKit ?? KITS.custom;
 }
 
 function writeDraft(editor: Editor, draft: Draft): void {
   if (editor.textarea.value !== draft.prompt) editor.textarea.value = draft.prompt;
   editor.provider = draft.provider;
   editor.model = draft.model;
+  // Si cambia el inventario, el panel de un casillero ya no muestra lo que hay.
+  if (editor.kit.value !== draft.kit || inventoryKey(editor.customKit) !== inventoryKey(draft.customKit)) editor.slotPicker.close();
   if (editor.kit.value !== draft.kit) editor.kit.value = draft.kit;
+  editor.customKit = draft.customKit;
   editor.base = draft;
 }
 
@@ -108,10 +142,9 @@ function refresh(editor: Editor): void {
       brand: null,
     },
   );
-  // El kit del desplegable se dibuja al elegirlo, antes de guardar.
-  const kit = KITS[draft.kit];
-  setText(editor.kitDescription, kit.description);
-  renderInventory(editor.inventory, kit);
+  // El kit del desplegable (o lo armado en los casilleros) se dibuja al elegirlo, antes de guardar.
+  setText(editor.kitDescription, draft.kit === "custom" ? CUSTOM_KIT_HELP : KITS[draft.kit].description);
+  renderInventory(editor.inventory, shownKit(draft));
   editor.count.classList.toggle("is-over", length > MAX_PROMPT_LENGTH);
   editor.save.disabled = editor.saving || length > MAX_PROMPT_LENGTH;
   setText(editor.save, editor.saving ? "Guardando…" : "Guardar");
@@ -171,6 +204,15 @@ async function save(side: Side, editor: Editor): Promise<void> {
   const provider = ProviderSchema.safeParse(sent.provider);
   if (provider.success) candidate.provider = provider.data;
   if (sent.model.trim() !== "") candidate.model = sent.model.trim();
+  // El inventario armado en los casilleros va solo con "custom"; se revisa igual que en el servidor.
+  if (sent.kit === "custom" && sent.customKit) {
+    const { kit, problems } = validateCustomKit(sent.customKit);
+    if (problems.length > 0) {
+      showToast(`El inventario ${SIDE_LABEL[side]} no es válido: ${problems[0]}`);
+      return;
+    }
+    candidate.customKit = kit;
+  }
 
   const body = UpdatePromptBodySchema.safeParse(candidate);
   if (!body.success) {
@@ -206,8 +248,10 @@ function createEditor(side: Side): Editor {
     provider: "",
     model: "",
     kit: byId<HTMLSelectElement>(`kit-${side}`),
+    customKit: null,
     kitDescription: byId(`kit-description-${side}`),
     inventory: byId(`inv-${side}`),
+    slotPicker: { close: () => {} },
     modelTag: byId(`picker-current-${side}`),
     count: byId(`count-${side}`),
     status: byId(`save-status-${side}`),
@@ -224,9 +268,28 @@ function createEditor(side: Side): Editor {
 
   const onInput = (): void => refresh(editor);
   editor.textarea.addEventListener("input", onInput);
+  // Elegir un kit en el desplegable reemplaza el inventario entero (con "Personalizado", vacío).
+  const onKit = (): void => {
+    editor.customKit = null;
+    editor.slotPicker.close();
+    refresh(editor);
+  };
   // "input" además de "change": con el teclado algunos navegadores avisan solo con uno de los dos.
-  editor.kit.addEventListener("input", onInput);
-  editor.kit.addEventListener("change", onInput);
+  editor.kit.addEventListener("input", onKit);
+  editor.kit.addEventListener("change", onKit);
+  // Tocar un casillero pasa el kit a "Personalizado", partiendo de lo que tenía el kit anterior.
+  editor.slotPicker = createSlotPicker({
+    side,
+    host: editor.inventory.parentElement ?? editor.form,
+    inventory: editor.inventory,
+    getKit: () => shownKit(readDraft(editor)),
+    onChange: (items) => {
+      const { kit } = validateCustomKit({ items, effects: shownKit(readDraft(editor)).effects });
+      editor.customKit = inventoryKey(kit) === "" ? null : kit;
+      editor.kit.value = "custom";
+      refresh(editor);
+    },
+  });
   createModelPicker({
     side,
     getChoice: () => ({ provider: editor.provider, model: editor.model }),
@@ -248,6 +311,7 @@ function createEditor(side: Side): Editor {
     }
   });
   editor.reload.addEventListener("click", () => {
+    editor.slotPicker.close();
     if (editor.remote) writeDraft(editor, editor.remote);
     editor.conflict.hidden = true;
     refresh(editor);
@@ -258,17 +322,19 @@ function createEditor(side: Side): Editor {
 }
 
 /**
- * Carga en un editor un prompt del historial (texto, modelo y kit), como cambios sin
- * guardar: no vale para la próxima pelea hasta que alguien presione Guardar.
+ * Carga en un editor un prompt del historial (texto, modelo, kit e inventario), como
+ * cambios sin guardar: no vale para la próxima pelea hasta que alguien presione Guardar.
  */
 export function loadIntoEditor(side: Side, config: AgentConfig): void {
   if (!editors) return;
   const editor = editors[side];
   const draft = toDraft(config);
+  editor.slotPicker.close();
   editor.textarea.value = draft.prompt;
   editor.provider = draft.provider;
   editor.model = draft.model;
   editor.kit.value = draft.kit;
+  editor.customKit = draft.customKit;
   refresh(editor);
   editor.form.scrollIntoView({ behavior: "smooth", block: "center" });
 }

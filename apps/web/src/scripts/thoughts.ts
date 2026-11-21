@@ -6,7 +6,9 @@
  * se muestra aquí: queda en la ayuda de la ficha y en la lista de eventos.
  *
  * Lo que el agente le DICE al otro (modo "chat") va en la misma columna, en el orden en
- * que pasó, pero como un globo: es lo único que el rival también recibe.
+ * que pasó, pero como un globo de conversación: es lo único que el rival también recibe.
+ * Para que se distingan de un vistazo, cada entrada con texto lleva su marca: una nube
+ * junto a lo que piensa, y un cuadro del color del lado con un globo junto a lo que dice.
  *
  * Los pensamientos y las acciones llegan por la cola sincronizada de main.ts, así que
  * aparecen cuando la imagen llega a ese instante. Lo que aquí depende del tiempo (a qué
@@ -187,8 +189,12 @@ function addEntry(target: Column, at: number, text: string, said = false): Entry
   const node = el("li", said ? "thought thought--said" : "thought");
   const entry: Entry = { node, at, text, chip: null, chipLabel: "", said };
   if (text !== "") {
+    // La marca de qué es: nube = lo piensa, globo = lo dice. voice.ts la cambia por el
+    // medidor de voz mientras el mensaje se oye.
+    const kind = el("span", "thought__kind");
+    kind.append(pixelIcon({ name: said ? "talk" : "thought" }));
     const holder = el("p", "thought__text");
-    node.append(holder);
+    node.append(kind, holder);
     typeOut(target, holder, text);
   }
   target.entries.push(entry);

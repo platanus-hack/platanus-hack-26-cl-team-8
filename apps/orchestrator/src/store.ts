@@ -12,6 +12,7 @@ import {
   ProviderSchema,
   SIDES,
   kitOf,
+  validateCustomKit,
   type AgentConfig,
   type MatchRecord,
   type MatchSettings,
@@ -32,12 +33,20 @@ export function defaultPrompts(): PromptsResponse {
   };
 }
 
-/** Normaliza lo que llega del cliente: modelo vacío = sin modelo; kit ausente o desconocido = kit por defecto. */
+/**
+ * Normaliza lo que llega del cliente: modelo vacío = sin modelo; kit ausente o desconocido =
+ * kit por defecto. El inventario armado en la web se guarda solo con kit "custom" y si trae
+ * algo (vacío = se lee del prompt al iniciar la pelea), ya limpio con validateCustomKit.
+ */
 export function normalizeConfig(side: Side, body: UpdatePromptBody): AgentConfig {
   const config: AgentConfig = { side, prompt: body.prompt, kit: kitOf(body).id };
   if (body.provider) config.provider = body.provider;
   const model = body.model?.trim();
   if (model) config.model = model;
+  if (config.kit === "custom" && body.customKit) {
+    const { kit } = validateCustomKit(body.customKit);
+    if (kit.items.length > 0 || kit.effects.length > 0) config.customKit = kit;
+  }
   return config;
 }
 

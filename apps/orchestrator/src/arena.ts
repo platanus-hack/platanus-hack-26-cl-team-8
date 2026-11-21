@@ -1,4 +1,12 @@
-import { AGENT_USERNAMES, ARENA, MAX_HEALTH, type Side } from "@phack/protocol";
+import {
+  AGENT_USERNAMES,
+  ARENA,
+  FLOOR_LOGO_PALETTE,
+  FLOOR_LOGO_RADIUS,
+  FLOOR_LOGO_ROWS,
+  MAX_HEALTH,
+  type Side,
+} from "@phack/protocol";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
 import type { Kit, KitItem } from "@phack/protocol";
@@ -77,8 +85,8 @@ export function arenaBuildCommands(): string[] {
     `fill ${MIN_X} ${FLOOR_Y + 1} ${MAX_Z} ${MAX_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
     `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MIN_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
     `fill ${MAX_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
-    // Marcas en el piso: centro y esquinas de cada lado.
-    `setblock ${c.x} ${FLOOR_Y} ${c.z} minecraft:sea_lantern`,
+    // El logo al centro del piso y la marca de cada lado.
+    ...floorLogoCommands(),
     `setblock ${red.x} ${FLOOR_Y} ${red.z} minecraft:red_concrete`,
     `setblock ${blue.x} ${FLOOR_Y} ${blue.z} minecraft:blue_concrete`,
     // Tapa invisible justo sobre los muros. Es obligatoria: el mundo es plano y la arena flota
@@ -86,6 +94,32 @@ export function arenaBuildCommands(): string[] {
     // apilando bloques) caería al vacío.
     `fill ${MIN_X} ${WALL_TOP_Y + 1} ${MIN_Z} ${MAX_X} ${WALL_TOP_Y + 1} ${MAX_Z} minecraft:barrier`,
   ];
+}
+
+/**
+ * El logo del centro del piso (ver FLOOR_LOGO_ROWS): reemplaza los bloques del piso, sin
+ * levantar nada, así no estorba. Los bloques seguidos del mismo tipo de cada fila van en
+ * un solo `fill`.
+ */
+export function floorLogoCommands(): string[] {
+  const commands: string[] = [];
+  FLOOR_LOGO_ROWS.forEach((row, rowIndex) => {
+    const z = c.z - FLOOR_LOGO_RADIUS + rowIndex;
+    let start = 0;
+    while (start < row.length) {
+      const letter = row[start] as string;
+      let end = start + 1;
+      while (end < row.length && row[end] === letter) end += 1;
+      const block = FLOOR_LOGO_PALETTE[letter]?.block;
+      if (block) {
+        const from = c.x - FLOOR_LOGO_RADIUS + start;
+        const to = c.x - FLOOR_LOGO_RADIUS + end - 1;
+        commands.push(`fill ${from} ${FLOOR_Y} ${z} ${to} ${FLOOR_Y} ${z} minecraft:${block}`);
+      }
+      start = end;
+    }
+  });
+  return commands;
 }
 
 /** Encantamientos y tipo de poción en el formato NBT de 1.20.4: `{Enchantments:[{id:"minecraft:punch",lvl:1s}]}`, `{Potion:"minecraft:healing"}`. */

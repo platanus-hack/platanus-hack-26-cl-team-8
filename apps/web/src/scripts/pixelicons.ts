@@ -11,6 +11,7 @@
  *   forward, back, pause   acercarse, alejarse y esperar (para las acciones)
  *   sound-on, sound-off    botón de sonido
  *   speaking               marca del globo mientras se oye la voz del agente
+ *   thought                nube de pensamiento: marca lo que el agente piensa (lo que dice lleva "talk")
  *
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
@@ -560,6 +561,23 @@ export const ICONS = {
       "..x........",
       "..x........",
       "...........",
+    ],
+  },
+  // Nube con sus dos burbujas, como el globo de pensamiento de una historieta.
+  thought: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "..xxxxxxx..",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "..xxxxxxx..",
+      "...........",
+      "..xx.......",
+      "..xx.......",
+      "...........",
+      "x..........",
     ],
   },
   talk: {

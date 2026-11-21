@@ -16,6 +16,7 @@ import {
   formatTranscript,
   kitOf,
   parseTranscript,
+  validateCustomKit,
   roundPoints,
   seriesByPoints,
   seriesDecided,
@@ -705,13 +706,18 @@ export class MatchManager {
   }
 
   /**
-   * Kit con el que pelea un lado. Si eligió "custom", un LLM arma el inventario a partir
-   * de su prompt; si no se puede (LLM simulado, falla, demora o el prompt no pide nada
-   * válido), pelea con el kit por defecto y se avisa en el registro. Nunca lanza.
+   * Kit con el que pelea un lado. Si eligió "custom" y armó el inventario en la web, es
+   * ese, tal cual. Si no armó nada, un LLM arma el inventario a partir de su prompt; si no
+   * se puede (LLM simulado, falla, demora o el prompt no pide nada válido), pelea con el
+   * kit por defecto y se avisa en el registro. Nunca lanza.
    */
   private async resolveKit(ctx: MatchContext, side: Side, llm: LlmClient): Promise<Kit> {
     const config = this.state.configs[side];
     if (config.kit !== "custom") return kitOf(config);
+    if (config.customKit && (config.customKit.items.length > 0 || config.customKit.effects.length > 0)) {
+      // Ya se revisó al guardarlo; se vuelve a limpiar por si el archivo se editó a mano.
+      return validateCustomKit(config.customKit).kit;
+    }
     const fallback = KITS[DEFAULT_KIT];
     const fail = (reason: string): Kit => {
       this.log(ctx, "warn", `[${SIDE_LABEL[side]}] No se pudo armar el kit personalizado (${reason}): pelea con el kit ${fallback.name}`);

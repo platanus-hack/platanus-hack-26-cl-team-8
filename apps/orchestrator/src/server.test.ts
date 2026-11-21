@@ -9,6 +9,7 @@ import {
   DEFAULT_SETTINGS,
   buildBenchReport,
   syncMode,
+  validateCustomKit,
   type AgentStatus,
   type MatchRecord,
   type MatchState,
@@ -282,6 +283,46 @@ describe("PUT /api/prompts/:side sin clave de Vercel", () => {
     const res = await put(withKey, { prompt: "hola", provider: "vercel", model: "deepseek/barato" });
     expect(res.statusCode).toBe(200);
     expect(saved).toEqual([{ side: "red", body: { prompt: "hola", provider: "vercel", model: "deepseek/barato" } }]);
+  });
+});
+
+describe("PUT /api/prompts/:side con inventario armado en la web", () => {
+  const put = (s: FastifyInstance, payload: Record<string, unknown>) =>
+    s.inject({ method: "PUT", url: "/api/prompts/red", payload });
+  const kit = validateCustomKit({
+    items: [
+      { slot: "armor.head", item: "diamond_helmet", count: 1 },
+      { slot: "hotbar.0", item: "netherite_sword", count: 1, enchantments: [{ id: "sharpness", level: 3 }] },
+      { slot: "hotbar.8", item: "arrow", count: 64 },
+    ],
+  }).kit;
+
+  it("acepta un inventario válido con kit custom y lo pasa a guardar", async () => {
+    const res = await put(await server(), { prompt: "hola", kit: "custom", customKit: kit });
+    expect(res.statusCode).toBe(200);
+    expect(saved[0]?.body.customKit).toEqual(kit);
+  });
+
+  it("rechaza uno inválido con 400 y el primer problema, sin guardar", async () => {
+    const s = await server();
+    const helmetInHotbar = { ...kit, items: [{ slot: "hotbar.3", item: "iron_helmet", count: 1, label: "Casco" }] };
+    const res = await put(s, { prompt: "hola", kit: "custom", customKit: helmetInHotbar });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("Inventario inválido: Casco de hierro: solo puede ir en la cabeza");
+    const overStack = { ...kit, items: [{ slot: "hotbar.0", item: "bow", count: 3, label: "Arco" }] };
+    expect((await put(s, { prompt: "hola", kit: "custom", customKit: overStack })).json().error).toBe(
+      "Inventario inválido: Arco: la cantidad va de 1 a 1",
+    );
+    const malformed = await put(s, { prompt: "hola", kit: "custom", customKit: { items: "muchos" } });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json().error).toContain("Inventario inválido");
+    expect(saved).toEqual([]);
+  });
+
+  it("con un kit fijo el inventario se ignora", async () => {
+    const res = await put(await server(), { prompt: "hola", kit: "archer", customKit: kit });
+    expect(res.statusCode).toBe(200);
+    expect(saved).toEqual([{ side: "red", body: { prompt: "hola", kit: "archer" } }]);
   });
 });
 

@@ -2,6 +2,7 @@
  * Clasificación de ítems por su nombre de Minecraft y recarga de ataque de cada arma.
  * Puro (sin mineflayer): lo usan el cuerpo del agente, las herramientas y el prompt.
  */
+import { FLOOR_LOGO_PALETTE } from "@phack/protocol";
 
 export const isSword = (name: string): boolean => name.endsWith("_sword");
 export const isAxe = (name: string): boolean => name.endsWith("_axe");
@@ -19,8 +20,9 @@ export const isPickaxe = (name: string): boolean => name.endsWith("_pickaxe");
 export const isShears = (name: string): boolean => name === "shears";
 
 /**
- * Bloques de la arena: no se rompen nunca (piso, muros de vidrio con su base de linternas,
- * marcas de spawn y la tapa invisible). Todo lo demás que esté sobre el piso lo puso alguien.
+ * Bloques de la arena: no se rompen nunca (piso con el logo del centro, muros de vidrio con
+ * su base de linternas, marcas de spawn y la tapa invisible). Todo lo demás que esté sobre
+ * el piso lo puso alguien. Importa: bajo el piso no hay nada, quien lo rompa cae al vacío.
  */
 export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
   "smooth_stone",
@@ -30,6 +32,8 @@ export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
   "blue_concrete",
   "barrier",
   "bedrock",
+  // Los bloques del logo del piso.
+  ...Object.values(FLOOR_LOGO_PALETTE).map((entry) => entry.block),
 ]);
 
 /** Lo que no es un bloque que se pueda romper: aire y líquidos. */

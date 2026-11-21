@@ -71,6 +71,10 @@ describe("attackCooldownMs", () => {
 describe("romper bloques", () => {
   it("nunca deja romper la arena, el aire ni los líquidos", () => {
     for (const name of ARENA_BLOCKS) expect(isBreakable(name)).toBe(false);
+    // El logo del centro es parte del piso: tampoco se rompe.
+    for (const name of ["black_concrete", "white_concrete", "gold_block", "yellow_concrete", "honeycomb_block"]) {
+      expect(isBreakable(name)).toBe(false);
+    }
     for (const name of ["air", "water", "lava", "fire"]) expect(isBreakable(name)).toBe(false);
     for (const name of ["red_wool", "oak_planks", "cobblestone", "obsidian", "dirt"]) expect(isBreakable(name)).toBe(true);
   });

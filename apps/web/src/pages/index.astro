@@ -83,7 +83,11 @@ const stats = [
           <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
           <h1 class="brand__title">Prompt Arena</h1>
         </div>
-        <span class="live" aria-hidden="true" data-tip="La transmisión de la arena está llegando.">En vivo</span>
+        <!-- Solo se ve cuando llega la transmisión (global.css lo decide por el estado del reproductor). -->
+        <span class="live" role="status" data-tip="La transmisión de la arena está llegando en este momento.">
+          <i class="live__dot" aria-hidden="true"></i>
+          En vivo
+        </span>
         <button
           type="button"
           class="sound"
@@ -227,124 +231,179 @@ const stats = [
         </header>
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
-        <div class="match-settings" id="settings-field">
-          <div class="comms">
-            <label class="field">
-              <span class="field__label">Rondas</span>
-              <input
-                id="rounds-count"
-                class="count-input"
-                type="number"
-                min="1"
-                max={MAX_ROUNDS}
-                step="1"
-                value="1"
-                inputmode="numeric"
-                aria-describedby="mode-description"
-              />
-            </label>
-            <p class="comms__description" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
-          </div>
-          <div class="comms">
-            <label class="field">
-              <span class="field__label">Comunicación entre agentes</span>
-              <select id="comms" aria-describedby="comms-description">
-                {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
-              </select>
-            </label>
-            <p class="comms__description" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
-          </div>
-          <div class="comms">
-            <label class="field switch">
-              <span class="field__label">Límite de tiempo</span>
-              <span class="switch__row">
-                <input type="checkbox" role="switch" id="timer" aria-describedby="timer-description" checked />
-                <span class="switch__track" aria-hidden="true"><i></i></span>
-                <span class="switch__state" id="timer-state">Encendido</span>
-              </span>
-            </label>
-            <!-- Cuánto dura, cuando el límite está encendido: una cantidad y su unidad. -->
-            <div class="duration" id="timer-duration">
-              <input
-                type="number"
-                id="timer-amount"
-                min="1"
-                step="1"
-                inputmode="numeric"
-                aria-label="Duración de la pelea"
-                aria-describedby="timer-description"
-              />
-              <select id="timer-unit" aria-label="Unidad de la duración">
-                <option value="60">minutos</option>
-                <option value="3600">horas</option>
-              </select>
-            </div>
-            <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
-          </div>
-          <div class="comms">
-            <label class="field switch">
-              <span class="field__label">Voz de los agentes</span>
-              <span class="switch__row">
-                <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
-                <span class="switch__track" aria-hidden="true"><i></i></span>
-                <span class="switch__state" id="voice-state">Apagado</span>
-              </span>
-            </label>
-            <p class="comms__description" id="voice-description">{VOICE_LABELS.off}</p>
-          </div>
-        </div>
+        <!--
+          Ajustes de la partida: una fila por ajuste, con su nombre y una línea de ayuda a la
+          izquierda y el control a la derecha. Los campos y sus ids son los de siempre
+          (scripts/settings.ts y scripts/benchsettings.ts); controls-enhance.ts les pone el
+          contador y las opciones a la vista.
+        -->
+        <div class="settings">
+          <section class="settings__group" id="settings-field" aria-labelledby="settings-match-title">
+            <h3 class="settings__title" id="settings-match-title">Partida</h3>
 
-        <!-- Benchmarks: escenario y reglas de la serie (scripts/benchsettings.ts). Ver /bench. -->
-        <div class="match-settings bench-settings" id="bench-settings">
-          <div class="comms">
-            <label class="field">
-              <span class="field__label">Escenario</span>
-              <select id="scenario" aria-describedby="scenario-description">
-                {SCENARIO_IDS.map((id) => <option value={id} selected={id === DEFAULT_SCENARIO}>{SCENARIOS[id].name}</option>)}
-              </select>
-            </label>
-            <p class="comms__description" id="scenario-description">{SCENARIOS[DEFAULT_SCENARIO].description}</p>
-            <p class="comms__description comms__hint" id="scenario-hint" hidden></p>
-          </div>
-          <div class="comms" id="series-options">
-            <div class="series-fields">
-              <label class="field">
-                <span class="field__label">Horizonte</span>
-                <select id="horizon" aria-describedby="series-description">
-                  {HORIZONS.map((h) => <option value={h}>{h === "known" ? "Conocido" : "Desconocido"}</option>)}
-                </select>
-              </label>
-              <label class="field">
-                <span class="field__label">Gana la serie</span>
-                <select id="series-win" aria-describedby="series-description">
-                  {SERIES_WINS.map((w) => <option value={w}>{SERIES_WIN_LABELS[w].name}</option>)}
-                </select>
-              </label>
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="rounds-count">Rondas</label>
+                <p class="setting__help" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
+              </div>
+              <div class="setting__control">
+                <div class="stepper" data-stepper>
+                  <button type="button" class="stepper__btn" data-step="-1" aria-label="Una ronda menos">−</button>
+                  <input
+                    id="rounds-count"
+                    class="stepper__value"
+                    type="number"
+                    min="1"
+                    max={MAX_ROUNDS}
+                    step="1"
+                    value="1"
+                    inputmode="numeric"
+                    aria-describedby="mode-description"
+                  />
+                  <button type="button" class="stepper__btn" data-step="1" aria-label="Una ronda más">+</button>
+                </div>
+              </div>
             </div>
-            <label class="rules__item">
-              <input type="checkbox" id="refill-kit" />
-              Reponer el kit antes de cada ronda
-            </label>
-            <p class="comms__description" id="series-description"></p>
-          </div>
-          <div class="comms">
-            <label class="field switch">
-              <span class="field__label">Juez</span>
-              <span class="switch__row">
-                <input type="checkbox" role="switch" id="judge" aria-describedby="judge-description" />
-                <span class="switch__track" aria-hidden="true"><i></i></span>
-                <span class="switch__state" id="judge-state">Apagado</span>
-              </span>
-            </label>
-            <p class="comms__description" id="judge-description">
-              Al terminar la partida, un LLM lee la transcripción y califica a cada agente (necesita un LLM real).
-            </p>
-          </div>
-          <div class="comms">
-            <span class="field__label">Espejo</span>
-            <button type="button" class="btn btn--small" id="btn-mirror">Copiar Rojo en Azul</button>
-            <p class="comms__description">Mismo prompt, modelo y kit en los dos lados: línea base para ver cuánto varía un modelo.</p>
-          </div>
+
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="timer">Límite de tiempo</label>
+                <p class="setting__help" id="timer-description">{TIMER_LABELS.on}</p>
+              </div>
+              <div class="setting__control">
+                <!-- Cuánto dura, cuando el límite está encendido: una cantidad y su unidad. -->
+                <div class="duration" id="timer-duration">
+                  <input
+                    type="number"
+                    id="timer-amount"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    aria-label="Duración de la pelea"
+                    aria-describedby="timer-description"
+                  />
+                  <select id="timer-unit" aria-label="Unidad de la duración" data-segmented>
+                    <option value="60">min</option>
+                    <option value="3600">horas</option>
+                  </select>
+                </div>
+                <label class="toggle">
+                  <span class="sr-only" id="timer-state">Encendido</span>
+                  <input type="checkbox" role="switch" id="timer" aria-describedby="timer-description" checked />
+                  <span class="toggle__track" aria-hidden="true"><i></i></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting setting--wide">
+              <div class="setting__text">
+                <label class="setting__label" for="comms">Comunicación entre agentes</label>
+                <p class="setting__help" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+              </div>
+              <div class="setting__control">
+                <select id="comms" aria-label="Comunicación entre agentes" aria-describedby="comms-description" data-segmented>
+                  {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="voice">Voz de los agentes</label>
+                <p class="setting__help" id="voice-description">{VOICE_LABELS.off}</p>
+              </div>
+              <div class="setting__control">
+                <label class="toggle">
+                  <span class="sr-only" id="voice-state">Apagado</span>
+                  <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
+                  <span class="toggle__track" aria-hidden="true"><i></i></span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <!-- Benchmarks: escenario y reglas de la serie (scripts/benchsettings.ts). Ver /bench. -->
+          <section class="settings__group" id="bench-settings" aria-labelledby="settings-bench-title">
+            <h3 class="settings__title" id="settings-bench-title">Experimento</h3>
+
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="scenario">Escenario</label>
+                <p class="setting__help" id="scenario-description">{SCENARIOS[DEFAULT_SCENARIO].description}</p>
+                <p class="setting__help setting__help--strong" id="scenario-hint" hidden></p>
+              </div>
+              <div class="setting__control">
+                <select id="scenario" class="select" aria-describedby="scenario-description">
+                  {SCENARIO_IDS.map((id) => <option value={id} selected={id === DEFAULT_SCENARIO}>{SCENARIOS[id].name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <!-- Solo con 2 rondas o más (benchsettings.ts lo muestra y lo esconde). -->
+            <div class="settings__series" id="series-options">
+              <div class="setting">
+                <div class="setting__text">
+                  <label class="setting__label" for="horizon">Horizonte</label>
+                  <p class="setting__help">Si los agentes saben cuántas rondas quedan.</p>
+                </div>
+                <div class="setting__control">
+                  <select id="horizon" aria-label="Horizonte" aria-describedby="series-description" data-segmented>
+                    {HORIZONS.map((h) => <option value={h}>{h === "known" ? "Conocido" : "Desconocido"}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div class="setting">
+                <div class="setting__text">
+                  <label class="setting__label" for="series-win">Gana la serie</label>
+                  <p class="setting__help">Cómo se decide quién se lleva la serie.</p>
+                </div>
+                <div class="setting__control">
+                  <select id="series-win" aria-label="Gana la serie" aria-describedby="series-description" data-segmented>
+                    {SERIES_WINS.map((w) => <option value={w}>{SERIES_WIN_LABELS[w].name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div class="setting">
+                <div class="setting__text">
+                  <label class="setting__label" for="refill-kit">Reponer el kit</label>
+                  <p class="setting__help">Antes de cada ronda. Si no, lo gastado no vuelve.</p>
+                </div>
+                <div class="setting__control">
+                  <label class="toggle">
+                    <input type="checkbox" role="switch" id="refill-kit" />
+                    <span class="toggle__track" aria-hidden="true"><i></i></span>
+                  </label>
+                </div>
+              </div>
+              <p class="setting__note" id="series-description"></p>
+            </div>
+
+            <div class="setting">
+              <div class="setting__text">
+                <label class="setting__label" for="judge">Juez</label>
+                <p class="setting__help" id="judge-description">
+                  Al terminar la partida, un LLM lee la transcripción y califica a cada agente (necesita un LLM real).
+                </p>
+              </div>
+              <div class="setting__control">
+                <label class="toggle">
+                  <span class="sr-only" id="judge-state">Apagado</span>
+                  <input type="checkbox" role="switch" id="judge" aria-describedby="judge-description" />
+                  <span class="toggle__track" aria-hidden="true"><i></i></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting">
+              <div class="setting__text">
+                <span class="setting__label">Espejo</span>
+                <p class="setting__help">Mismo prompt, modelo y kit en los dos lados: línea base para ver cuánto varía un modelo.</p>
+              </div>
+              <div class="setting__control">
+                <button type="button" class="btn btn--small" id="btn-mirror">Copiar Rojo en Azul</button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <div class="editors">
