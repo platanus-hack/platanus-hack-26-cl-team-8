@@ -9,6 +9,8 @@ export type FeedEntry = {
   kind: FeedKind;
   text: string;
   side?: Side;
+  /** Detalle para el tooltip (p. ej. la llamada a la herramienta tal cual). */
+  title?: string;
 };
 
 const MAX_ITEMS = 200;
@@ -68,6 +70,7 @@ export function addFeed(entry: FeedEntry): void {
     el("span", "feed-item__kind", KIND_LABEL[entry.kind]),
     el("span", "feed-item__text", entry.text),
   );
+  if (entry.title) item.title = entry.title;
   list.append(item);
 
   while (list.children.length > MAX_ITEMS) list.firstElementChild?.remove();

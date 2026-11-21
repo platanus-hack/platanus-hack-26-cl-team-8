@@ -12,12 +12,32 @@ const sides = [
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
 ] as const;
 
-// Estadísticas de cada agente, bajo su barra de vida: un ícono de píxeles y su número
-// (el nombre va en el `title`).
+// Estadísticas de cada agente, bajo su barra de vida: un ícono de píxeles y su número.
+// `tip` es el texto de ayuda que aparece al pasar el mouse (ver "Ayuda al pasar el mouse"
+// en global.css); `label` es el nombre para lectores de pantalla.
 const stats = [
-  { id: "food", label: "Comida" },
-  { id: "damage", label: "Daño hecho" },
-  { id: "decisions", label: "Decisiones" },
+  { id: "food", icon: "food", label: "Comida", tip: "Comida, de 0 a 20. Con la barra alta el agente recupera vida solo; comer la repone." },
+  { id: "damage", icon: "damage", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
+  { id: "decisions", icon: "decisions", label: "Decisiones", tip: "Decisiones: cuántas veces el modelo eligió qué hacer." },
+  { id: "speed", icon: "clock", label: "Tiempo por decisión", tip: "Lo que tarda el modelo en decidir, en promedio. Un modelo lento pierde turnos." },
+  { id: "cost", icon: "emerald", label: "Costo del modelo", tip: "Lo que ha costado el modelo en esta pelea." },
+] as const;
+
+// Lo que un agente puede tener en la mano (scoreboard.ts elige cuál se ve).
+const heldItems = [
+  { id: "sword", icon: "damage" },
+  { id: "bow", icon: "bow" },
+  { id: "food", icon: "steak" },
+] as const;
+
+// Ícono de cada herramienta del agente (ver scripts/actions.ts).
+const actionIcons = [
+  { tool: "approach", icon: "forward" },
+  { tool: "attack", icon: "damage" },
+  { tool: "retreat", icon: "back" },
+  { tool: "shoot", icon: "bow" },
+  { tool: "eat", icon: "steak" },
+  { tool: "wait", icon: "pause" },
 ] as const;
 
 const providers = [
@@ -61,7 +81,18 @@ const providers = [
           <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
           <h1 class="brand__title">Arena de prompts</h1>
         </div>
-        <span class="live" aria-hidden="true">En vivo</span>
+        <span class="live" aria-hidden="true" data-tip="La transmisión de la arena está llegando.">En vivo</span>
+        <button
+          type="button"
+          class="sound"
+          id="btn-sound"
+          aria-pressed="false"
+          aria-label="Sonido"
+          data-tip="Sonido apagado. Haz clic para oír los golpes y la campana."
+        >
+          <span data-sound="on"><PixelIcon name="sound-on" /></span>
+          <span data-sound="off"><PixelIcon name="sound-off" /></span>
+        </button>
         <div class="conn" id="conn" data-state="connecting" role="status">
           <span class="conn__dot" aria-hidden="true"></span>
           <span class="conn__text" id="conn-text">Conectando…</span>
@@ -77,7 +108,9 @@ const providers = [
                 <h2 class="hud__name">{side.label}</h2>
                 <span class="model-tag hud__model" id={`fighter-model-${side.id}`} hidden />
                 <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
-                <span class="hud__hp" id={`hp-value-${side.id}`}>–</span>
+                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip="Vida, de 0 a 20: cada bloque de la barra son 2 puntos.">
+                –
+              </span>
               </div>
               <div
                 class="hp"
@@ -92,11 +125,18 @@ const providers = [
                 <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
               </div>
               <dl class="stats">
+                <div class="slot" id={`held-${side.id}`} data-item="none" data-tip="En la mano: nada">
+                  <dt class="sr-only">En la mano</dt>
+                  <dd>
+                    {heldItems.map((item) => <span data-item={item.id}><PixelIcon name={item.icon} /></span>)}
+                    <span class="sr-only" id={`held-name-${side.id}`}>nada</span>
+                  </dd>
+                </div>
                 {
                   stats.map((stat) => (
-                    <div title={stat.label}>
+                    <div data-tip={stat.tip} id={`stat-${stat.id}-${side.id}`}>
                       <dt>
-                        <PixelIcon name={stat.id} />
+                        <PixelIcon name={stat.icon} />
                         <span class="sr-only">{stat.label}</span>
                       </dt>
                       <dd id={`${stat.id}-${side.id}`}>–</dd>
@@ -109,7 +149,9 @@ const providers = [
           ))
         }
         <div class="hud__clock">
-          <div class="clock" id="clock" aria-label="Tiempo restante">--:--</div>
+          <div class="clock" id="clock" aria-label="Tiempo restante" data-tip="Tiempo que le queda a la pelea. Si se acaba, gana quien tenga más vida.">
+            --:--
+          </div>
           <span class="phase" id="phase">Conectando…</span>
         </div>
       </div>
@@ -117,6 +159,7 @@ const providers = [
       <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
         <strong class="winner__title" id="winner-title"></strong>
         <span class="winner__detail" id="winner-detail"></span>
+        <p class="winner__why" id="winner-why" hidden></p>
       </div>
 
       <!-- Qué piensa cada agente, como subtítulos que aparecen con cada novedad, y el botón de la pelea al centro. -->
@@ -132,7 +175,11 @@ const providers = [
               <span class="sr-only">Último pensamiento</span>
               <p class="mind__thought" id={`thought-${side.id}`}>—</p>
               <span class="sr-only">Última acción</span>
-              <p class="mind__action" id={`action-${side.id}`}>—</p>
+              <p class="mind__action" id={`action-${side.id}`} data-tool="">
+                {actionIcons.map((action) => <span data-tool={action.tool}><PixelIcon name={action.icon} /></span>)}
+                <span id={`action-label-${side.id}`}>—</span>
+                <span class="mind__result" id={`action-result-${side.id}`}></span>
+              </p>
             </article>
           ))
         }

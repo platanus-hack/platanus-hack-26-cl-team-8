@@ -95,8 +95,8 @@ export function createModelPicker(opts: {
         item.setAttribute("aria-selected", String(selected));
         const tag = el("span", "model-tag");
         renderModelTag(tag, option.info);
-        // El tooltip repetiría lo que ya dice la fila.
-        tag.removeAttribute("title");
+        // La ayuda repetiría lo que ya dice la fila.
+        delete tag.dataset.tip;
         item.append(tag, el("span", "picker__hint", option.hint));
         // mousedown y no click: el buscador no pierde el foco antes de elegir.
         item.addEventListener("mousedown", (event) => {

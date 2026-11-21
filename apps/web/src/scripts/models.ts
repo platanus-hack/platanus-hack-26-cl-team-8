@@ -202,7 +202,9 @@ export function renderModelTag(target: HTMLElement, info: ModelInfo | null): voi
   target.hidden = info === null;
   if (!info) return;
 
-  target.title = info.detail;
+  // Ayuda al pasar el mouse: qué proveedor e id exacto hay detrás del nombre.
+  if (info.detail !== "") target.dataset.tip = `Modelo de este agente: ${info.detail}`;
+  else delete target.dataset.tip;
   const icon = info.brand ? iconNode(info.brand.icon) : null;
   if (icon) {
     const holder = el("span", "model-tag__icon");

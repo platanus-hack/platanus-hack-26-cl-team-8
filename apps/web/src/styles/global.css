@@ -99,6 +99,61 @@ textarea {
   --side: var(--blue);
 }
 
+/*
+ * Ayuda al pasar el mouse: cualquier elemento con `data-tip` muestra ese texto en una
+ * cajita, casi al instante (el `title` nativo tarda y no se puede estilar). Sale hacia
+ * abajo; en los subtítulos, que están al pie del video, hacia arriba. En el lado azul y
+ * en el borde derecho se alinea a la derecha para no salirse de la pantalla.
+ */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 280px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: #24262b;
+  color: var(--text);
+  font: 400 13px/1.4 var(--sans);
+  letter-spacing: 0;
+  text-align: left;
+  text-decoration: none;
+  text-shadow: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0.15s;
+}
+
+.hud__side--blue [data-tip]::after,
+.mind--blue [data-tip]::after,
+.sound[data-tip]::after,
+.conn[data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
+.minds [data-tip]::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -248,12 +303,34 @@ textarea {
   display: flex;
 }
 
+/* Botón de sonido: parte apagado (el navegador exige un clic antes de dejar sonar). */
+.sound {
+  display: flex;
+  margin-left: auto;
+  padding: 4px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.sound [data-sound] {
+  display: none;
+}
+
+.sound[aria-pressed="true"] [data-sound="on"],
+.sound[aria-pressed="false"] [data-sound="off"] {
+  display: flex;
+}
+
+.sound[aria-pressed="false"] {
+  opacity: 0.55;
+}
+
 /* Conexión: si todo va bien es solo un punto; el texto aparece cuando hay un problema. */
 .conn {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
   font-size: 13px;
   color: var(--text);
 }
@@ -423,7 +500,8 @@ textarea {
 /* Golpe recibido: el número de daño salta junto a la vida y cae desvaneciéndose. */
 .hud__pop {
   position: absolute;
-  top: 66px;
+  /* Justo bajo la fila de estadísticas, del lado del reloj. */
+  top: 104px;
   right: 0;
   font: 400 32px/1 var(--pixel);
   text-shadow: 0 3px 0 rgba(0, 0, 0, 0.6);
@@ -508,6 +586,16 @@ textarea {
 
 .winner__detail {
   font-size: 18px;
+  color: rgba(237, 236, 232, 0.75);
+}
+
+/* "Por qué ganó": una frase, escrita por un modelo unos segundos después del final. */
+.winner__why {
+  max-width: 54ch;
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 /* ---------- Pensamientos (subtítulos) y control de la pelea ---------- */
@@ -561,15 +649,41 @@ textarea {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
+/* Última acción: ícono + frase; la llamada a la herramienta tal cual va en el tooltip. */
 .mind__action {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   margin-top: 8px;
-  font: 13px/1.5 var(--mono);
-  color: rgba(237, 236, 232, 0.78);
-  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.4;
+  color: rgba(237, 236, 232, 0.88);
+}
+
+.mind--blue .mind__action {
+  justify-content: flex-end;
+}
+
+.mind__action > [data-tool] {
+  display: none;
+}
+
+.mind__action[data-tool="approach"] > [data-tool="approach"],
+.mind__action[data-tool="attack"] > [data-tool="attack"],
+.mind__action[data-tool="retreat"] > [data-tool="retreat"],
+.mind__action[data-tool="shoot"] > [data-tool="shoot"],
+.mind__action[data-tool="eat"] > [data-tool="eat"],
+.mind__action[data-tool="wait"] > [data-tool="wait"] {
+  display: flex;
+}
+
+.mind__result {
+  color: rgba(237, 236, 232, 0.62);
+}
+
+.mind__result:empty {
+  display: none;
 }
 
 /* Estadísticas bajo la barra de vida: ícono de píxeles + número, como el HUD del juego. */
@@ -579,8 +693,29 @@ textarea {
   margin-top: 2px;
 }
 
+/* Azul es el espejo: el casillero queda en su borde (la derecha) y el resto hacia el centro. */
 .hud__side--blue .stats {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
+}
+
+/* Ítem en la mano: un casillero como los del inventario del juego. */
+.slot dd {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 2px rgba(237, 236, 232, 0.3);
+}
+
+.slot dd > [data-item] {
+  display: none;
+}
+
+.slot[data-item="sword"] dd > [data-item="sword"],
+.slot[data-item="bow"] dd > [data-item="bow"],
+.slot[data-item="food"] dd > [data-item="food"] {
+  display: flex;
 }
 
 .stats div {
@@ -768,7 +903,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 .feed-item--action .feed-item__text {
-  font: 12.5px/1.5 var(--mono);
   color: var(--muted);
 }
 

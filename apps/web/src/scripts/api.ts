@@ -1,9 +1,11 @@
 import {
   API_ROUTES,
   AgentConfigSchema,
+  MatchRecordSchema,
   MatchStateSchema,
   ServerDefaultsSchema,
   type AgentConfig,
+  type MatchRecord,
   type MatchState,
   type PromptsResponse,
   type ServerDefaults,
@@ -116,6 +118,11 @@ export function startMatch(): Promise<MatchState> {
 
 export function stopMatch(): Promise<MatchState> {
   return request(API_ROUTES.matchStop, MatchStateSchema, { method: "POST" });
+}
+
+/** Últimas peleas guardadas. La web solo lo usa para leer el "por qué ganó" de la más reciente. */
+export function fetchMatches(): Promise<MatchRecord[]> {
+  return request(API_ROUTES.matches, { parse: (data) => MatchRecordSchema.array().parse(data) });
 }
 
 export function fetchDefaults(): Promise<ServerDefaults> {

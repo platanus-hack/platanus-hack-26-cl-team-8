@@ -90,6 +90,10 @@ function agent(side: Side, patch: Partial<AgentStatus>): AgentStatus {
     decisions: 0,
     lastThought: "",
     lastAction: "",
+    heldItem: "",
+    tokensIn: 0,
+    tokensOut: 0,
+    avgDecisionMs: 0,
     ...patch,
   };
 }
@@ -101,7 +105,11 @@ const RUNNING_START = {
     damageDealt: 9,
     decisions: 41,
     lastThought: "Está a 6 bloques y retrocede. Si acorto la distancia no puede usar el arco: cargo de frente.",
-    lastAction: 'move_to({"target":"enemy","sprint":true}) → avanzando hacia AgenteAzul (6.2 bloques)',
+    lastAction: 'approach({"reason":"acortar distancia"}) → avanzando hacia AgenteAzul (6.2 bloques)',
+    heldItem: "iron_sword",
+    tokensIn: 48_200,
+    tokensOut: 3_900,
+    avgDecisionMs: 1180,
   }),
   blue: agent("blue", {
     health: 11,
@@ -109,7 +117,11 @@ const RUNNING_START = {
     damageDealt: 6.5,
     decisions: 39,
     lastThought: "Se acerca rápido. Un disparo más y me muevo en círculo hacia la izquierda para mantener distancia.",
-    lastAction: 'shoot_bow({"charge_ms":900}) → flecha disparada (falló por 0.8 bloques)',
+    lastAction: 'shoot({"reason":"aún tengo distancia"}) → flecha disparada (falló por 0.8 bloques)',
+    heldItem: "bow",
+    tokensIn: 45_100,
+    tokensOut: 5_200,
+    avgDecisionMs: 2140,
   }),
 };
 
@@ -117,6 +129,11 @@ const RUNNING_START = {
 let running = structuredClone(RUNNING_START);
 /** Cuándo "empezó" la pelea en curso; se reinicia cuando el reloj está por llegar a cero. */
 let runningSince = Date.now() - ELAPSED_MS;
+
+const EXPLANATION =
+  "Rojo ganó porque su prompt lo mantuvo pegado al rival: Azul nunca consiguió la distancia que su estrategia de arco necesitaba.";
+let explanationReady = false;
+let explanationTimer: number | undefined;
 
 function buildState(phase: MatchPhase): MatchState {
   const now = Date.now();
@@ -159,8 +176,9 @@ function buildState(phase: MatchPhase): MatchState {
     };
   }
 
-  // finished: gana Rojo por KO.
+  // finished: gana Rojo por KO. La explicación aparece unos segundos después, como en el servidor.
   const result: MatchResult = { winner: "red", reason: "kill" };
+  if (explanationReady) result.explanation = EXPLANATION;
   return {
     id: "mock-match",
     phase,
@@ -173,7 +191,11 @@ function buildState(phase: MatchPhase): MatchState {
         damageDealt: 20,
         decisions: 74,
         lastThought: "Le queda 1 de vida y está contra el muro. Último golpe.",
-        lastAction: 'attack({"target":"enemy"}) → golpe conectado (7 de daño)',
+        lastAction: 'attack({"reason":"rematar"}) → golpe conectado (7 de daño)',
+        heldItem: "iron_sword",
+        tokensIn: 87_400,
+        tokensOut: 7_100,
+        avgDecisionMs: 1210,
       }),
       blue: agent("blue", {
         alive: false,
@@ -182,7 +204,11 @@ function buildState(phase: MatchPhase): MatchState {
         damageDealt: 15.5,
         decisions: 71,
         lastThought: "Estoy acorralado contra el muro. Intento salir por la derecha y disparar.",
-        lastAction: 'move_to({"x":9,"z":-4}) → bloqueado por el muro',
+        lastAction: 'retreat({"reason":"salir del rincón"}) → bloqueado por el muro',
+        heldItem: "bow",
+        tokensIn: 82_900,
+        tokensOut: 9_800,
+        avgDecisionMs: 2260,
       }),
     },
     configs,
@@ -198,30 +224,30 @@ type FeedSeed = { ago: number; event: Record<string, unknown> & { type: ArenaEve
 const RUNNING_FEED: FeedSeed[] = [
   { ago: 70_000, event: { type: "log", level: "info", text: "AgenteRojo y AgenteAzul entraron a la arena." } },
   { ago: 66_000, event: { type: "thought", side: "red", text: "El rival está a 16 bloques. Mi prompt dice atacar sin parar: corro hacia él." } },
-  { ago: 65_500, event: { type: "action", side: "red", tool: "move_to", args: { target: "enemy", sprint: true }, result: "avanzando hacia AgenteAzul (16.0 bloques)" } },
+  { ago: 65_500, event: { type: "action", side: "red", tool: "approach", args: { reason: "acortar distancia" }, result: "avanzando hacia AgenteAzul (16.0 bloques)" } },
   { ago: 64_000, event: { type: "thought", side: "blue", text: "Tengo arco y distancia. Cargo un disparo antes de que se acerque." } },
-  { ago: 63_200, event: { type: "action", side: "blue", tool: "shoot_bow", args: { charge_ms: 1000 }, result: "flecha disparada (impacto)" } },
+  { ago: 63_200, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 63_000, event: { type: "damage", side: "red", amount: 4, health: 16 } },
   { ago: 52_000, event: { type: "thought", side: "red", text: "Me dio una flecha, pero ya estoy a 3 bloques. Golpeo." } },
-  { ago: 51_400, event: { type: "action", side: "red", tool: "attack", args: { target: "enemy" }, result: "golpe conectado (6 de daño)" } },
+  { ago: 51_400, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (6 de daño)" } },
   { ago: 51_200, event: { type: "damage", side: "blue", amount: 6, health: 14 } },
   { ago: 44_000, event: { type: "thought", side: "blue", text: "Demasiado cerca. Me alejo en círculo hacia la izquierda y vuelvo a disparar." } },
-  { ago: 43_300, event: { type: "action", side: "blue", tool: "move_to", args: { x: 6, z: -7 }, result: "alejándose (ahora a 7.5 bloques)" } },
-  { ago: 31_000, event: { type: "action", side: "blue", tool: "shoot_bow", args: { charge_ms: 700 }, result: "flecha disparada (impacto)" } },
+  { ago: 43_300, event: { type: "action", side: "blue", tool: "retreat", args: { reason: "abrir distancia" }, result: "alejándose (ahora a 7.5 bloques)" } },
+  { ago: 31_000, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 30_800, event: { type: "damage", side: "red", amount: 2.5, health: 13.5 } },
-  { ago: 22_000, event: { type: "action", side: "red", tool: "attack", args: { target: "enemy" }, result: "golpe conectado (3 de daño)" } },
+  { ago: 22_000, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (3 de daño)" } },
   { ago: 21_800, event: { type: "damage", side: "blue", amount: 3, health: 11 } },
   { ago: 12_000, event: { type: "log", level: "warn", text: "AgenteAzul: el modelo tardó 2.3 s en responder; se saltó una decisión." } },
   { ago: 6_000, event: { type: "thought", side: "blue", text: RUNNING_START.blue.lastThought } },
-  { ago: 5_400, event: { type: "action", side: "blue", tool: "shoot_bow", args: { charge_ms: 900 }, result: "flecha disparada (falló por 0.8 bloques)" } },
+  { ago: 5_400, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (falló por 0.8 bloques)" } },
   { ago: 2_500, event: { type: "thought", side: "red", text: RUNNING_START.red.lastThought } },
-  { ago: 1_900, event: { type: "action", side: "red", tool: "move_to", args: { target: "enemy", sprint: true }, result: "avanzando hacia AgenteAzul (6.2 bloques)" } },
+  { ago: 1_900, event: { type: "action", side: "red", tool: "approach", args: { reason: "acortar distancia" }, result: "avanzando hacia AgenteAzul (6.2 bloques)" } },
 ];
 
 const FINISHED_FEED: FeedSeed[] = [
   ...RUNNING_FEED.slice(0, 15).map((seed) => ({ ...seed, ago: seed.ago + 60_000 })),
   { ago: 9_000, event: { type: "thought", side: "red", text: "Le queda 1 de vida y está contra el muro. Último golpe." } },
-  { ago: 8_300, event: { type: "action", side: "red", tool: "attack", args: { target: "enemy" }, result: "golpe conectado (7 de daño)" } },
+  { ago: 8_300, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (7 de daño)" } },
   { ago: 8_200, event: { type: "damage", side: "blue", amount: 7, health: 0 } },
   { ago: 8_100, event: { type: "death", side: "blue" } },
   { ago: 8_000, event: { type: "log", level: "info", text: "Gana Rojo por KO en 2:11." } },
@@ -256,7 +282,19 @@ function setPhase(next: MatchPhase): MatchState {
     runningSince = Date.now() - ELAPSED_MS;
   }
   syncLoop();
+  scheduleExplanation();
   return broadcastState();
+}
+
+/** En "finished", el "por qué ganó" llega 3 s después del resultado. */
+function scheduleExplanation(): void {
+  window.clearTimeout(explanationTimer);
+  explanationReady = false;
+  if (phase !== "finished") return;
+  explanationTimer = window.setTimeout(() => {
+    explanationReady = true;
+    broadcastState();
+  }, 3000);
 }
 
 // ---------- Pelea en bucle ----------
@@ -294,8 +332,18 @@ function think(side: Side): void {
   send({ type: "thought", side, text });
 }
 
+/** Qué queda en la mano después de cada herramienta. */
+const HELD_AFTER: Record<string, string> = { attack: "iron_sword", shoot: "bow", eat: "cooked_beef" };
+
 function act(side: Side, tool: string, args: Record<string, unknown>, result: string): void {
-  running[side].lastAction = `${tool}(${JSON.stringify(args)}) → ${result}`;
+  const agentNow = running[side];
+  agentNow.lastAction = `${tool}(${JSON.stringify(args)}) → ${result}`;
+  agentNow.heldItem = HELD_AFTER[tool] ?? agentNow.heldItem;
+  // Cada decisión gasta tokens; el modelo de Azul es más lento que el de Rojo.
+  agentNow.tokensIn += 1150 + Math.round(Math.random() * 200);
+  agentNow.tokensOut += 70 + Math.round(Math.random() * 60);
+  const base = side === "red" ? 1180 : 2140;
+  agentNow.avgDecisionMs = base + Math.round((Math.random() - 0.5) * 160);
   send({ type: "action", side, tool, args, result });
 }
 
@@ -320,25 +368,26 @@ function loopTick(): void {
   switch (loopStep % 6) {
     case 0:
       think("red");
-      act("red", "move_to", { target: "enemy", sprint: true }, "avanzando hacia AgenteAzul (3.1 bloques)");
+      act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
       break;
     case 1:
-      act("red", "attack", { target: "enemy" }, "golpe conectado (3 de daño)");
+      act("red", "attack", { reason: "está a mi alcance", seconds: 2 }, "golpe conectado (3 de daño)");
       hit("red", 3);
       break;
     case 2:
       think("blue");
-      act("blue", "move_to", { x: 7, z: -6 }, "alejándose (ahora a 8.2 bloques)");
+      act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
       break;
     case 3:
-      act("blue", "shoot_bow", { charge_ms: 1000 }, "flecha disparada (impacto)");
+      act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
       hit("blue", 2.5);
       break;
     case 4:
       think("red");
+      act("red", "eat", { reason: "recupero vida antes de volver" }, "comiendo carne");
       break;
     default:
-      act("blue", "shoot_bow", { charge_ms: 600 }, "flecha disparada (falló por 1.2 bloques)");
+      act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
       break;
   }
   loopStep += 1;
@@ -368,6 +417,8 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.state) return buildState(phase);
   if (method === "GET" && path === API_ROUTES.prompts) return prompts;
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
+  // La maqueta no guarda peleas.
+  if (method === "GET" && path === API_ROUTES.matches) return [];
 
   if (method === "POST" && path === API_ROUTES.matchStart) {
     if (phase === "preparing" || phase === "running") fail(409, "Ya hay una pelea en curso");
@@ -406,6 +457,7 @@ export function connectMockSocket(handlers: SocketHandlers): void {
   // El estado va al final y con la hora actual: la página sincroniza su reloj con el último evento.
   broadcastState();
   syncLoop();
+  scheduleExplanation();
 }
 
 // ---------- Video de relleno ----------
