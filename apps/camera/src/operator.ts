@@ -3,7 +3,16 @@ import { AGENT_USERNAMES, SIDES } from "@phack/protocol";
 import { currentArena, startArenaTracking } from "./arena";
 import { connectBot, runRcon } from "./bot";
 import type { CameraConfig } from "./config";
-import { cameraPose, orbitPosition, pickAimTarget, pickShot, smoothToward, type Shot, type Vec } from "./director";
+import {
+  cameraPose,
+  orbitPosition,
+  pickAimTarget,
+  pickShot,
+  smoothToward,
+  waitingForTeleport,
+  type Shot,
+  type Vec,
+} from "./director";
 import { errorText, FatalError, log } from "./log";
 
 /**
@@ -53,6 +62,12 @@ let desired: { feet: Vec; yaw: number; pitch: number } | null = null;
 let needsTeleport = true;
 /** true = hay que (volver a) montar al cliente real en el bot. */
 let mountDirty = true;
+/**
+ * Hora (performance.now) del último /tp lejano cuya llegada el servidor aún no confirmó, o
+ * null. Mientras tanto el bot no se mueve: si mandara posiciones antes de procesar el /tp,
+ * Paper las vería como un salto enorme ("moved too quickly") y lo devolvería, en bucle.
+ */
+let teleportPendingSince: number | null = null;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,6 +137,9 @@ function startFlightLoop(config: CameraConfig): void {
     useArena();
     const bot = currentBot;
     if (!bot?.entity) return;
+    // Recién teletransportado por RCON: no moverse hasta que el servidor lo confirme.
+    if (waitingForTeleport(teleportPendingSince, now)) return;
+    teleportPendingSince = null;
 
     const fighters: Vec[] = [];
     for (const side of SIDES) {
@@ -203,7 +221,12 @@ async function maintain(config: CameraConfig, bot: Bot, isOver: () => boolean): 
   while (!isOver() && !stopping) {
     try {
       if (needsTeleport && desired) {
-        await runRcon(config, placementCommands(config));
+        // El cliente real montado viajaría junto con el bot y Paper también lo rechazaría:
+        // se desmonta antes del salto y se vuelve a montar después (mountDirty).
+        const clientOnline = bot.players[config.clientUsername] !== undefined;
+        const unmount = clientOnline ? [`execute as ${config.clientUsername} run spectate`] : [];
+        teleportPendingSince = performance.now();
+        await runRcon(config, [...unmount, ...placementCommands(config)]);
         needsTeleport = false;
         if (!placedOnce) {
           placedOnce = true;
@@ -259,6 +282,10 @@ async function runBotLoop(config: CameraConfig): Promise<void> {
       mountDirty = true;
       session.bot.on("playerJoined", (player) => {
         if (player.username === config.clientUsername) mountDirty = true;
+      });
+      // El servidor confirmó un /tp (paquete de posición): el bot ya puede volar.
+      session.bot.on("forcedMove", () => {
+        teleportPendingSince = null;
       });
       currentBot = session.bot;
       void maintain(config, session.bot, () => over);
