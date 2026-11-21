@@ -122,7 +122,10 @@ services:
       # Montaje de UN archivo: si cambia en el host hay que reiniciar el contenedor
       # (docker compose restart mediamtx); scripts/deploy.sh ya lo hace.
       - ./infra/mediamtx/mediamtx.yml:/mediamtx.yml:ro,z
-    # Sin puertos publicados: RTMP (1935) y HLS (8888) solo se usan dentro de la red de compose.
+    # RTMP (1935) se publica SOLO en localhost: ahí publica el cliente real de Minecraft,
+    # que corre en el host (infra/stream). HLS (8888) solo se usa dentro de la red de compose.
+    ports:
+      - "127.0.0.1:1935:1935"
     logging: *logging
 
   orchestrator:
@@ -159,6 +162,11 @@ services:
     environment:
       <<: *node-env
       # Propias de la cámara (apps/camera/src/config.ts las lee directo de process.env).
+      # client = el video lo dibuja el cliente real de Minecraft (infra/stream) y este
+      # contenedor solo vuela al bot cámara. viewer = render propio (sin GPU).
+      CAMERA_MODE: ${CAMERA_MODE:-client}
+      STREAM_CLIENT_USERNAME: ${STREAM_CLIENT_USERNAME:-Camarografo}
+      STREAM_FOV: ${STREAM_FOV:-40}
       CAMERA_ORBIT_SECONDS: ${CAMERA_ORBIT_SECONDS:-0}
       CAMERA_VIEW_DISTANCE: ${CAMERA_VIEW_DISTANCE:-4}
       CAMERA_BITRATE_KBPS: ${CAMERA_BITRATE_KBPS:-2500}

@@ -80,8 +80,8 @@ export function connectBot(config: CameraConfig): Promise<BotSession> {
   });
 }
 
-/** Deja a la cámara en modo espectador y en ARENA.camera usando RCON. */
-export async function placeCamera(config: CameraConfig): Promise<void> {
+/** Abre una conexión RCON, manda los comandos en orden y la cierra. Devuelve las respuestas. */
+export async function runRcon(config: CameraConfig, commands: readonly string[]): Promise<string[]> {
   const rcon = new Rcon({
     host: config.rcon.host,
     port: config.rcon.port,
@@ -92,12 +92,18 @@ export async function placeCamera(config: CameraConfig): Promise<void> {
   rcon.on("error", () => {});
   await rcon.connect();
   try {
-    const { x, y, z } = ARENA.camera;
-    await rcon.send(`gamemode spectator ${config.username}`);
-    await rcon.send(`tp ${config.username} ${x} ${y} ${z}`);
+    const replies: string[] = [];
+    for (const command of commands) replies.push(await rcon.send(command));
+    return replies;
   } finally {
     await rcon.end().catch(() => {});
   }
+}
+
+/** Deja a la cámara en modo espectador y en ARENA.camera usando RCON. */
+export async function placeCamera(config: CameraConfig): Promise<void> {
+  const { x, y, z } = ARENA.camera;
+  await runRcon(config, [`gamemode spectator ${config.username}`, `tp ${config.username} ${x} ${y} ${z}`]);
 }
 
 /** true si alguien sacó a la cámara de su sitio o de modo espectador. */

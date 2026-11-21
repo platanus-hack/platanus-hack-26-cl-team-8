@@ -50,7 +50,8 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
 |---|---|---|
 | `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mundo plano sin mobs, modo offline, RCON activado. |
 | `orchestrator` | `apps/orchestrator` | Dueño de la pelea: prepara la arena por RCON, conecta a los dos agentes, lleva el estado, decide el ganador, guarda el historial y emite eventos por websocket. |
-| `camera` | `apps/camera` | Bot espectador que renderiza la arena y la empuja por RTMP a MediaMTX. |
+| `camera` | `apps/camera` | Bot cámara. Vuela siguiendo la pelea; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
+| `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
 | `mediamtx` | `bluenviron/mediamtx` | Convierte el RTMP en HLS de baja latencia. |
 | `web` | `apps/web` + Caddy | Sitio estático (Astro) y proxy inverso de un solo origen. |
 | `cloudflared` | `cloudflare/cloudflared` | Túnel de salida hacia Cloudflare (opcional). |
@@ -337,6 +338,33 @@ La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarg
 
 `scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
 
+## Transmisión con el cliente real de Minecraft
+
+El video de la web sale del juego de verdad, no de un render aparte:
+
+```text
+Xvfb (pantalla virtual) -> cliente de Minecraft, dibujado por la GPU (VirtualGL)
+  -> ffmpeg captura la pantalla y codifica H.264 (NVENC) -> RTMP -> MediaMTX -> HLS -> web
+```
+
+El cliente entra al servidor como el espectador `Camarografo`. El contenedor `camera` lo monta (`/spectate`) en el bot `Camara` y mueve ese bot para encuadrar la pelea, siempre mirando en la misma dirección.
+
+Se instala una sola vez en el servidor (Fedora, GPU NVIDIA con su driver):
+
+```bash
+sudo bash infra/stream/install.sh
+```
+
+Eso instala Xvfb, VirtualGL y xdotool, descarga el cliente desde Mojang (unos 850 MB) y deja corriendo el servicio `phack-stream`. Necesitas una licencia de Minecraft Java; el servidor de la arena es offline, así que el cliente entra sin iniciar sesión.
+
+```bash
+systemctl status phack-stream      # estado
+journalctl -u phack-stream -f      # logs de la transmisión
+docker compose logs -f camera      # logs del bot cámara
+```
+
+Sin GPU, pon `CAMERA_MODE=viewer` en `.env`: el contenedor `camera` vuelve a renderizar por software y no hace falta `phack-stream`. Las variables `STREAM_*` están en `.env.example`.
+
 ## Estado
 
 Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 29, 12 CPU, 16 GB), con el stack completo de `docker-compose.yml`:
@@ -350,19 +378,22 @@ Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 2
 | Pelea en modo `mock` | Completa: los dos agentes entran, pelean, uno gana por KO y queda en el historial. |
 | Pelea con LLM real | Completa con `LLM_PROVIDER=vercel` y `deepseek/deepseek-v4.1-flash-1017-fast`: cada agente decide con tool calls y explica su razón. |
 | Web | Sitio, API y websocket a través de Caddy en el puerto 8080. |
-| Video | La cámara publica a ~30 fps (usa unos 2 núcleos de CPU), MediaMTX entrega HLS y la arena se ve bien. |
+| Video | El cliente real de Minecraft corre en el servidor sin monitor (RTX 3080 vía VirtualGL), ffmpeg lo captura y codifica con la GPU a 30 fps, y MediaMTX entrega HLS: en la web se ven armaduras, armas, flechas, golpes y nombres. Se recupera solo si expulsan al cliente o se reinicia MediaMTX. |
+| Tests y typecheck de la cámara | 23 tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
 
 ### Lo que no se ha probado
 
 - **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel.
 - **Los otros proveedores** (`openai`, `anthropic`, `openrouter`) contra sus APIs reales. Solo tienen tests con `fetch` simulado.
 - **`scripts/deploy.sh` tal cual**: asume que el usuario SSH puede usar `docker` sin `sudo`.
-- **El typecheck de `apps/camera`** y la cámara fuera de Docker.
+- **La cámara fuera de Docker**, y el modo `CAMERA_MODE=viewer` después de agregar el modo `client`.
+- **La transmisión tras un reinicio completo del servidor** (que `phack-stream` parta solo al encender) y en otra distribución que no sea Fedora.
 - **Empates y victorias por tiempo**: todas las peleas de prueba terminaron por KO en menos de 30 segundos.
 
 ### Limitaciones conocidas
 
-- **Render de la cámara.** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin: un rombo rojo o azul flota sobre cada peleador para distinguirlos. No trae datos de 1.20.4, así que usa las texturas de 1.20.1; `apps/camera/src/stage.ts` hace que decodifique los chunks con la versión real (sin eso los bloques salen cambiados).
+- **Cámara del cliente real.** El campo de visión es fijo (`STREAM_FOV`), así que el zoom se hace acercando la cámara. La cámara no gira: el servidor transmite la rotación de un jugador en pasos de 1,4°, y girar se vería a saltos; por eso encuadra deslizándose. El video no lleva audio.
+- **Render sin GPU (`CAMERA_MODE=viewer`).** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin. Es el respaldo para máquinas sin GPU y lo que se usa en desarrollo local.
 - **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
 - **Peleas cortas.** Con el kit actual (espada y armadura de hierro) un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar el kit en `apps/orchestrator/src/arena.ts`.
 - **Sin autenticación.** Cualquiera con el link puede cambiar prompts e iniciar peleas, y cada pelea gasta llamadas al LLM. Ponle un límite de gasto a la clave.

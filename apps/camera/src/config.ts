@@ -1,6 +1,20 @@
 import { loadEnv } from "@phack/env";
 
+/**
+ * Quién dibuja el video:
+ *  - "client": el cliente real de Minecraft (infra/stream), montado en este bot. Aquí solo
+ *    se vuela la cámara; no se renderiza ni se publica nada.
+ *  - "viewer": render propio con prismarine-viewer + ffmpeg (el método antiguo; sirve en
+ *    máquinas sin GPU).
+ */
+export type CameraMode = "client" | "viewer";
+
 export type CameraConfig = {
+  mode: CameraMode;
+  /** Usuario con el que entra el cliente real de Minecraft (modo "client"). */
+  clientUsername: string;
+  /** FOV vertical fijo del cliente real, en grados (el mismo que escribe infra/stream en options.txt). */
+  lensFov: number;
   mc: { host: string; port: number; version: string };
   rcon: { host: string; port: number; password: string };
   username: string;
@@ -38,6 +52,22 @@ function readFlag(name: string): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "si" || raw === "sí";
 }
 
+function readMode(): CameraMode {
+  const raw = (process.env.CAMERA_MODE ?? "").trim().toLowerCase();
+  if (raw === "" || raw === "viewer") return "viewer";
+  if (raw === "client") return "client";
+  throw new Error(`Variable de entorno inválida: CAMERA_MODE="${raw}" (valores: client, viewer)`);
+}
+
+function readName(name: string, fallback: string): string {
+  const raw = (process.env[name] ?? "").trim();
+  if (raw === "") return fallback;
+  if (!/^[A-Za-z0-9_]{3,16}$/.test(raw)) {
+    throw new Error(`Variable de entorno inválida: ${name}="${raw}" no es un nombre de jugador de Minecraft`);
+  }
+  return raw;
+}
+
 function toEven(value: number, min: number): number {
   const clamped = Math.max(min, Math.floor(value));
   return clamped - (clamped % 2);
@@ -46,6 +76,9 @@ function toEven(value: number, min: number): number {
 export function loadConfig(): CameraConfig {
   const env = loadEnv();
   return {
+    mode: readMode(),
+    clientUsername: readName("STREAM_CLIENT_USERNAME", "Camarografo"),
+    lensFov: readNumber("STREAM_FOV", 40, 30, 110),
     mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
     rcon: { host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD },
     username: env.CAMERA_USERNAME,

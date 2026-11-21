@@ -10,7 +10,8 @@
 #   2. Si son distintos, exporta ese commit exacto con `git archive` (NO tu carpeta de
 #      trabajo: los cambios sin commitear no viajan) y lo copia con rsync.
 #   3. En el servidor: `docker compose up -d --build`, y reinicia los servicios cuya
-#      configuración montada cambió (mediamtx, web, minecraft).
+#      configuración montada cambió (mediamtx, web, minecraft) y la transmisión del host
+#      (servicio phack-stream) si cambió infra/stream.
 #   4. Anota el commit desplegado.
 #
 # En tu máquina solo corre git, rsync y ssh. Todo lo pesado ocurre en el servidor.
@@ -127,7 +128,7 @@ git -C "$REPO_ROOT" archive "$NEW_SHA" | tar -x -C "$TMP_DIR"
 
 # Archivos que cambiaron desde el último despliegue (para saber qué reiniciar).
 # Si no se conoce el commit anterior, se asume que cambió toda la configuración.
-CHANGED="infra/mediamtx/ infra/caddy/ infra/minecraft/"
+CHANGED="infra/mediamtx/ infra/caddy/ infra/minecraft/ infra/stream/"
 if [ -n "$OLD_SHA" ] && git -C "$REPO_ROOT" cat-file -e "$OLD_SHA^{commit}" 2>/dev/null; then
   CHANGED="$(git -C "$REPO_ROOT" diff --name-only "$OLD_SHA" "$NEW_SHA")"
 fi
@@ -168,9 +169,27 @@ if [ -n "$RESTART" ]; then
   }
 fi
 
+# La transmisión (cliente real de Minecraft) corre en el host como servicio systemd, fuera
+# de Docker: se reinicia si cambió su script. Si no está instalada, solo se avisa.
+STREAM_NOTE=""
+case "$CHANGED" in
+  *infra/stream/*)
+    if remote_docker "systemctl cat phack-stream >/dev/null 2>&1"; then
+      if remote_docker "systemctl restart phack-stream" >>"$BUILD_LOG" 2>&1; then
+        STREAM_NOTE=" Transmisión reiniciada."
+      else
+        STREAM_NOTE=" AVISO: no se pudo reiniciar el servicio phack-stream (necesita sudo: DEPLOY_SUDO=1)."
+      fi
+    else
+      STREAM_NOTE=" AVISO: falta instalar la transmisión en el servidor: sudo bash infra/stream/install.sh"
+    fi
+    ;;
+esac
+
 # ---------- 4. Anotar el commit desplegado ----------
 
 remote "printf '%s\n' '$NEW_SHA' > .deployed-sha"
 
 FROM="${OLD_SHA:0:7}"
 echo "DESPLEGADO: ${FROM:-(primer despliegue)} -> $NEW_SHORT$([ -n "$RESTART" ] && echo " (reiniciados:$RESTART)")."
+[ -n "$STREAM_NOTE" ] && echo "${STREAM_NOTE# }"

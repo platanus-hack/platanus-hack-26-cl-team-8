@@ -126,3 +126,98 @@ export function smoothScalar(current: number, target: number, dtSeconds: number,
   if (dtSeconds <= 0) return current;
   return current + (target - current) * (1 - Math.exp(-dtSeconds / tauSeconds));
 }
+
+// ---------- Modo "cliente real": la cámara es un bot que vuela ----------
+//
+// En ese modo quien dibuja es el cliente real de Minecraft, montado (/spectate) en el bot
+// cámara. El servidor reenvía la ROTACIÓN de una entidad con 1 byte por eje (pasos de
+// 1,4°), pero su POSICIÓN con mucha precisión. Por eso la cámara mantiene una dirección
+// fija y encuadra TRASLADÁNDOSE: se desliza para seguir la pelea y se acerca o aleja para
+// hacer zoom. Girar se vería a saltos.
+
+/** Pasos por vuelta con los que el protocolo de Minecraft transmite un ángulo de entidad. */
+export const ANGLE_STEPS = 256;
+
+/** Redondea un ángulo (radianes) al valor más cercano que el protocolo puede transmitir. */
+export function quantizeAngle(radians: number): number {
+  const step = (2 * Math.PI) / ANGLE_STEPS;
+  return Math.round(radians / step) * step;
+}
+
+/**
+ * Ángulos con la convención de mineflayer para mirar desde `from` hacia `to`:
+ * yaw 0 = hacia -z (norte), crece hacia -x; pitch positivo = hacia arriba.
+ */
+export function lookAngles(from: Vec, to: Vec): { yaw: number; pitch: number } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  return { yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)) };
+}
+
+/** Vector unitario hacia donde mira una cámara con esos ángulos (inversa de `lookAngles`). */
+export function lookDirection(yaw: number, pitch: number): Vec {
+  const flat = Math.cos(pitch);
+  return { x: -Math.sin(yaw) * flat, y: Math.sin(pitch), z: -Math.cos(yaw) * flat };
+}
+
+export type DollyOptions = {
+  /** Relación de aspecto del video (ancho / alto). */
+  aspect: number;
+  /** FOV vertical FIJO del cliente de Minecraft, en grados. */
+  lensFov: number;
+  /** Aire alrededor de los sujetos (1 = justo al borde de la imagen). */
+  margin: number;
+  /** Lo más cerca que la cámara se pone del punto al que mira (zoom máximo). */
+  minDistance: number;
+  /** Lo más lejos (zoom mínimo). */
+  maxDistance: number;
+  /** Distancia cuando no hay nadie a quien encuadrar: se ve toda la arena. */
+  idleDistance: number;
+};
+
+/**
+ * Distancia a la que debe ponerse una cámara de lente fijo, que mira hacia `aim` en la
+ * dirección `direction` (unitaria), para que todos los `subjects` quepan en la imagen.
+ * Es el equivalente a `framingFov` cuando no se puede cambiar el FOV: en vez de cerrar
+ * el lente, la cámara se acerca.
+ */
+export function framingDistance(aim: Vec, direction: Vec, subjects: readonly Vec[], options: DollyOptions): number {
+  if (subjects.length === 0) return options.idleDistance;
+  // right = direction × (0,1,0)
+  let rx = -direction.z;
+  let rz = direction.x;
+  const rLen = Math.hypot(rx, rz);
+  if (rLen === 0) return options.idleDistance; // cámara mirando recto hacia abajo
+  rx /= rLen;
+  rz /= rLen;
+  // up = right × direction
+  const ux = -rz * direction.y;
+  const uy = rz * direction.x - rx * direction.z;
+  const uz = rx * direction.y;
+
+  const tanV = Math.tan((options.lensFov * Math.PI) / 360) / options.margin;
+  const tanH = tanV * options.aspect;
+  let need = options.minDistance;
+  for (const s of subjects) {
+    const ox = s.x - aim.x;
+    const oy = s.y - aim.y;
+    const oz = s.z - aim.z;
+    // Profundidad del sujeto respecto al punto de mira: si está más cerca de la cámara
+    // que `aim` (ahead < 0), la cámara tiene que alejarse más para que quepa.
+    const ahead = ox * direction.x + oy * direction.y + oz * direction.z;
+    const horizontal = Math.abs(ox * rx + oz * rz);
+    const vertical = Math.abs(ox * ux + oy * uy + oz * uz);
+    need = Math.max(need, horizontal / tanH - ahead, vertical / tanV - ahead);
+  }
+  return Math.min(options.maxDistance, Math.max(options.minDistance, need));
+}
+
+/** Posición del ojo de una cámara que mira hacia `aim` en `direction`, a `distance` bloques. */
+export function eyePosition(aim: Vec, direction: Vec, distance: number): Vec {
+  return {
+    x: aim.x - direction.x * distance,
+    y: aim.y - direction.y * distance,
+    z: aim.z - direction.z * distance,
+  };
+}
