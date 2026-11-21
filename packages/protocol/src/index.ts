@@ -317,6 +317,7 @@ function buildCatalog(): Record<string, CatalogEntry> {
   for (const [id, name] of Object.entries(TOOL_MATERIALS)) {
     catalog[`${id}_sword`] = { label: `Espada de ${name}`, stack: 1 };
     catalog[`${id}_axe`] = { label: `Hacha de ${name}`, stack: 1 };
+    catalog[`${id}_pickaxe`] = { label: `Pico de ${name}`, stack: 1 };
   }
   for (const [id, name] of Object.entries(ARMOR_MATERIALS)) {
     ARMOR_PIECES.forEach((piece, i) => {
@@ -331,6 +332,10 @@ function buildCatalog(): Record<string, CatalogEntry> {
     water_bucket: { label: "Cubo de agua", stack: 1 },
     lava_bucket: { label: "Cubo de lava", stack: 1 },
     shield: { label: "Escudo", stack: 1 },
+    shears: { label: "Tijeras", stack: 1 },
+    cobblestone: { label: "Roca", stack: 64 },
+    dirt: { label: "Tierra", stack: 64 },
+    obsidian: { label: "Obsidiana", stack: 64 },
     cooked_beef: { label: "Filete", stack: 64 },
     cooked_porkchop: { label: "Chuleta cocinada", stack: 64 },
     cooked_chicken: { label: "Pollo asado", stack: 64 },
@@ -399,8 +404,10 @@ function preferredHotbar(id: string): number {
   if (/_(sword|axe)$/.test(id)) return 0;
   if (id === "bow") return 1;
   if (id === "arrow") return 8;
-  if (id === "ender_pearl" || id === "oak_planks" || id.endsWith("_wool") || id.endsWith("_bucket")) return 3;
-  return 2;
+  if (id.endsWith("_pickaxe") || id === "shears") return 7;
+  // Comida en la 3; bloques, cubos y perlas desde la 4 (lo que no quepa, en la siguiente libre).
+  const food = /^(cooked_|golden_|enchanted_golden_)|^(bread|baked_potato|apple)$/.test(id);
+  return food ? 2 : 3;
 }
 
 function intIn(value: unknown, min: number, max: number, fallback: number): number {

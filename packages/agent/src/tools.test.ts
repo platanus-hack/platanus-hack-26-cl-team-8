@@ -28,7 +28,7 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     expect(isToolName("tower")).toBe(false);
   });
 
-  it("pearl exige elegir dónde caer y build elige entre muro y torre", () => {
+  it("pearl exige elegir dónde caer y build elige entre muro, torre y caja", () => {
     const pearl = TOOL_DEFS.find((def) => def.name === "pearl");
     expect(pearl?.parameters["required"]).toEqual(["target"]);
     const properties = pearl?.parameters["properties"] as Record<string, { enum?: string[] }>;
@@ -37,7 +37,7 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     const build = TOOL_DEFS.find((def) => def.name === "build");
     const buildProps = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
     expect(Object.keys(buildProps)).toEqual(["reason", "shape"]);
-    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower"]);
+    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower", "box"]);
     expect(build?.parameters["required"]).toEqual([]);
     expect(build?.description).toContain("muro de 3 de ancho y 2 de alto");
     expect(build?.description).toContain("gasta hasta 6 bloques");
@@ -102,12 +102,12 @@ describe("kitToolNames", () => {
   const base = ["approach", "attack", "retreat"];
 
   it("ofrece a cada kit solo lo que sus ítems permiten", () => {
-    expect(kitToolNames(KITS.classic)).toEqual([...base, "shoot", "eat", "wait"]);
-    expect(kitToolNames(KITS.archer)).toEqual([...base, "shoot", "eat", "wait"]);
-    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "wait"]);
-    expect(kitToolNames(KITS.berserker)).toEqual([...base, "eat", "wait"]);
-    expect(kitToolNames(KITS.ender)).toEqual([...base, "eat", "pearl", "wait"]);
-    expect(kitToolNames(KITS.builder)).toEqual([...base, "shoot", "eat", "build", "wait"]);
+    expect(kitToolNames(KITS.classic)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
+    expect(kitToolNames(KITS.archer)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
+    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "dig", "wait"]);
+    expect(kitToolNames(KITS.berserker)).toEqual([...base, "eat", "dig", "wait"]);
+    expect(kitToolNames(KITS.ender)).toEqual([...base, "eat", "pearl", "dig", "wait"]);
+    expect(kitToolNames(KITS.builder)).toEqual([...base, "shoot", "eat", "build", "dig", "wait"]);
   });
 
   it("no ofrece disparar si falta el arco o faltan las flechas", () => {
@@ -117,9 +117,9 @@ describe("kitToolNames", () => {
     expect(kitToolNames(withoutBow)).not.toContain("shoot");
   });
 
-  it("un kit sin ítems igual puede moverse, pegar y esperar", () => {
+  it("un kit sin ítems igual puede moverse, pegar, romper bloques a mano y esperar", () => {
     const empty: Kit = { ...KITS.classic, items: [] };
-    expect(kitToolNames(empty)).toEqual([...base, "wait"]);
+    expect(kitToolNames(empty)).toEqual([...base, "dig", "wait"]);
   });
 
   it("respeta el orden de TOOL_NAMES", () => {
@@ -200,7 +200,7 @@ describe("escudo, agua y lava", () => {
     const { kit } = buildCustomKit({
       items: [{ item: "shield" }, { item: "water_bucket" }, { item: "lava_bucket" }, { item: "red_wool", count: 128 }],
     });
-    expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "build", "shield", "water", "lava", "wait"]);
+    expect(kitToolNames(kit)).toEqual(["approach", "attack", "retreat", "build", "dig", "shield", "water", "lava", "wait"]);
     for (const k of KIT_LIST) {
       for (const tool of ["shield", "water", "lava"] as const) expect(kitToolNames(k)).not.toContain(tool);
     }
@@ -215,3 +215,21 @@ describe("escudo, agua y lava", () => {
     expect(parseToolArgs({ where: 3 }).where).toBe("between");
   });
 });
+
+describe("dig", () => {
+  it("se ofrece siempre y elige entre lo que hay en medio y lo más cercano", () => {
+    for (const kit of KIT_LIST) expect(kitToolNames(kit)).toContain("dig");
+    const dig = TOOL_DEFS.find((def) => def.name === "dig");
+    const properties = dig?.parameters["properties"] as Record<string, { enum?: string[] }>;
+    expect(properties["target"]?.enum).toEqual(["between", "nearest"]);
+    expect(dig?.description).toContain("nunca el piso, los muros de vidrio ni el techo");
+  });
+
+  it("parseToolArgs: digTarget y shape box", () => {
+    expect(parseToolArgs({}).digTarget).toBe("between");
+    expect(parseToolArgs({ target: "nearest" }).digTarget).toBe("nearest");
+    expect(parseToolArgs({ target: "away" }).digTarget).toBe("between");
+    expect(parseToolArgs({ shape: "box" }).shape).toBe("box");
+  });
+});
+

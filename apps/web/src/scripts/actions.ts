@@ -31,6 +31,7 @@ const TOOLS: Record<string, { label: string; icon: IconRef }> = {
   eat: { label: "Come para recuperarse", icon: { name: "steak" } },
   pearl: { label: "Lanza una perla", icon: { name: "pearl" } },
   build: { label: "Construye un muro", icon: { name: "tile", material: "wood" } },
+  dig: { label: "Rompe bloques entre los dos", icon: { name: "tile", material: "stone" } },
   shield: { label: "Levanta el escudo", icon: { name: "shield" } },
   water: { label: "Vacía agua entre los dos", icon: { name: "water_bucket" } },
   lava: { label: "Vacía lava a los pies del rival", icon: { name: "lava_bucket" } },
@@ -61,6 +62,8 @@ export function describeAction(tool: string, args: Record<string, unknown>, resu
   // La perla sirve para caerle encima al rival (por defecto) o para escapar de él.
   if (tool === "pearl" && args.target === "away") label += " para escapar";
   if (tool === "build" && args.shape === "tower") label = "Se sube a una torre";
+  if (tool === "build" && args.shape === "box") label = "Se encierra con bloques";
+  if (tool === "dig" && args.target === "nearest") label = "Rompe el bloque más cercano";
   if (tool === "water" && args.where === "feet") label = "Vacía agua bajo sus pies";
   return {
     tool: known ? tool : "",

@@ -115,7 +115,7 @@ describe("buildSystemPrompt", () => {
     }
   });
 
-  it("con el kit clásico ofrece las seis herramientas de siempre", () => {
+  it("con el kit clásico ofrece las de siempre más romper bloques", () => {
     const lines = section(promptFor(KITS.classic), "HERRAMIENTAS");
     expect(lines).toEqual([
       "- approach: caminar hacia el rival.",
@@ -123,6 +123,7 @@ describe("buildSystemPrompt", () => {
       "- retreat: alejarte del rival dentro de la arena.",
       "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.",
       "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.",
+      '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.',
       "- wait: quedarte quieto.",
       'Todas aceptan un argumento opcional "reason": una frase corta en español explicando tu decisión (el público la ve en vivo).',
     ]);
@@ -235,5 +236,16 @@ describe("buildSystemPrompt", () => {
     expect(mine).toContain("- shield: tu Escudo va en la mano secundaria");
     expect(mine).toContain("- water: tienes 1 Cubo de agua");
     expect(mine).toContain("- lava: tienes 1 Cubo de lava");
+  });
+
+  it("dice qué puede y qué no puede hacer el cuerpo", () => {
+    const classic = section(promptFor(KITS.classic), "CAPACIDADES").join("\n");
+    expect(classic).toContain("Puedes romper bloques que alguien colocó (dig)");
+    expect(classic).toContain("no se rompen");
+    expect(classic).toContain("no puedes fabricar (craftear)");
+    expect(classic).toContain("No tienes bloques para colocar");
+    expect(classic).toContain('"blocksBetween"');
+    const builder = section(promptFor(KITS.builder), "CAPACIDADES").join("\n");
+    expect(builder).toContain("Puedes colocar bloques (build)");
   });
 });

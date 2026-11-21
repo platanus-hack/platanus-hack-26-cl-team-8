@@ -10,6 +10,8 @@ import {
   isFoodName,
   isLavaBucket,
   isPearl,
+  isPickaxe,
+  isShears,
   isShield,
   isSword,
   isWaterBucket,
@@ -17,6 +19,8 @@ import {
 import {
   BUILD_COOLDOWN_MS,
   BUILD_MIN_DISTANCE,
+  BOX_BLOCKS,
+  DIG_MAX_SECONDS,
   kitToolNames,
   LAVA_MAX_DISTANCE,
   LAVA_MIN_DISTANCE,
@@ -71,7 +75,9 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "pearl":
       return '- pearl: lanzar una perla de ender y aparecer donde cae; con target "rival" caes junto al rival y con target "away" lejos de él.';
     case "build":
-      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques. Te deja quieto 1 a 3 segundos.';
+      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques; con shape "box", encerrarte en una caja de bloques con techo. Te deja quieto 1 a 4 segundos.';
+    case "dig":
+      return '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.';
     case "shield":
       return "- shield: levantar el escudo hacia el rival para bloquear golpes y flechas de frente.";
     case "water":
@@ -129,7 +135,12 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       if (!blocks) return null;
       const total = kit.items.filter((i) => isBuildBlock(i.item)).reduce((sum, i) => sum + i.count, 0);
       const amount = total > blocks.count ? `${blocks.label} (${total} en total)` : kitItemTitle(blocks);
-      return `- build: ${amount}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo; solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Una torre gasta ${TOWER_HEIGHT} y te deja ${TOWER_HEIGHT} bloques más arriba: cuerpo a cuerpo el rival no te alcanza, pero con arco sí, y bajar te quita vida por la caída salvo que uses agua bajo tus pies (si tienes). Entre una construcción y otra hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+      return `- build: ${amount}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo; solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Una torre gasta ${TOWER_HEIGHT} y te deja ${TOWER_HEIGHT} bloques más arriba: cuerpo a cuerpo el rival no te alcanza, pero con arco sí, y bajar te quita vida por la caída salvo que uses agua bajo tus pies (si tienes). Una caja gasta hasta ${BOX_BLOCKS}: dentro nada te toca, pero el rival puede romperla con dig y tú también tienes que romper un bloque para salir o atacar. Entre una construcción y otra hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+    }
+    case "dig": {
+      const tools = kit.items.filter((i) => isPickaxe(i.item) || isShears(i.item) || isAxe(i.item));
+      const with_ = tools.length > 0 ? `Tus herramientas para romper: ${tools.map(kitItemTitle).join(", ")}.` : "No tienes herramientas: rompes a mano.";
+      return `- dig: ${with_} A mano la lana tarda ~1 s y los tablones ~3 s; la roca y la obsidiana necesitan pico (sin pico no se intentan: pasarían de ${DIG_MAX_SECONDS} s). Las tijeras rompen la lana al instante, el hacha la madera y el pico la piedra.`;
     }
     case "shield": {
       if (!find(isShield)) return null;
@@ -170,6 +181,29 @@ function kitSection(kit: Kit): string[] {
     const line = mechanicsLine(tool, kit);
     if (line) lines.push(line);
   }
+  return lines;
+}
+
+/**
+ * Sección CAPACIDADES: lo que el cuerpo puede y no puede hacer en general, más allá de
+ * cada herramienta. Evita que el modelo planee cosas imposibles (fabricar, romper la arena).
+ */
+function capabilitiesSection(kit: Kit): string[] {
+  const tools = kitToolNames(kit);
+  const lines = [
+    "CAPACIDADES",
+    "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2.",
+    '- Puedes romper bloques que alguien colocó (dig). El piso, los muros de vidrio y el techo invisible de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.',
+  ];
+  if (tools.includes("build")) {
+    lines.push('- Puedes colocar bloques (build): un muro, una torre para subir o una caja para encerrarte.');
+  } else {
+    lines.push("- No tienes bloques para colocar (salvo los que recojas rompiendo).");
+  }
+  lines.push(
+    "- Usas tu equipo solo a través de las herramientas: no puedes fabricar (craftear), tirar ítems, cambiarte la armadura ni abrir menús.",
+    '- La observación cuenta lo que hay alrededor: "blocksBetween" (bloques en la recta hasta el otro agente), "enclosed" (tienes bloques por los cuatro lados) y "height" (cuánto estás sobre el piso). Si no aparecen, no hay nada de eso.',
+  );
   return lines;
 }
 
@@ -228,6 +262,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     'Todas aceptan un argumento opcional "reason": una frase corta en español explicando tu decisión (el público la ve en vivo).',
     "",
     ...kitSection(input.kit),
+    "",
+    ...capabilitiesSection(input.kit),
     "",
     ...commsSection(input.comms),
     "",

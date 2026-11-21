@@ -12,7 +12,54 @@ export const isPearl = (name: string): boolean => name === "ender_pearl";
  * Bloques con los que se levanta el muro o la torre: tablones y lana (no piedra ni tierra,
  * que el pathfinder usaría de andamio si se le permitiera).
  */
-export const isBuildBlock = (name: string): boolean => name.endsWith("_planks") || name.endsWith("_wool");
+const BUILD_BLOCK_NAMES: ReadonlySet<string> = new Set(["cobblestone", "dirt", "obsidian"]);
+export const isBuildBlock = (name: string): boolean =>
+  name.endsWith("_planks") || name.endsWith("_wool") || BUILD_BLOCK_NAMES.has(name);
+export const isPickaxe = (name: string): boolean => name.endsWith("_pickaxe");
+export const isShears = (name: string): boolean => name === "shears";
+
+/**
+ * Bloques de la arena: no se rompen nunca (piso, muros de vidrio con su base de linternas,
+ * marcas de spawn y la tapa invisible). Todo lo demás que esté sobre el piso lo puso alguien.
+ */
+export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
+  "smooth_stone",
+  "glass",
+  "sea_lantern",
+  "red_concrete",
+  "blue_concrete",
+  "barrier",
+  "bedrock",
+]);
+
+/** Lo que no es un bloque que se pueda romper: aire y líquidos. */
+const NOT_SOLID: ReadonlySet<string> = new Set(["air", "cave_air", "void_air", "water", "lava", "fire"]);
+
+/** ¿Se puede romper este bloque? Solo lo colocado por los luchadores, nunca la arena. */
+export const isBreakable = (name: string): boolean => !NOT_SOLID.has(name) && !ARENA_BLOCKS.has(name);
+
+/** Calidad de un material de herramienta: más alto, rompe más rápido. */
+const TIER: Record<string, number> = { wooden: 1, golden: 2, stone: 3, iron: 4, diamond: 5, netherite: 6 };
+const tierOf = (name: string): number => TIER[name.slice(0, name.indexOf("_"))] ?? 0;
+
+/**
+ * Herramienta del inventario que mejor rompe un bloque (null = a mano): tijeras para la
+ * lana, hacha para la madera, pico para la piedra y la obsidiana; la de mejor material.
+ */
+export function bestDigTool(blockName: string, inventory: readonly string[]): string | null {
+  let match: ((name: string) => boolean) | null = null;
+  if (blockName.endsWith("_wool")) {
+    if (inventory.some(isShears)) return "shears";
+    return null;
+  }
+  if (blockName.endsWith("_planks") || blockName.endsWith("_log")) match = isAxe;
+  else if (blockName === "dirt" || blockName === "sand" || blockName === "gravel") match = null;
+  else match = isPickaxe;
+  if (!match) return null;
+  const candidates = inventory.filter(match);
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, name) => (tierOf(name) > tierOf(best) ? name : best));
+}
 export const isShield = (name: string): boolean => name === "shield";
 export const isWaterBucket = (name: string): boolean => name === "water_bucket";
 export const isLavaBucket = (name: string): boolean => name === "lava_bucket";

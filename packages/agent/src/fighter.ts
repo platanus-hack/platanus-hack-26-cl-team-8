@@ -9,10 +9,12 @@ import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history"
 import {
   ALWAYS_EDIBLE,
   attackCooldownMs,
+  bestDigTool,
   FOOD_NAMES,
   isArrow,
   isAxe,
   isBow,
+  isBreakable,
   isBuildBlock,
   isLavaBucket,
   isPearl,
@@ -23,8 +25,11 @@ import {
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
 import {
+  BOX_BLOCKS,
   BUILD_COOLDOWN_MS,
   BUILD_MIN_DISTANCE,
+  DIG_MAX_BLOCKS,
+  DIG_MAX_SECONDS,
   eatRefusal,
   isToolName,
   kitToolDefs,
@@ -39,6 +44,7 @@ import {
   TOWER_HEIGHT,
   WATER_BETWEEN_MIN_DISTANCE,
   type BuildShape,
+  type DigTarget,
   type ParsedToolArgs,
   type PearlTarget,
   type ToolName,
@@ -56,6 +62,7 @@ const { pathfinder, Movements, goals } = requireCjs("mineflayer-pathfinder") as 
 
 type Entity = NonNullable<Bot["players"][string]["entity"]>;
 type Vec3 = Entity["position"];
+type Block = NonNullable<ReturnType<Bot["blockAt"]>>;
 
 type Mode = ToolName;
 type GoalKind = "none" | "follow" | "point" | "center";
@@ -134,6 +141,22 @@ const POUR_REACH = 4.6;
 const POUR_CONFIRM_MS = 400;
 /** Distancia (bloques) hacia el rival en que cae el agua "between". */
 const WATER_BETWEEN_STEP = 2;
+/** Alcance para romper bloques (desde los ojos hasta el centro del bloque). */
+const DIG_REACH = 4.5;
+/** Plazo total de una llamada a dig. */
+const DIG_TIMEOUT_MS = 12_000;
+/** Cuánto se espera a quedar al centro del bloque antes de encerrarse. */
+const CENTER_TIMEOUT_MS = 700;
+/** Paso con que se recorre la recta hacia el rival buscando bloques en medio. */
+const LINE_STEP = 0.25;
+/** Las cuatro direcciones horizontales. */
+const SIDES_XZ: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
 /** Slot de la mano secundaria en la ventana de inventario del jugador. */
 const OFFHAND_SLOT = 45;
 
@@ -318,6 +341,10 @@ class MineflayerFighter implements Fighter {
   private buildReadyAt = 0;
   /** Qué levanta "build" en curso. */
   private buildShape: BuildShape = "wall";
+  /** Qué rompe el "dig" en curso. */
+  private digTarget: DigTarget = "between";
+  /** true mientras bot.dig está rompiendo un bloque (leaveMode lo corta). */
+  private digging = false;
   /** Dónde va el agua del "water" en curso. */
   private waterPlace: WaterPlace = "between";
 
@@ -860,6 +887,7 @@ class MineflayerFighter implements Fighter {
       lastActionResult: this.lastResult,
       pearlReadyAt: this.pearlReadyAt,
       buildReadyAt: this.buildReadyAt,
+      terrain: this.terrain(bot, opponent),
       rivalThoughts: heard.rivalThoughts,
       rivalMessages: heard.rivalMessages,
       // La conversación solo existe en modo "chat".
@@ -934,9 +962,25 @@ class MineflayerFighter implements Fighter {
         break;
       }
       case "build": {
-        const refusal = args.shape === "tower" ? this.towerRefusal(bot, now) : this.buildRefusal(bot, opponent, now);
+        const refusal =
+          args.shape === "tower"
+            ? this.towerRefusal(bot, now)
+            : args.shape === "box"
+              ? this.boxRefusal(bot, now)
+              : this.buildRefusal(bot, opponent, now);
         if (refusal) return refusalText(refusal, this.mode);
-        result = args.shape === "tower" ? "preparando los bloques para la torre" : "preparando los bloques para el muro";
+        result =
+          args.shape === "tower"
+            ? "preparando los bloques para la torre"
+            : args.shape === "box"
+              ? "preparando los bloques para encerrarte"
+              : "preparando los bloques para el muro";
+        break;
+      }
+      case "dig": {
+        const targets = this.digCandidates(bot, opponent, args.digTarget);
+        if (typeof targets === "string") return refusalText(targets, this.mode);
+        result = `rompiendo ${targets[0]?.name.replaceAll("_", " ") ?? "bloques"}`;
         break;
       }
       case "shield": {
@@ -972,6 +1016,7 @@ class MineflayerFighter implements Fighter {
     this.pearlTarget = args.target;
     this.buildShape = args.shape;
     this.waterPlace = args.where;
+    this.digTarget = args.digTarget;
     this.pearlAimedAt = 0;
     this.pearlThrownAt = 0;
     this.lastResult = result;
@@ -1044,6 +1089,98 @@ class MineflayerFighter implements Fighter {
     return null;
   }
 
+  /** Por qué no se puede encerrar ahora, o null si se puede. */
+  private boxRefusal(bot: Bot, now: number): string | null {
+    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
+    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
+    if (!bot.entity.onGround) return "no puedes encerrarte en el aire: espera a pisar";
+    // El techo va 2 bloques sobre los pies y la tapa de la arena no deja poner nada más arriba.
+    if (bot.entity.position.y - FLOOR_Y + 2 > MAX_FEET_HEIGHT + 1) return "estás muy alto: el techo de la caja no cabe bajo el de la arena";
+    return null;
+  }
+
+  /**
+   * Bloques que rompería "dig" (el primero es el siguiente), o por qué no hay ninguno.
+   * "between": los que cortan la recta hasta el rival, a la altura de los pies o de la
+   * cabeza. "nearest": el más cercano. Siempre dentro del alcance y nunca de la arena.
+   */
+  private digCandidates(bot: Bot, opponent: Entity | null, target: DigTarget): Block[] | string {
+    const eye = bot.entity.position.offset(0, EYE_HEIGHT, 0);
+    const reachable = (block: Block): boolean => distance3(eye, block.position.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
+    if (target === "nearest") {
+      const near = this.breakableAround(bot, Math.ceil(DIG_REACH)).filter(reachable);
+      if (near.length === 0) return "no hay ningún bloque colocado a tu alcance (el piso y los muros de la arena no se rompen)";
+      return near;
+    }
+    if (!opponent) return "no ves al rival: no hay hacia dónde abrirte paso";
+    const between = this.blocksBetween(bot, opponent);
+    if (between.length === 0) return "no hay bloques entre tú y el rival";
+    const inReach = between.filter(reachable);
+    if (inReach.length === 0) {
+      const first = between[0];
+      const dist = first ? round1(distance3(eye, first.position.offset(0.5, 0.5, 0.5))) : 0;
+      return `el bloque más cercano entre tú y el rival está a ${dist} bloques: acércate primero`;
+    }
+    return inReach;
+  }
+
+  /** Bloques rompibles en la recta de uno al rival (pies y cabeza), del más cercano al más lejano. */
+  private blocksBetween(bot: Bot, opponent: Entity): Block[] {
+    const from = bot.entity.position;
+    const to = opponent.position;
+    const length = distance3(from, to);
+    const seen = new Set<string>();
+    const found: { block: Block; at: number }[] = [];
+    for (let t = 0; t <= length; t += LINE_STEP) {
+      const k = length === 0 ? 0 : t / length;
+      for (const lift of [0.5, 1.5]) {
+        const x = Math.floor(from.x + (to.x - from.x) * k);
+        const y = Math.floor(from.y + (to.y - from.y) * k + lift);
+        const z = Math.floor(from.z + (to.z - from.z) * k);
+        const key = `${x},${y},${z}`;
+        if (seen.has(key) || y < FLOOR_Y) continue;
+        seen.add(key);
+        const block = bot.blockAt(this.vec(bot, x, y, z));
+        if (block && isBreakable(block.name)) found.push({ block, at: t });
+      }
+    }
+    return found.sort((a, b) => a.at - b.at).map((entry) => entry.block);
+  }
+
+  /** Bloques rompibles en un cubo de `radius` alrededor, del más cercano al más lejano. */
+  private breakableAround(bot: Bot, radius: number): Block[] {
+    const eye = bot.entity.position.offset(0, EYE_HEIGHT, 0);
+    const base = bot.entity.position;
+    const found: { block: Block; dist: number }[] = [];
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dy = -1; dy <= radius; dy += 1) {
+        for (let dz = -radius; dz <= radius; dz += 1) {
+          const y = Math.floor(base.y) + dy;
+          if (y < FLOOR_Y) continue;
+          const block = bot.blockAt(this.vec(bot, Math.floor(base.x) + dx, y, Math.floor(base.z) + dz));
+          if (!block || !isBreakable(block.name)) continue;
+          found.push({ block, dist: distance3(eye, block.position.offset(0.5, 0.5, 0.5)) });
+        }
+      }
+    }
+    return found.sort((a, b) => a.dist - b.dist).map((entry) => entry.block);
+  }
+
+  /** Lo que la observación cuenta del terreno: altura, bloques hasta el rival y si está encerrado. */
+  private terrain(bot: Bot, opponent: Entity | null): { height: number; blocksBetween: number; enclosed: boolean } {
+    const position = bot.entity.position;
+    const feet = { x: Math.floor(position.x), y: Math.floor(position.y), z: Math.floor(position.z) };
+    const enclosed = SIDES_XZ.every(([dx, dz]) => {
+      const block = bot.blockAt(this.vec(bot, feet.x + dx, feet.y, feet.z + dz));
+      return block !== null && block.boundingBox === "block";
+    });
+    return {
+      height: position.y - FLOOR_Y,
+      blocksBetween: opponent ? this.blocksBetween(bot, opponent).length : 0,
+      enclosed,
+    };
+  }
+
   /** Inventario para la observación: items() no trae la mano secundaria, donde va el escudo. */
   private inventoryWithOffhand(bot: Bot): { name: string; count: number }[] {
     const items = bot.inventory.items().map((item) => ({ name: item.name, count: item.count }));
@@ -1077,6 +1214,14 @@ class MineflayerFighter implements Fighter {
       this.using = false;
       try {
         bot.deactivateItem();
+      } catch {
+        // nada
+      }
+    }
+    if (this.digging) {
+      this.digging = false;
+      try {
+        bot.stopDigging();
       } catch {
         // nada
       }
@@ -1148,7 +1293,11 @@ class MineflayerFighter implements Fighter {
         break;
       case "build":
         if (this.buildShape === "tower") this.tickTower(bot, now);
+        else if (this.buildShape === "box") this.tickBox(bot, now);
         else this.tickBuild(bot, opponent, now);
+        break;
+      case "dig":
+        this.tickDig(bot, now);
         break;
       case "shield":
         this.tickShield(bot, opponent);
@@ -1720,13 +1869,14 @@ class MineflayerFighter implements Fighter {
       const current = bot.blockAt(position);
       if (!current || !AIR_BLOCKS.has(current.name)) continue;
       if (this.cellOccupied(bot, cell)) continue;
-      // El bloque se apoya en el de abajo: el piso para la fila baja, el muro para la alta.
-      const below = bot.blockAt(position.offset(0, -1, 0));
-      if (!below || below.boundingBox !== "block") continue;
+      // El bloque se apoya en el de abajo (el piso para la fila baja, el muro para la alta)
+      // o, si abajo no hay nada (el techo de la caja), en uno de al lado.
+      const support = this.supportFor(bot, position, up);
+      if (!support) continue;
 
       try {
         // Mirada forzada: placeBlock gira la cabeza de a poco si no está ya apuntando.
-        await bot.lookAt(below.position.offset(0.5, 1, 0.5), true);
+        await bot.lookAt(support.aim, true);
       } catch {
         continue;
       }
@@ -1734,10 +1884,201 @@ class MineflayerFighter implements Fighter {
       tried.push(position);
       // Un rechazo del servidor (celda ocupada) no corta el muro: se sigue con la siguiente.
       // Tampoco se espera más que el plazo: mineflayer aguarda hasta 5 s por la respuesta.
-      const placing = bot.placeBlock(below, up).catch(() => undefined);
+      const placing = bot.placeBlock(support.block, support.face).catch(() => undefined);
       await Promise.race([placing, delay(BUILD_PLACE_TIMEOUT_MS)]);
     }
     return tried;
+  }
+
+  /**
+   * Bloque sólido en el que apoyar uno nuevo en `cell`, la cara que toca y el punto al que
+   * mirar: primero el de abajo; si no hay, uno de los cuatro de al lado.
+   */
+  private supportFor(bot: Bot, cell: Vec3, up: Vec3): { block: Block; face: Vec3; aim: Vec3 } | null {
+    const below = bot.blockAt(cell.offset(0, -1, 0));
+    if (below && below.boundingBox === "block") return { block: below, face: up, aim: below.position.offset(0.5, 1, 0.5) };
+    for (const [dx, dz] of SIDES_XZ) {
+      const side = bot.blockAt(cell.offset(dx, 0, dz));
+      if (!side || side.boundingBox !== "block") continue;
+      // La cara del vecino que mira hacia la celda.
+      const face = this.vec(bot, -dx, 0, -dz);
+      return { block: side, face, aim: side.position.offset(0.5 - dx * 0.5, 0.5, 0.5 - dz * 0.5) };
+    }
+    return null;
+  }
+
+  /**
+   * Caja, de un solo uso: queda al centro de su bloque y se rodea de bloques (4 lados de
+   * 2 de alto), con un apoyo arriba y el techo. Misma cadena asíncrona que el muro.
+   */
+  private tickBox(bot: Bot, now: number): void {
+    if (this.buildBusy) return;
+    const held = this.ensureHeld(bot, isBuildBlock);
+    if (held === "missing") {
+      this.enterWait(bot, "no te quedan bloques");
+      return;
+    }
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    if (held === "pending" || !bot.entity.onGround) {
+      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) {
+        this.enterWait(bot, held === "pending" ? "no pudiste equipar los bloques" : "no pudiste encerrarte: no estás pisando nada");
+      }
+      return;
+    }
+
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
+    this.lastResult = "encerrándote con bloques";
+    (async () => {
+      await this.centerOnBlock(bot, generation);
+      const p = bot.entity.position;
+      const fx = Math.floor(p.x);
+      const fy = Math.floor(p.y);
+      const fz = Math.floor(p.z);
+      const cells: Vec3Like[] = [];
+      for (const lift of [0, 1]) for (const [dx, dz] of SIDES_XZ) cells.push({ x: fx + dx, y: fy + lift, z: fz + dz });
+      // El techo no tiene nada abajo (es la cabeza): se apoya en un bloque puesto encima del lado +x.
+      cells.push({ x: fx + 1, y: fy + 2, z: fz }, { x: fx, y: fy + 2, z: fz });
+      return this.placeWall(bot, cells.slice(0, BOX_BLOCKS), generation, Date.now() + BUILD_TIMEOUT_MS * 2);
+    })()
+      .then((tried) => {
+        if (!this.buildActive(generation)) return;
+        const placed = tried.filter((cell) => isBuildBlock(bot.blockAt(cell)?.name ?? "")).length;
+        const left = this.countItems(bot, isBuildBlock);
+        const closed = this.terrain(bot, null).enclosed;
+        const roof = bot.blockAt(bot.entity.position.offset(0, 2, 0));
+        const covered = roof !== null && roof.boundingBox === "block";
+        this.enterWait(
+          bot,
+          placed === 0
+            ? "no pudiste colocar ningún bloque alrededor"
+            : `${closed && covered ? "quedaste encerrado" : closed ? "quedaste rodeado de bloques, pero sin techo" : "quedó algún hueco en la caja"} (${placed} bloques); te quedan ${left} bloques`,
+        );
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al encerrarse: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar de encerrarte");
+      })
+      .finally(() => {
+        bot.clearControlStates();
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
+  }
+
+  /** Camina lo justo para quedar al centro del bloque que pisa (así los bloques de al lado no lo tocan). */
+  private async centerOnBlock(bot: Bot, generation: number): Promise<void> {
+    const p = bot.entity.position;
+    const target = this.vec(bot, Math.floor(p.x) + 0.5, p.y + EYE_HEIGHT, Math.floor(p.z) + 0.5);
+    const off = (): number => Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
+    if (off() < 0.2) return;
+    try {
+      await bot.lookAt(target, true);
+    } catch {
+      return;
+    }
+    if (!this.buildActive(generation)) return;
+    bot.setControlState("forward", true);
+    await waitUntil(() => off() < 0.2 || !this.buildActive(generation), CENTER_TIMEOUT_MS);
+    bot.setControlState("forward", false);
+  }
+
+  /**
+   * Romper bloques, de un solo uso: "between" rompe uno tras otro los que cortan la recta
+   * hasta el rival (hasta DIG_MAX_BLOCKS); "nearest", solo el más cercano. Cada bloque se
+   * rompe con la mejor herramienta del inventario.
+   */
+  private tickDig(bot: Bot, now: number): void {
+    if (this.buildBusy) return;
+    this.clearGoal(bot);
+    bot.clearControlStates();
+    const generation = ++this.buildGeneration;
+    const chain = ++this.buildChain;
+    this.buildBusy = true;
+    const deadline = now + DIG_TIMEOUT_MS;
+    const limit = this.digTarget === "between" ? DIG_MAX_BLOCKS : 1;
+    this.lastResult = "rompiendo bloques";
+    (async () => {
+      const broken: string[] = [];
+      let stop = "";
+      while (broken.length < limit && Date.now() < deadline && this.buildActive(generation)) {
+        const targets = this.digCandidates(bot, this.opponent(bot), this.digTarget);
+        if (typeof targets === "string") {
+          if (broken.length === 0) stop = targets;
+          break;
+        }
+        const block = targets[0];
+        if (!block) break;
+        const outcome = await this.digOne(bot, block, generation);
+        if (outcome !== null) {
+          stop = outcome;
+          break;
+        }
+        broken.push(block.name.replaceAll("_", " "));
+        this.lastResult = `rompiste ${broken.length} bloques`;
+      }
+      return { broken, stop };
+    })()
+      .then(({ broken, stop }) => {
+        if (!this.buildActive(generation)) return;
+        if (broken.length === 0) {
+          this.enterWait(bot, stop || "no rompiste ningún bloque");
+          return;
+        }
+        const opponent = this.opponent(bot);
+        const still = opponent && this.digTarget === "between" ? this.blocksBetween(bot, opponent).length : 0;
+        const tail = stop ? ` (${stop})` : still > 0 ? `; todavía hay ${still} bloques entre tú y el rival` : "";
+        this.enterWait(bot, `rompiste ${broken.length} bloques: ${broken.join(", ")}${tail}`);
+      })
+      .catch((err: unknown) => {
+        this.log("warn", `Error al romper bloques: ${errorText(err)}`);
+        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar de romper");
+      })
+      .finally(() => {
+        this.digging = false;
+        if (chain === this.buildChain) this.buildBusy = false;
+      });
+  }
+
+  /** Rompe un bloque con la mejor herramienta; null si quedó roto, o el motivo si no. */
+  private async digOne(bot: Bot, block: Block, generation: number): Promise<string | null> {
+    const name = block.name.replaceAll("_", " ");
+    const inventory = bot.inventory.items();
+    const toolName = bestDigTool(block.name, inventory.map((item) => item.name));
+    const tool = toolName ? inventory.find((item) => item.name === toolName) : undefined;
+    if (tool && bot.heldItem?.name !== tool.name) {
+      try {
+        await bot.equip(tool, "hand");
+      } catch {
+        // Sin la herramienta igual se puede romper, más lento.
+      }
+    }
+    if (!this.buildActive(generation)) return "se interrumpió";
+    const ms = bot.digTime(block);
+    if (!Number.isFinite(ms) || ms > DIG_MAX_SECONDS * 1000) {
+      const seconds = Number.isFinite(ms) ? `${round1(ms / 1000)} s` : "demasiado";
+      return `romper ${name} con lo que tienes tomaría ${seconds}`;
+    }
+    this.digging = true;
+    try {
+      await Promise.race([bot.dig(block, true), delay(ms + 2000)]);
+    } catch {
+      // Cortado (otra acción) o rechazado por el servidor: se revisa el mundo abajo.
+    } finally {
+      this.digging = false;
+    }
+    const after = bot.blockAt(block.position);
+    if (after && isBreakable(after.name)) {
+      try {
+        bot.stopDigging();
+      } catch {
+        // nada
+      }
+      return `no se pudo romper ${name}`;
+    }
+    return null;
   }
 
   private buildActive(generation: number): boolean {
@@ -1746,8 +2087,13 @@ class MineflayerFighter implements Fighter {
 
   /** Un bloque no se puede poner donde hay un luchador parado (ni el rival ni uno mismo). */
   private cellOccupied(bot: Bot, cell: Vec3Like): boolean {
+    // Un luchador ocupa de sus pies a 1.8 bloques más arriba: el techo de la caja, sobre su
+    // cabeza, no lo toca.
     const near = (position: Vec3Like): boolean =>
-      Math.abs(cell.x + 0.5 - position.x) < BUILD_CLEARANCE && Math.abs(cell.z + 0.5 - position.z) < BUILD_CLEARANCE;
+      Math.abs(cell.x + 0.5 - position.x) < BUILD_CLEARANCE &&
+      Math.abs(cell.z + 0.5 - position.z) < BUILD_CLEARANCE &&
+      cell.y < position.y + 1.8 &&
+      cell.y + 1 > position.y;
     const opponent = this.opponent(bot);
     return near(bot.entity.position) || (opponent !== null && near(opponent.position));
   }

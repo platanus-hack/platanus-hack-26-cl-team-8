@@ -11,6 +11,7 @@ export const TOOL_NAMES = [
   "eat",
   "pearl",
   "build",
+  "dig",
   "shield",
   "water",
   "lava",
@@ -27,12 +28,23 @@ export const PEARL_TARGETS = ["rival", "away"] as const;
 export type PearlTarget = (typeof PEARL_TARGETS)[number];
 
 /** Qué levanta "build": un muro hacia el rival o una torre bajo los propios pies. */
-export const BUILD_SHAPES = ["wall", "tower"] as const;
+export const BUILD_SHAPES = ["wall", "tower", "box"] as const;
 export type BuildShape = (typeof BUILD_SHAPES)[number];
 
 /** Dónde se vacía el cubo de agua: entre tú y el rival, o bajo tus pies. */
 export const WATER_PLACES = ["between", "feet"] as const;
 export type WaterPlace = (typeof WATER_PLACES)[number];
+
+/** Qué rompe "dig": lo que hay entre tú y el rival, o el bloque más cercano. */
+export const DIG_TARGETS = ["between", "nearest"] as const;
+export type DigTarget = (typeof DIG_TARGETS)[number];
+
+/** Bloques que gasta encerrarse: 4 lados de 2 de alto, un apoyo y el techo. */
+export const BOX_BLOCKS = 10;
+/** Más que esto por bloque (con lo que se tiene en el inventario) no se intenta romper. */
+export const DIG_MAX_SECONDS = 10;
+/** Bloques que rompe como máximo una sola llamada a dig "between". */
+export const DIG_MAX_BLOCKS = 6;
 
 /** Bloques que sube una torre (el techo de la arena no deja más). */
 export const TOWER_HEIGHT = 3;
@@ -104,6 +116,8 @@ export function kitToolNames(kit: Kit): ToolName[] {
   if (has(isFoodName)) names.push("eat");
   if (has(isPearl)) names.push("pearl");
   if (has(isBuildBlock)) names.push("build");
+  // Romper bloques se puede siempre: a mano, aunque el kit no traiga herramientas.
+  names.push("dig");
   if (has(isShield)) names.push("shield");
   if (has(isWaterBucket)) names.push("water");
   if (has(isLavaBucket)) names.push("lava");
@@ -174,7 +188,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "build",
-    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. Tarda 1 a 3 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
+    description: `Coloca bloques. shape='wall' (por defecto): levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás); gasta hasta ${WALL_BLOCKS} bloques y solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. shape='tower': saltas y pones bloques bajo tus pies hasta quedar ${TOWER_HEIGHT} bloques más arriba; cuerpo a cuerpo el rival ya no te alcanza (con arco sí), pero bajar te hace daño de caída salvo que vacíes agua bajo tus pies. shape='box': te encierras en una caja de bloques con techo (gasta hasta ${BOX_BLOCKS}); nada te alcanza hasta que el rival rompa un bloque, pero tú tampoco puedes atacar sin romper uno. Tarda 1 a 4 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
     parameters: {
       type: "object",
       properties: {
@@ -182,7 +196,23 @@ export const TOOL_DEFS: ToolDef[] = [
         shape: {
           type: "string",
           enum: [...BUILD_SHAPES],
-          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir.",
+          description: "'wall' = muro hacia el rival; 'tower' = torre bajo tus pies para subir; 'box' = encerrarte.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "dig",
+    description: `Rompe bloques que alguien colocó (muros, torres, cajas); nunca el piso, los muros de vidrio ni el techo de la arena. target='between' (por defecto): rompe los bloques que hay entre tú y el rival, hasta ${DIG_MAX_BLOCKS} seguidos, para abrirte paso o dejarlo sin cobertura. target='nearest': rompe solo el bloque más cercano a ti (para salir de una caja o bajar de una torre). Solo alcanza bloques a unos 4 bloques de distancia. Usa sola la mejor herramienta que tengas (tijeras para lana, hacha para madera, pico para piedra); a mano tarda más, y lo que tardaría más de ${DIG_MAX_SECONDS} segundos no se intenta. Lo que rompes cae al suelo y lo recoges al pasar encima. Te deja quieto mientras rompes.`,
+    parameters: {
+      type: "object",
+      properties: {
+        reason: reasonProperty,
+        target: {
+          type: "string",
+          enum: [...DIG_TARGETS],
+          description: "'between' = lo que hay entre tú y el rival; 'nearest' = el bloque más cercano.",
         },
       },
       required: [],
@@ -244,6 +274,8 @@ export type ParsedToolArgs = {
   target: PearlTarget;
   shape: BuildShape;
   where: WaterPlace;
+  /** Para "dig". "target" de la perla y de dig comparten nombre: cada uno lee el suyo. */
+  digTarget: DigTarget;
   /** Modo "chat": lo que el agente le dice al rival, con limpieza técnica (cleanMessage); null si no dijo nada. */
   say: string | null;
 };
@@ -265,9 +297,11 @@ export function parseToolArgs(args: Record<string, unknown> | null | undefined):
     return typeof raw === "string" ? raw.trim().toLowerCase() : "";
   };
   // Como con la perla: solo el valor alternativo cambia algo; lo demás es el por defecto.
-  const shape: BuildShape = word("shape") === "tower" ? "tower" : "wall";
+  const rawShape = word("shape");
+  const shape: BuildShape = rawShape === "tower" || rawShape === "box" ? rawShape : "wall";
+  const digTarget: DigTarget = word("target") === "nearest" ? "nearest" : "between";
   const where: WaterPlace = word("where") === "feet" ? "feet" : "between";
   // Se entrega tal cual lo escribió (ver cleanMessage): solo se quita lo que no es texto.
   const say = cleanMessage(source["say"]);
-  return { reason, seconds, target, shape, where, say };
+  return { reason, seconds, target, shape, where, digTarget, say };
 }
