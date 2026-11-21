@@ -1,6 +1,86 @@
 import { describe, expect, it } from "vitest";
 import { MAX_AGENT_MESSAGE_LENGTH } from "@phack/protocol";
-import { CONVERSATION_MAX, CommsInbox, INBOX_MAX, cleanMessage } from "./comms";
+import { ChatPacing, CONVERSATION_MAX, CommsInbox, INBOX_MAX, cleanMessage } from "./comms";
+
+describe("ChatPacing", () => {
+  it("deja más tiempo para una frase larga que para una reacción corta", () => {
+    const short = new ChatPacing(() => 0.5);
+    const long = new ChatPacing(() => 0.5);
+    short.said("Sí.", 0);
+    long.said("Estoy intentando salir de aquí, dame un momento para llegar.", 0);
+    expect(short.readyAt).toBeGreaterThan(2000);
+    expect(short.readyAt).toBeLessThan(4000);
+    expect(long.readyAt).toBeGreaterThan(short.readyAt);
+    expect(long.readyAt).toBeGreaterThan(4000);
+  });
+
+  it("varía cada pausa sin recalcularla al consultar", () => {
+    const quick = new ChatPacing(() => 0);
+    const slow = new ChatPacing(() => 1);
+    quick.said("Hola.", 0);
+    slow.said("Hola.", 0);
+    expect(slow.readyAt).toBeGreaterThan(quick.readyAt);
+    let samples = 0;
+    const pacing = new ChatPacing(() => (samples++ % 3) / 3);
+    pacing.said("Hola.", 0);
+    const readyAt = pacing.readyAt;
+    expect(pacing.readyAt).toBe(readyAt);
+    expect(samples).toBe(1);
+    pacing.said("Hola.", readyAt);
+    expect(samples).toBe(2);
+  });
+
+  it("deja espacio al rival después de varios mensajes sin respuesta", () => {
+    const pacing = new ChatPacing(() => 0.5);
+    pacing.said("Hola.", 0);
+    const firstPause = pacing.readyAt;
+    const secondAt = pacing.readyAt;
+    pacing.said("Hola.", secondAt);
+    expect(pacing.readyAt - secondAt).toBeGreaterThan(firstPause);
+    pacing.heard("Te escucho.", pacing.readyAt);
+    const replyAt = pacing.readyAt;
+    pacing.said("Hola.", replyAt);
+    expect(pacing.readyAt - replyAt).toBe(firstPause);
+  });
+
+  it("reserva tiempo para leer al rival y conserva pausas más largas en curso", () => {
+    const short = new ChatPacing(() => 0.5);
+    const long = new ChatPacing(() => 0.5);
+    short.heard("Hola.", 1000);
+    long.heard("Estoy intentando salir de aquí, dame un momento para llegar.", 1000);
+    expect(short.readyAt).toBeGreaterThan(1000);
+    expect(long.readyAt).toBeGreaterThan(short.readyAt);
+    const saidAt = long.readyAt;
+    long.said("Necesito tiempo para pensar todo esto antes de responderte.", saidAt);
+    const readyAt = long.readyAt;
+    long.heard("Sí.", saidAt + 100);
+    expect(long.readyAt).toBe(readyAt);
+  });
+
+  it("acota las pausas y contempla idiomas sin espacios", () => {
+    const pacing = new ChatPacing(() => 1);
+    pacing.said("我".repeat(500), 1000);
+    expect(pacing.readyAt).toBe(13_000);
+    pacing.heard("我".repeat(500), 13_000);
+    expect(pacing.readyAt).toBe(21_000);
+    for (let i = 0; i < 20; i++) {
+      const now = pacing.readyAt;
+      pacing.said("Hola.", now);
+      expect(pacing.readyAt - now).toBeLessThanOrEqual(12_000);
+    }
+  });
+
+  it("ignora mensajes vacíos y mantiene el ritmo de cada agente independiente", () => {
+    const red = new ChatPacing(() => 0.5);
+    const blue = new ChatPacing(() => 0.5);
+    red.said("Hola.", 0);
+    const readyAt = red.readyAt;
+    red.heard(" \n\t", readyAt);
+    red.said("", readyAt);
+    expect(red.readyAt).toBe(readyAt);
+    expect(blue.readyAt).toBe(0);
+  });
+});
 
 describe("cleanMessage", () => {
   it("lo que no es texto o queda vacío es null", () => {

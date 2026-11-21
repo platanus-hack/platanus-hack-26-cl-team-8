@@ -3,17 +3,13 @@ import { MAX_AGENT_MESSAGE_LENGTH } from "@phack/protocol";
 /**
  * Lo que se dicen los agentes (modo "chat") y lo que uno lee del otro (modo "thoughts").
  * El sistema solo hace limpieza técnica: no corrige, no resume, no filtra por contenido y
- * no descarta repetidos. El luchador espacia los mensajes salientes con MESSAGE_INTERVAL_MS.
+ * no descarta repetidos. ChatPacing regula cuándo se puede volver a hablar.
  */
 
 /** Máximo de razonamientos o mensajes del rival que se juntan entre dos decisiones. */
 export const INBOX_MAX = 12;
 /** Mensajes de la conversación (de los dos lados) que se repiten en cada observación. */
 export const CONVERSATION_MAX = 12;
-/** Brevedad pedida al modelo; no se corta su texto a mitad de una idea. */
-export const RESPONSE_MAX_WORDS = 10;
-/** Pausa mínima entre mensajes de un mismo agente; las acciones siguen a su ritmo. */
-export const MESSAGE_INTERVAL_MS = 4000;
 
 /** Caracteres de control salvo el salto de línea (incluye DEL y los C1). */
 const CONTROL_EXCEPT_NEWLINE = /(?!\n)\p{Cc}/gu;
@@ -31,6 +27,48 @@ export function cleanMessage(raw: unknown): string | null {
   const chars = Array.from(text);
   const cut = chars.length > MAX_AGENT_MESSAGE_LENGTH ? chars.slice(0, MAX_AGENT_MESSAGE_LENGTH).join("") : text;
   return cut.length > 0 ? cut : null;
+}
+
+/** Estimación de duración para el ritmo del chat, no un límite de longitud. */
+function speechMs(text: string): number {
+  const words = text.split(/\s+/u).length;
+  // También da tiempo a textos largos sin espacios (por ejemplo, otros idiomas).
+  const units = Math.max(words, Math.ceil(Array.from(text.replace(/\s/gu, "")).length / 6));
+  return units * 280;
+}
+
+/**
+ * Disponibilidad para hablar: deja terminar y leer las frases, con variación por turno.
+ * Solo calcula una fecha; no programa mensajes ni obliga a hablar al vencer la pausa.
+ * El azar se toma al oír/hablar, nunca al consultar, para no mover la espera en cada tick.
+ */
+export class ChatPacing {
+  private availableAt = 0;
+  private unanswered = 0;
+
+  constructor(private readonly random: () => number = () => Math.random()) {}
+
+  get readyAt(): number {
+    return this.availableAt;
+  }
+
+  /** Después de hablar, deja más espacio si el rival todavía no contestó. */
+  said(raw: string, now: number): void {
+    const text = cleanMessage(raw);
+    if (text === null) return;
+    const pause = Math.min(12_000, 1800 + speechMs(text) + this.random() * 1000 + Math.min(this.unanswered, 3) * 1500);
+    this.availableAt = Math.max(this.availableAt, now + Math.round(pause));
+    this.unanswered += 1;
+  }
+
+  /** Un mensaje nuevo necesita tiempo de lectura; no acorta una pausa ya vigente. */
+  heard(raw: string, now: number): void {
+    const text = cleanMessage(raw);
+    if (text === null) return;
+    const pause = Math.min(8000, 600 + speechMs(text) * 0.75 + this.random() * 700);
+    this.availableAt = Math.max(this.availableAt, now + Math.round(pause));
+    this.unanswered = 0;
+  }
 }
 
 /** Un mensaje de la conversación: "tú" es el propio agente. */

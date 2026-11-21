@@ -269,11 +269,12 @@ Se elige por pelea en la web (`GET`/`PUT /api/settings`, campo `comms`) y vale d
 Cada agente elige el contenido y el idioma. Se le piden mensajes breves y el sistema los espacia:
 
 - **Solo limpieza técnica** (`cleanMessage`, en `packages/agent/src/comms.ts`): unifica los saltos de línea, cambia tabuladores por espacios, quita caracteres de control (deja `\n`), recorta los espacios de los extremos y corta en `MAX_AGENT_MESSAGE_LENGTH` (500) caracteres, contados por punto de código para no partir un emoji. Ese tope existe para que una respuesta desbocada no llene la pantalla; un mensaje nunca se corta dos veces.
-- **Ritmo de conversación.** Cada agente puede enviar un mensaje cada 4 segundos. Durante la pausa, la observación incluye `sayCooldown` con los segundos restantes. Si intenta hablar antes, la acción se ejecuta y su resultado avisa que el mensaje no se envió; el mensaje no entra a la conversación ni queda pendiente. Esto también aplica a las acciones en cola.
+- **Ritmo de conversación.** La pausa depende de la longitud del último mensaje, con una pequeña variación por turno. Una reacción corta deja unos 2–3 segundos; una frase más larga necesita más espacio. Recibir un mensaje también reserva tiempo para leerlo, y varios mensajes propios sin respuesta alargan la pausa. Son heurísticas de ritmo, con topes de 12 segundos tras hablar y 8 tras recibir un mensaje; solo cambian cuándo se puede hablar, no el ritmo de las acciones.
+- **Hablar sigue siendo opcional.** Durante la pausa, la observación incluye `sayCooldown` con los segundos restantes. Que desaparezca no obliga a mandar nada. Si intenta hablar antes, la acción se ejecuta y su resultado avisa que el mensaje no se envió; el mensaje no entra a la conversación ni queda pendiente. Esto también aplica a las acciones en cola.
 - **No reescribe el contenido.** No junta espacios ni líneas, no corrige, no resume, no revisa el contenido y no hace cumplir nada de lo que se digan. No filtra repetidos: dos mensajes iguales separados por la pausa llegan los dos.
 - **No se pierde nada.** Lo que llega del rival sale de la bandeja recién cuando responde el LLM que lo vio: si esa llamada falla o se corta, va de nuevo en la próxima observación. La bandeja guarda hasta 12 líneas.
 - **Memoria de la conversación.** En modo `chat` la observación trae también `conversation`: los últimos 12 mensajes de los dos lados (`from`: `"tú"` o `"rival"`), el más viejo primero, porque el historial de turnos que ve el LLM es corto.
-- **Brevedad.** El prompt y las herramientas piden una sola frase de hasta 10 palabras, hablar solo para aportar algo nuevo y permitir acciones en silencio. Esa longitud es una instrucción al modelo; no se recortan frases por palabras. El contenido y qué creerle al rival siguen siendo decisión del agente.
+- **Brevedad natural.** El prompt y las herramientas piden mensajes breves, normalmente una frase y una segunda si hace falta, sin contar palabras. No hace falta responder a todo, llenar silencios ni insistir si el otro no contesta. El contenido y qué creerle al rival siguen siendo decisión del agente.
 - El proveedor `mock` no tiene modelo detrás: contesta con una frase fija cuando el rival le dijo algo y, si no, habla más o menos un turno de cada cuatro. Sirve para ver el modo `chat` sin claves.
 
 ## Qué puede hacer un agente en cada respuesta
@@ -284,7 +285,7 @@ Cada respuesta del modelo puede llamar una herramienta, varias o ninguna:
 - **Ninguna**: no cambia nada. El cuerpo sigue con lo que hacía y con lo que quedaba en cola; el texto de la respuesta, si hay, se muestra como pensamiento.
 - Una respuesta que llama herramientas reemplaza lo que quedaba en cola de la anterior.
 
-El `reason` de cada herramienta y las respuestas sin herramientas también se piden en una frase de hasta 10 palabras, sin repetir lo anterior. El idioma lo decide el agente. El marcador cuenta una decisión por respuesta del modelo, haga lo que haga. En la transcripción con `?format=text`, las respuestas sin herramienta o con varias quedan anotadas.
+El `reason` de cada herramienta y las respuestas sin herramientas también se piden breves, sin repetir lo anterior, y pueden omitirse si no hay nada nuevo. El idioma lo decide el agente. El marcador cuenta una decisión por respuesta del modelo, haga lo que haga. En la transcripción con `?format=text`, las respuestas sin herramienta o con varias quedan anotadas.
 
 ## Límite de tiempo
 
