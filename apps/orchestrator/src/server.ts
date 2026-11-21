@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import {
   API_ROUTES,
+  FlagBodySchema,
   MAX_PROMPT_LENGTH,
   SideSchema,
   UpdatePromptBodySchema,
@@ -10,6 +11,8 @@ import {
   formatTranscript,
   parseTranscript,
   type AgentConfig,
+  type FlagBody,
+  type FlaggedPrompt,
   type MatchSettings,
   type MatchRecord,
   type MatchState,
@@ -20,6 +23,7 @@ import {
   type Side,
   type UpdatePromptBody,
 } from "@phack/protocol";
+import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
@@ -42,6 +46,13 @@ export type ServerDeps = {
     update(change: Partial<MatchSettings>): Promise<MatchSettings>;
   };
   history: { latest(): MatchRecord[] };
+  /** Prompts marcados (ver flags.ts); opcional para los tests que no los usan. */
+  flags?: {
+    list(): FlaggedPrompt[];
+    put(source: FlagSource, side: Side, body: FlagBody, now: number): Promise<FlaggedPrompt>;
+    edit(matchId: string, side: Side, body: FlagBody, now: number): Promise<FlaggedPrompt | null>;
+    remove(matchId: string, side: Side): Promise<boolean>;
+  };
   /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
   transcripts: { read(matchId: string): Promise<string | null> };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
@@ -84,6 +95,8 @@ export function applyModelPolicy(
 function errorBody(text: string): { error: string; message: string } {
   return { error: text, message: text };
 }
+
+const INVALID_SIDE = "Lado inválido: usa 'red' o 'blue'";
 
 const NO_VERCEL_KEY =
   "El servidor no tiene configurada la clave de Vercel AI Gateway: por ahora solo está disponible el LLM simulado (mock)";
@@ -129,7 +142,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
   });
 
-  await app.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "POST", "OPTIONS"] });
+  await app.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"] });
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
 
   // ---------- Rate limit de rutas que modifican estado ----------
@@ -176,7 +189,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.put<{ Params: { side: string } }>("/api/prompts/:side", async (req, reply) => {
     const side = SideSchema.safeParse(req.params.side);
     if (!side.success) {
-      return reply.code(400).send(errorBody("Lado inválido: usa 'red' o 'blue'"));
+      return reply.code(400).send(errorBody(INVALID_SIDE));
     }
     const body = UpdatePromptBodySchema.safeParse(req.body);
     if (!body.success) {
@@ -250,6 +263,51 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return reply.type("application/x-ndjson; charset=utf-8").send(raw);
     },
   );
+
+  const flags = deps.flags;
+  if (flags) {
+    app.get(API_ROUTES.flags, async () => flags.list());
+
+    /**
+     * La pelea que se quiere marcar: del historial si ya quedó guardada (trae cómo terminó),
+     * si no la pelea en vivo (sin resultado: se completa al guardarse, ver withFlagOutcomes).
+     */
+    const findMatch = (id: string): FlagSource | null => {
+      const record = deps.history.latest().find((r) => r.id === id);
+      if (record) return sourceOfRecord(record);
+      const state = deps.match.getState();
+      if (state.id !== id) return null;
+      return { matchId: id, configs: state.configs, settings: state.settings, outcome: null };
+    };
+
+    app.put<{ Params: { id: string; side: string } }>("/api/matches/:id/flags/:side", async (req, reply) => {
+      const id = req.params.id;
+      if (!isTranscriptId(id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
+      const side = SideSchema.safeParse(req.params.side);
+      if (!side.success) return reply.code(400).send(errorBody(INVALID_SIDE));
+      const body = FlagBodySchema.safeParse(req.body ?? {});
+      if (!body.success) {
+        return reply
+          .code(400)
+          .send(errorBody("Cuerpo inválido: se espera un JSON { tags, note } con hasta 8 etiquetas"));
+      }
+      const now = Date.now();
+      const source = findMatch(id);
+      if (source) return flags.put(source, side.data, body.data, now);
+      // Una marca ya hecha se puede editar aunque su pelea ya no esté en el historial.
+      const edited = await flags.edit(id, side.data, body.data, now);
+      if (edited) return edited;
+      return reply.code(404).send(errorBody("Esa pelea ya no está en el historial: no se puede marcar"));
+    });
+
+    app.delete<{ Params: { id: string; side: string } }>("/api/matches/:id/flags/:side", async (req, reply) => {
+      if (!isTranscriptId(req.params.id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
+      const side = SideSchema.safeParse(req.params.side);
+      if (!side.success) return reply.code(400).send(errorBody(INVALID_SIDE));
+      await flags.remove(req.params.id, side.data);
+      return { ok: true };
+    });
+  }
 
   app.get(API_ROUTES.defaults, async () => deps.defaults);
 

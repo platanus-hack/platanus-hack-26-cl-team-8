@@ -773,6 +773,66 @@ export const MatchRecordSchema = z.object({
 });
 export type MatchRecord = z.infer<typeof MatchRecordSchema>;
 
+// ---------- Prompts marcados ----------
+//
+// Marcar un prompt es guardarlo aparte, con etiquetas y una nota, tal como peleó en una
+// pelea: su texto, modelo y kit, contra quién, con qué ajustes y cómo le fue. El historial
+// de peleas solo recuerda las últimas; lo marcado no se pierde (DATA_DIR/flags.json), y la
+// transcripción de esa pelea sigue disponible por su id. Sirve para volver a usar un
+// prompt (replicarlo) o comparar cómo le fue (evaluarlo).
+
+export const MAX_FLAG_TAGS = 8;
+export const MAX_FLAG_TAG_LENGTH = 32;
+export const MAX_FLAG_NOTE_LENGTH = 500;
+
+/** Una etiqueta como se guarda: en minúsculas, sin espacios a los lados ni repetidos por dentro. */
+export function normalizeTag(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, MAX_FLAG_TAG_LENGTH);
+}
+
+/** Etiquetas listas para guardar: normalizadas, sin vacías ni repetidas, a lo más MAX_FLAG_TAGS. */
+export function normalizeTags(raw: readonly string[]): string[] {
+  const tags: string[] = [];
+  for (const item of raw) {
+    const tag = normalizeTag(item);
+    if (tag !== "" && !tags.includes(tag)) tags.push(tag);
+  }
+  return tags.slice(0, MAX_FLAG_TAGS);
+}
+
+/** Lo que manda la web al marcar (o al editar una marca). Sin etiquetas también vale: queda marcado. */
+export const FlagBodySchema = z.object({
+  tags: z.array(z.string().max(80)).max(32).default([]),
+  note: z.string().max(MAX_FLAG_NOTE_LENGTH).default(""),
+});
+export type FlagBody = z.infer<typeof FlagBodySchema>;
+
+export const FlaggedPromptSchema = z.object({
+  matchId: z.string(),
+  side: SideSchema,
+  /** Epoch ms en que se marcó y en que se editó por última vez. */
+  flaggedAt: z.number(),
+  updatedAt: z.number(),
+  tags: z.array(z.string()),
+  note: z.string(),
+  /** El prompt tal como peleó: texto, proveedor, modelo y kit ya resueltos. */
+  config: AgentConfigSchema,
+  /** Contra quién peleó. */
+  rival: AgentConfigSchema,
+  settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
+  /** Cómo terminó esa pelea; null mientras no termina (se puede marcar a mitad de pelea). */
+  outcome: z
+    .object({
+      startedAt: z.number(),
+      endedAt: z.number(),
+      durationMs: z.number(),
+      result: MatchResultSchema,
+      final: z.object({ red: AgentStatusSchema, blue: AgentStatusSchema }),
+    })
+    .nullable(),
+});
+export type FlaggedPrompt = z.infer<typeof FlaggedPromptSchema>;
+
 // ---------- Eventos en tiempo real (WS orquestador -> web) ----------
 
 const ThoughtEventSchema = z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() });
@@ -925,6 +985,10 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
 //   GET  /api/matches/:id/transcript -> transcripción de esa pelea: JSONL de TranscriptEntry;
 //                                       con ?format=text, texto para leer (404 si no existe)
+//   GET  /api/flags                  -> FlaggedPrompt[]   (prompts marcados, los más recientes primero)
+//   PUT  /api/matches/:id/flags/:side body FlagBody { tags, note } -> FlaggedPrompt
+//                                       (marca o edita; 404 si esa pelea ya no está a la mano)
+//   DELETE /api/matches/:id/flags/:side -> { ok: true }   (quita la marca)
 //   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
@@ -939,6 +1003,8 @@ export const API_ROUTES = {
   matchStop: "/api/match/stop",
   matches: "/api/matches",
   transcript: (matchId: string) => `/api/matches/${matchId}/transcript`,
+  flags: "/api/flags",
+  flag: (matchId: string, side: Side) => `/api/matches/${matchId}/flags/${side}`,
   defaults: "/api/defaults",
   models: "/api/models",
   ws: "/api/ws",

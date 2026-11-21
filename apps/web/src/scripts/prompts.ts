@@ -257,6 +257,22 @@ function createEditor(side: Side): Editor {
   return editor;
 }
 
+/**
+ * Carga en un editor un prompt del historial (texto, modelo y kit), como cambios sin
+ * guardar: no vale para la próxima pelea hasta que alguien presione Guardar.
+ */
+export function loadIntoEditor(side: Side, config: AgentConfig): void {
+  if (!editors) return;
+  const editor = editors[side];
+  const draft = toDraft(config);
+  editor.textarea.value = draft.prompt;
+  editor.provider = draft.provider;
+  editor.model = draft.model;
+  editor.kit.value = draft.kit;
+  refresh(editor);
+  editor.form.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 export function initPrompts(): void {
   editors = { red: createEditor("red"), blue: createEditor("blue") };
   onDefaultsChange(() => {

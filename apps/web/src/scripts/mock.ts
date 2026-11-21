@@ -44,6 +44,11 @@ import {
   type Side,
   type TranscriptEntry,
   formatTranscript,
+  FlagBodySchema,
+  DEFAULT_PROMPTS,
+  normalizeTags,
+  type FlaggedPrompt,
+  type MatchRecord,
 } from "@phack/protocol";
 
 const MATCH_DURATION_MS = 180_000;
@@ -603,6 +608,119 @@ function syncLoop(): void {
   if (phase === "running" && !params.has("static")) loopTimer = window.setInterval(loopTick, LOOP_MS);
 }
 
+// ---------- Historial y prompts marcados ----------
+
+const MINUTE = 60_000;
+
+function pastMatch(
+  id: string,
+  minutesAgo: number,
+  seconds: number,
+  result: MatchResult,
+  configs: PromptsResponse,
+  final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
+  matchSettings: MatchSettings = { comms: "none", timer: true },
+): MatchRecord {
+  const endedAt = Date.now() - minutesAgo * MINUTE;
+  return {
+    id,
+    startedAt: endedAt - seconds * 1000,
+    endedAt,
+    durationMs: seconds * 1000,
+    configs,
+    final: { red: agent("red", final.red), blue: agent("blue", final.blue) },
+    settings: matchSettings,
+    result,
+  };
+}
+
+const TRUCE: PromptsResponse = {
+  red: {
+    side: "red",
+    prompt: "No quieres pelear. Convence al otro agente de que nadie tiene por qué morir aquí y quédate quieto si acepta.",
+    provider: "vercel",
+    model: "anthropic/claude-haiku-5.5",
+    kit: "classic",
+  },
+  blue: {
+    side: "blue",
+    prompt: "Desconfía de todo lo que te digan. Si el rival baja la guardia, aprovecha.",
+    provider: "vercel",
+    model: "google/gemini-3.8-flash",
+    kit: "archer",
+  },
+};
+
+/** Lo que respondería /api/matches: las últimas peleas, la más reciente primero. */
+const HISTORY: MatchRecord[] = [
+  pastMatch(
+    "7c1f0a52-3b1e-4c58-9d60-0d5a3f6b2a11",
+    6,
+    131,
+    { winner: "red", reason: "kill", explanation: EXPLANATION },
+    structuredClone(prompts),
+    {
+      red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
+      blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
+    },
+  ),
+  pastMatch(
+    "2e9b7d14-6a40-4f0c-8f1d-51c2a9e07b33",
+    31,
+    412,
+    { winner: null, reason: "stopped" },
+    TRUCE,
+    {
+      red: { health: 20, damageDealt: 0, decisions: 58, heldItem: "" },
+      blue: { health: 20, damageDealt: 0, decisions: 49, heldItem: "bow" },
+    },
+    { comms: "chat", timer: false },
+  ),
+  pastMatch(
+    "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
+    64,
+    180,
+    { winner: "blue", reason: "timeout_health" },
+    {
+      red: { side: "red", prompt: DEFAULT_PROMPTS.red, provider: "vercel", model: "deepseek/deepseek-v4.1-flash-1017-fast", kit: "tank" },
+      blue: { ...structuredClone(prompts.blue) },
+    },
+    {
+      red: { health: 7, damageDealt: 9, decisions: 96, heldItem: "iron_sword" },
+      blue: { health: 11, damageDealt: 13, decisions: 61, heldItem: "bow" },
+    },
+  ),
+];
+
+function flagOf(record: MatchRecord, side: Side, tags: string[], note: string): FlaggedPrompt {
+  const other: Side = side === "red" ? "blue" : "red";
+  return {
+    matchId: record.id,
+    side,
+    flaggedAt: record.endedAt + MINUTE,
+    updatedAt: record.endedAt + MINUTE,
+    tags,
+    note,
+    config: record.configs[side],
+    rival: record.configs[other],
+    settings: record.settings,
+    outcome: {
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      durationMs: record.durationMs,
+      result: record.result,
+      final: record.final,
+    },
+  };
+}
+
+/** Lo que respondería /api/flags. Marcar y desmarcar en la maqueta cambia esta lista. */
+const mockFlags: FlaggedPrompt[] = [
+  flagOf(HISTORY[1]!, "red", ["tregua", "convence al rival"], "Pidió no pelear y el otro aceptó: 7 minutos sin un solo golpe."),
+  flagOf(HISTORY[0]!, "red", ["perla al inicio"], "Cierra la distancia antes del primer disparo."),
+  flagOf(HISTORY[2]!, "blue", ["perla al inicio", "gana por vida"], ""),
+];
+
 export type MockError = { status: number; message: string };
 
 function fail(status: number, message: string): never {
@@ -629,8 +747,49 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   }
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
   if (method === "GET" && path === API_ROUTES.models) return models;
-  // La maqueta no guarda peleas.
-  if (method === "GET" && path === API_ROUTES.matches) return [];
+  if (method === "GET" && path === API_ROUTES.matches) return HISTORY;
+  if (method === "GET" && path === API_ROUTES.flags) return mockFlags;
+  const flagPath = /^\/api\/matches\/([^/]+)\/flags\/(red|blue)$/.exec(path);
+  if (flagPath && (method === "PUT" || method === "DELETE")) {
+    const matchId = decodeURIComponent(flagPath[1]!);
+    const side = flagPath[2] as Side;
+    const index = mockFlags.findIndex((flag) => flag.matchId === matchId && flag.side === side);
+    if (method === "DELETE") {
+      if (index >= 0) mockFlags.splice(index, 1);
+      return { ok: true };
+    }
+    const body = FlagBodySchema.safeParse(init?.body);
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { tags, note } con hasta 8 etiquetas");
+    const now = Date.now();
+    const existing = mockFlags[index];
+    if (existing) {
+      existing.tags = normalizeTags(body.data.tags);
+      existing.note = body.data.note.trim();
+      existing.updatedAt = now;
+      return existing;
+    }
+    const other: Side = side === "red" ? "blue" : "red";
+    const record = HISTORY.find((item) => item.id === matchId);
+    const current = buildState(phase);
+    if (!record && current.id !== matchId) fail(404, "Esa pelea ya no está en el historial: no se puede marcar");
+    const configs = record ? record.configs : current.configs;
+    const created: FlaggedPrompt = {
+      matchId,
+      side,
+      flaggedAt: now,
+      updatedAt: now,
+      tags: normalizeTags(body.data.tags),
+      note: body.data.note.trim(),
+      config: configs[side],
+      rival: configs[other],
+      settings: record ? record.settings : current.settings,
+      outcome: record
+        ? { startedAt: record.startedAt, endedAt: record.endedAt, durationMs: record.durationMs, result: record.result, final: record.final }
+        : null,
+    };
+    mockFlags.unshift(created);
+    return created;
+  }
 
   if (method === "POST" && path === API_ROUTES.matchStart) {
     if (phase === "preparing" || phase === "running") fail(409, "Ya hay una pelea en curso");

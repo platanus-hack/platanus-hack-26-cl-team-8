@@ -300,6 +300,19 @@ const stats = [
           <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
         </aside>
       </div>
+      <!-- Las últimas peleas y los prompts marcados: lo arma scripts/history.ts. -->
+      <section class="history" aria-labelledby="history-title">
+        <header class="section__head">
+          <h2 class="section__title" id="history-title">Historial</h2>
+          <p class="section__hint">
+            Las últimas peleas y los prompts que alguien marcó. Marca un prompt para guardarlo con etiquetas y una nota;
+            después puedes compararlo con otros o cargarlo de nuevo en un editor.
+          </p>
+        </header>
+        <div class="history__filters" id="history-filters" role="group" aria-label="Filtrar el historial"></div>
+        <p class="history__summary" id="history-summary" hidden></p>
+        <ol class="history__list" id="history-list"></ol>
+      </section>
     </main>
 
     <footer class="footer">
