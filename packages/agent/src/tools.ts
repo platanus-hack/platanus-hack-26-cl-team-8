@@ -345,6 +345,19 @@ export const TOOL_DEFS: ToolDef[] = [
   simpleTool("wait", "Quédate quieto mirando al rival.", "quedarte quieto"),
 ];
 
+/**
+ * Rendirse en la ronda: solo existe en el modo por rondas, para todos los kits. No está
+ * en TOOL_NAMES (esa lista es la de las acciones del cuerpo, la misma que conoce el LLM
+ * de prueba): se agrega aparte en kitToolDefs.
+ */
+export const SURRENDER_TOOL = "surrender";
+
+export const SURRENDER_DEF: ToolDef = {
+  name: SURRENDER_TOOL,
+  description: "Te rindes en esta ronda: la ronda termina y la gana el otro agente.",
+  parameters: { type: "object", properties: { reason: reasonProperty }, required: [] },
+};
+
 const sayProperty = {
   type: "string",
   description: `Opcional: una frase natural de hasta ${RESPONSE_MAX_WORDS} palabras para el otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Habla solo si aportas algo nuevo y deja al menos ${MESSAGE_INTERVAL_MS / 1000} segundos entre mensajes. Omite say si aparece sayCooldown. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
@@ -352,11 +365,13 @@ const sayProperty = {
 
 /**
  * Definiciones de las herramientas de un kit, en el orden de TOOL_NAMES. En modo "chat"
- * todas suman el argumento "say": hablar no le cuesta una acción al agente.
+ * todas suman el argumento "say": hablar no le cuesta una acción al agente. En el modo
+ * por rondas (`rounds`) se agrega "surrender" al final.
  */
-export function kitToolDefs(kit: Kit, comms: CommsMode = "none"): ToolDef[] {
+export function kitToolDefs(kit: Kit, comms: CommsMode = "none", rounds = false): ToolDef[] {
   const names: readonly string[] = kitToolNames(kit);
   const defs = TOOL_DEFS.filter((def) => names.includes(def.name));
+  if (rounds) defs.push(SURRENDER_DEF);
   if (comms !== "chat") return defs;
   return defs.map((def) => {
     const parameters = def.parameters as { properties?: Record<string, unknown> };

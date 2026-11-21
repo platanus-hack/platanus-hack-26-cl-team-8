@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DecisionReport, FighterEvents, FighterOptions, Observation } from "@phack/agent";
+import type { DecisionReport, FighterEvents, FighterOptions, Observation, SeriesView } from "@phack/agent";
 import type { LlmClient, LlmRequest, LlmResponse, TokenUsage } from "@phack/llm";
 import {
+  KITS,
   MAX_HEALTH,
   COUNTDOWN_SECONDS,
   MAX_AGENT_MESSAGE_LENGTH,
+  MAX_ROUNDS,
   type AgentConfig,
   type CommsMode,
+  type MatchMode,
   type MatchRecord,
   type MatchState,
   type Provider,
   type Side,
   type TranscriptEntry,
 } from "@phack/protocol";
+import { clearPlacedBlocksCommands, teleportCommand, kitEffectCommands } from "./arena";
 import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
 import { defaultPrompts } from "./store";
 import type { SleepFn } from "./util";
@@ -64,6 +68,10 @@ type SetupOptions = {
   rconReply?: (command: string) => string;
   /** Si falta, las pausas no esperan. */
   sleep?: SleepFn;
+  /** Una pelea o una serie por rondas; una pelea si falta. */
+  mode?: MatchMode;
+  /** Reemplaza ROUNDS_REFILL_KIT. */
+  refillKit?: boolean;
 };
 
 /** Lo que responde un servidor 1.20.4 de verdad: prepareFighter revisa la respuesta de los comandos del kit. */
@@ -90,6 +98,8 @@ function setup(opts: SetupOptions = {}) {
   const fighters: Partial<Record<Side, FighterOptions>> = {};
   /** Lo que el orquestador le hizo llegar a cada agente con hear(). */
   const heard: Record<Side, { kind: string; text: string }[]> = { red: [], blue: [] };
+  /** Lo que el orquestador le pidió a cada agente: start, pause y resume, en orden. */
+  const calls: Record<Side, { call: "start" | "pause" | "resume"; note?: string; series?: SeriesView }[]> = { red: [], blue: [] };
   const rconCommands: string[] = [];
   const logs: { level: string; text: string }[] = [];
   let stored: MatchRecord | null = null;
@@ -146,7 +156,7 @@ function setup(opts: SetupOptions = {}) {
     },
     hub,
     prompts: { get: prompts },
-    settings: { get: () => ({ comms: opts.comms ?? "none", timer: opts.timer ?? true }) },
+    settings: { get: () => ({ comms: opts.comms ?? "none", timer: opts.timer ?? true, mode: opts.mode ?? "single" }) },
     history,
     transcripts: {
       append: (matchId, entry) => {
@@ -162,7 +172,15 @@ function setup(opts: SetupOptions = {}) {
         connect: async () => {
           o.events.onStatus({ connected: true, alive: true, health: 20, absorption: 0, food: 20, heldItem: "" });
         },
-        start: () => {},
+        start: () => {
+          calls[o.side].push({ call: "start" });
+        },
+        pause: (note) => {
+          calls[o.side].push({ call: "pause", note });
+        },
+        resume: (series, note) => {
+          calls[o.side].push({ call: "resume", series: { ...series }, note });
+        },
         stop: async () => {},
         hear: (kind, text) => {
           heard[o.side].push({ kind, text });
@@ -175,6 +193,7 @@ function setup(opts: SetupOptions = {}) {
       logs.push({ level, text });
     },
     sleep: opts.sleep ?? (async () => {}),
+    ...(opts.refillKit !== undefined ? { roundsRefillKit: opts.refillKit } : {}),
   };
   const manager: MatchManager = new MatchManager(deps);
   const ev = (side: Side): FighterEvents => {
@@ -191,6 +210,7 @@ function setup(opts: SetupOptions = {}) {
     llmCalls,
     fighters,
     heard,
+    calls,
     rconCommands,
     logs,
     flushed,
@@ -596,7 +616,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     t.ev("blue").onMessage("hola");
     expect(t.heard.blue).toEqual([{ kind: "thought", text: "voy por la espalda" }]);
     expect(t.heard.red).toEqual([]);
-    expect(t.manager.getState().settings).toEqual({ comms: "thoughts", timer: true });
+    expect(t.manager.getState().settings).toEqual({ comms: "thoughts", timer: true, mode: "single" });
   });
 
   it('en "chat" los mensajes llegan al rival y al público; los razonamientos no', async () => {
@@ -610,7 +630,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     );
     t.ev("red").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
-    expect(t.stored()?.settings).toEqual({ comms: "chat", timer: true });
+    expect(t.stored()?.settings).toEqual({ comms: "chat", timer: true, mode: "single" });
   });
 
   it("pasa la duración de la pelea al agente", async () => {
@@ -728,7 +748,7 @@ describe("MatchManager: transcripción", () => {
     if (start?.type === "start") {
       expect(start.matchId).toBe(id);
       expect(start.configs.red).toMatchObject({ provider: "vercel", kit: "classic" });
-      expect(start.settings).toEqual({ comms: "chat", timer: true });
+      expect(start.settings).toEqual({ comms: "chat", timer: true, mode: "single" });
       expect(start.systemPrompts.red).toMatch(/^sistema red:/);
       expect(start.systemPrompts.blue).toMatch(/^sistema blue:/);
       expect(start.tickMs).toBe(1500);
@@ -898,5 +918,310 @@ describe("MatchManager: los mensajes entre agentes llegan enteros", () => {
     // Uno más largo (no debería llegar así del agente) se corta sin partir emojis.
     t.ev("blue").onMessage(`${full}😀`);
     expect(t.heard.red[2]?.text).toBe(full);
+  });
+});
+
+describe("MatchManager: modo por rondas", () => {
+  type T = ReturnType<typeof setup>;
+  const series = (t: T) => t.manager.getState().series;
+  /** Espera a que empiece la ronda `round`. */
+  const roundRunning = async (t: T, round: number): Promise<void> => {
+    await vi.waitFor(() => {
+      expect(t.manager.getState().phase).toBe("running");
+      expect(series(t)?.round).toBe(round);
+    });
+  };
+  /** Mata a `loser` y espera la ronda siguiente. */
+  const kill = async (t: T, loser: Side, next: number): Promise<void> => {
+    t.ev(loser).onDeath();
+    await roundRunning(t, next);
+  };
+  const timeout = async (t: T): Promise<void> => {
+    await t.manager["onTimeout"](t.manager["ctx"]!);
+  };
+  const healthy = (t: T, side: Side, health: number): void => {
+    t.ev(side).onStatus({ connected: true, alive: true, health, absorption: 0, food: 20, heldItem: "iron_sword" });
+  };
+
+  it("KO, pausa y ronda siguiente hasta que la serie queda decidida (3-0)", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    expect(t.fighters.red?.rounds).toEqual({ maxRounds: MAX_ROUNDS });
+    expect(series(t)).toMatchObject({ round: 1, maxRounds: MAX_ROUNDS, wins: { red: 0, blue: 0 }, rounds: [] });
+    expect(series(t)?.roundStartedAt).toBe(t.manager.getState().startedAt);
+    const startedAt = t.manager.getState().startedAt;
+
+    await kill(t, "blue", 2);
+    expect(series(t)).toMatchObject({ wins: { red: 1, blue: 0 }, rounds: [{ round: 1, winner: "red", reason: "kill" }] });
+    // El comienzo de la pelea sigue siendo el de la ronda 1.
+    expect(t.manager.getState().startedAt).toBe(startedAt);
+    await kill(t, "blue", 3);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+
+    expect(t.manager.getState().result).toMatchObject({ winner: "red", reason: "rounds" });
+    const record = t.stored();
+    expect(record?.series?.wins).toEqual({ red: 3, blue: 0 });
+    expect(record?.series?.rounds.map((r) => [r.round, r.winner, r.reason])).toEqual([
+      [1, "red", "kill"],
+      [2, "red", "kill"],
+      [3, "red", "kill"],
+    ]);
+    // Cada muerte se transmite y cada ronda termina con su evento.
+    const broadcast = t.hub.broadcast.mock.calls.map(([event]) => event as { type: string });
+    expect(broadcast.filter((e) => e.type === "death")).toHaveLength(3);
+    expect(broadcast.filter((e) => e.type === "round_end")).toHaveLength(3);
+    expect(t.logs).toContainEqual({ level: "info", text: "Ganó Rojo la serie 3 a 0" });
+
+    // Los mismos agentes toda la serie: se pausan y se reanudan, no se vuelven a crear.
+    expect(t.calls.red.map((c) => c.call)).toEqual(["start", "pause", "resume", "pause", "resume", "pause"]);
+    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: la ganaste por K.O.");
+    expect(t.calls.blue[2]).toEqual({
+      call: "resume",
+      series: { round: 2, won: 0, lost: 1, drawn: 0, maxRounds: MAX_ROUNDS },
+      note: "terminó la ronda 1: la perdiste por K.O.; empieza la ronda 2",
+    });
+    expect(t.createLlmClient).toHaveBeenCalledTimes(3);
+  });
+
+  it("3-1: la serie sigue mientras el que va abajo pueda alcanzar", async () => {
+    const t = setup({ mode: "rounds", provider: "mock" });
+    await startRunning(t);
+    await kill(t, "blue", 2);
+    await kill(t, "red", 3);
+    await kill(t, "blue", 4);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.update).toHaveBeenCalled());
+    expect(t.manager.getState().result).toMatchObject({ winner: "red", reason: "rounds" });
+    expect(t.stored()?.series?.wins).toEqual({ red: 3, blue: 1 });
+    expect(t.stored()?.series?.rounds).toHaveLength(4);
+    expect(t.manager.getState().result?.explanation).toMatch(/^Rojo ganó la serie 3 a 1: ganó 3 rondas por KO/);
+  });
+
+  it("rendirse le da la ronda al otro; fuera de la ronda en juego no cuenta", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    t.ev("red").onSurrender();
+    // Ya en la pausa: rendirse otra vez no hace nada.
+    expect(t.manager.getState().phase).toBe("intermission");
+    t.ev("blue").onSurrender();
+    expect(series(t)?.rounds).toEqual([{ round: 1, winner: "blue", reason: "surrender", durationMs: expect.any(Number) }]);
+    expect(t.logs).toContainEqual({ level: "info", text: "Rojo se rindió en la ronda 1" });
+    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: la perdiste porque te rendiste");
+    expect(t.calls.blue[1]?.note).toBe("terminó la ronda 1: la ganaste porque el otro agente se rindió");
+    await roundRunning(t, 2);
+    expect(series(t)?.wins).toEqual({ red: 0, blue: 1 });
+    t.ev("blue").onSurrender();
+    expect(t.logs).toContainEqual({ level: "info", text: "Azul se rindió en la ronda 2" });
+    await roundRunning(t, 3);
+    expect(series(t)?.wins).toEqual({ red: 1, blue: 1 });
+  });
+
+  it("ronda por tiempo: más vida gana, la misma vida es empate; y una serie empatada", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    expect(t.manager.getState().endsAt).toBe((t.manager.getState().startedAt ?? 0) + 600_000);
+    await kill(t, "blue", 2);
+    await kill(t, "red", 3);
+    // Ronda 3: la misma vida al acabarse el tiempo.
+    await timeout(t);
+    await roundRunning(t, 4);
+    expect(series(t)?.rounds[2]).toMatchObject({ round: 3, winner: null, reason: "draw" });
+    // Ronda 4: Azul con menos vida, contando los corazones amarillos de Rojo.
+    healthy(t, "blue", 20);
+    t.ev("red").onStatus({ connected: true, alive: true, health: 18, absorption: 4, food: 20, heldItem: "" });
+    await timeout(t);
+    await roundRunning(t, 5);
+    expect(series(t)?.rounds[3]).toMatchObject({ round: 4, winner: "red", reason: "timeout_health" });
+    expect(t.calls.blue.at(-1)?.note).toBe(
+      "terminó la ronda 4: la perdiste por tener menos vida al acabarse el tiempo; empieza la ronda 5",
+    );
+    expect(t.calls.red.at(-1)?.series).toEqual({ round: 5, won: 2, lost: 1, drawn: 1, maxRounds: MAX_ROUNDS });
+    // Ronda 5: gana Azul y la serie queda 2 a 2.
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.manager.getState().result).toMatchObject({ winner: null, reason: "draw" });
+    expect(t.stored()?.series).toMatchObject({ wins: { red: 2, blue: 2 }, round: 5 });
+    expect(t.stored()?.series?.rounds).toHaveLength(5);
+    expect(t.logs).toContainEqual({ level: "info", text: "La serie terminó empatada: 2 a 2 en rondas" });
+  });
+
+  it("termina antes si al que va abajo ya no le alcanzan las rondas (2-0 con dos empates)", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    await timeout(t);
+    await roundRunning(t, 2);
+    await timeout(t);
+    await roundRunning(t, 3);
+    await kill(t, "red", 4);
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.manager.getState().result).toMatchObject({ winner: "blue", reason: "rounds" });
+    expect(t.stored()?.series?.rounds).toHaveLength(4);
+    expect(t.calls.red.filter((c) => c.call === "resume")).toHaveLength(3);
+  });
+
+  it("entre rondas vuelven a su lugar con la vida completa y los efectos de su kit: ni clear ni ítems", async () => {
+    const t = setup({ mode: "rounds", prompts: { red: { kit: "berserker" } } });
+    await startRunning(t);
+    const mark = t.rconCommands.length;
+    await kill(t, "blue", 2);
+    const between = t.rconCommands.slice(mark);
+    expect(between).toEqual([
+      ...clearPlacedBlocksCommands(),
+      ...(["red", "blue"] as const).flatMap((side) => {
+        const name = side === "red" ? "AgenteRojo" : "AgenteAzul";
+        return [
+          teleportCommand(side),
+          `attribute ${name} minecraft:generic.max_health base set ${MAX_HEALTH}`,
+          `effect give ${name} minecraft:instant_health 1 10 true`,
+          `effect give ${name} minecraft:saturation 1 10 true`,
+          // Rojo pelea con el kit Berserker: su efecto permanente vuelve, porque morir lo borra.
+          ...(side === "red" ? kitEffectCommands(name, KITS.berserker) : []),
+        ];
+      }),
+    ]);
+    expect(kitEffectCommands("AgenteRojo", KITS.berserker).length).toBeGreaterThan(0);
+    expect(between.some((c) => c.startsWith("clear ") || c.startsWith("item replace "))).toBe(false);
+  });
+
+  it("con ROUNDS_REFILL_KIT el kit se entrega de nuevo antes de cada ronda", async () => {
+    const t = setup({ mode: "rounds", refillKit: true });
+    await startRunning(t);
+    const mark = t.rconCommands.length;
+    await kill(t, "blue", 2);
+    const between = t.rconCommands.slice(mark);
+    expect(between).toContain("clear AgenteRojo");
+    expect(between).toContain("item replace entity AgenteAzul hotbar.0 with minecraft:iron_sword");
+  });
+
+  it("la vida y el estar vivo vuelven en cada ronda; el daño, las decisiones y los tokens se suman", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    t.ev("red").onDecision(decision(500, { inputTokens: 100, outputTokens: 10 }));
+    t.ev("blue").onDamageTaken(4, 26, false);
+    t.ev("blue").onDeath();
+    // En la pausa nada cuenta: ni daño, ni decisiones, ni muertes, ni rendiciones.
+    expect(t.manager.getState().phase).toBe("intermission");
+    t.ev("blue").onDamageTaken(10, 16, false);
+    t.ev("red").onDecision(decision(500, { inputTokens: 999, outputTokens: 999 }));
+    t.ev("red").onDeath();
+    t.ev("red").onSurrender();
+    await roundRunning(t, 2);
+    const agents = t.manager.getState().agents;
+    expect(agents.blue).toMatchObject({ alive: true, health: MAX_HEALTH });
+    expect(agents.red).toMatchObject({ alive: true, health: MAX_HEALTH, damageDealt: 4, decisions: 1, tokensIn: 100 });
+    expect(series(t)?.rounds).toHaveLength(1);
+    t.ev("blue").onDamageTaken(3, 27, false);
+    t.ev("red").onDecision(decision(700, { inputTokens: 50, outputTokens: 5 }));
+    expect(t.manager.getState().agents.red).toMatchObject({ damageDealt: 7, decisions: 2, tokensIn: 150, avgDecisionMs: 600 });
+    await t.manager.stop();
+    expect(t.stored()?.final.red).toMatchObject({ damageDealt: 7, decisions: 2 });
+  });
+
+  it("detenerla en la pausa termina toda la serie y no empieza la ronda siguiente", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let manager: MatchManager | null = null;
+    const t = setup({
+      mode: "rounds",
+      // Solo se queda esperando la cuenta regresiva entre rondas.
+      sleep: async () => {
+        const state = manager?.getState();
+        if (state?.phase === "intermission" && state.countdownEndsAt !== null) await gate;
+      },
+    });
+    manager = t.manager;
+    await startRunning(t);
+    const endedAt = Date.now();
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.manager.getState().countdownEndsAt).not.toBeNull());
+    const paused = t.manager.getState();
+    expect(paused).toMatchObject({ phase: "intermission", endsAt: null, series: { round: 2, roundStartedAt: null } });
+    expect(paused.countdownEndsAt).toBeGreaterThanOrEqual(endedAt + 6000);
+    expect(paused.countdownEndsAt).toBeLessThanOrEqual(Date.now() + 6000);
+    expect(t.flushed.some((s) => s.phase === "intermission" && s.countdownEndsAt === null)).toBe(true);
+
+    await t.manager.stop();
+    expect(t.manager.getState()).toMatchObject({ phase: "finished", countdownEndsAt: null, result: { winner: null, reason: "stopped" } });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.manager.getState().phase).toBe("finished");
+    expect(t.calls.red.map((c) => c.call)).toEqual(["start", "pause"]);
+    expect(t.stored()?.series?.rounds).toHaveLength(1);
+    expect(t.stored()?.result).toEqual({ winner: null, reason: "stopped" });
+  });
+
+  it("sin límite de tiempo cada ronda no tiene hora de término y el tope de seguridad corta la serie", async () => {
+    const t = setup({ mode: "rounds", timer: false });
+    await startRunning(t);
+    expect(t.manager.getState().endsAt).toBeNull();
+    await kill(t, "blue", 2);
+    expect(t.manager.getState().endsAt).toBeNull();
+    await t.manager["onCeiling"](t.manager["ctx"]!);
+    expect(t.manager.getState().result).toEqual({ winner: null, reason: "stopped" });
+    expect(t.stored()?.series?.rounds).toHaveLength(1);
+  });
+
+  it("la transcripción anota el comienzo y el final de cada ronda", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    await kill(t, "blue", 2);
+    await kill(t, "red", 3);
+    await t.manager.stop();
+    const entries = t.entries.map((e) => e.entry);
+    const rounds = entries.filter((e) => e.type === "round_start" || e.type === "round_end" || e.type === "phase");
+    expect(rounds.map((e) => (e.type === "phase" ? e.phase : e.type === "round_start" ? `start ${e.round}` : `end ${e.result.round}`))).toEqual([
+      "preparing",
+      "running",
+      "start 1",
+      "end 1",
+      "intermission",
+      "running",
+      "start 2",
+      "end 2",
+      "intermission",
+      "running",
+      "start 3",
+      "finished",
+    ]);
+    const end = entries.find((e) => e.type === "round_end");
+    expect(end).toMatchObject({ result: { round: 1, winner: "red", reason: "kill" }, series: { wins: { red: 1, blue: 0 } } });
+    const last = entries.find((e) => e.type === "end");
+    expect(last?.type === "end" && last.record.series?.rounds).toHaveLength(2);
+    expect(entries).toContainEqual(expect.objectContaining({ type: "log", text: "¡Comienza la ronda 2!" }));
+    // Lo que va a la web también queda anotado, con el evento de cada ronda.
+    const sent = t.hub.broadcast.mock.calls.map(([event]) => event as { type: string }).filter((e) => e.type === "round_end");
+    expect(entries.filter((e) => e.type === "round_end")).toEqual(sent);
+  });
+
+  it("si un agente se desconecta entre rondas, la serie termina por error", async () => {
+    const t = setup({ mode: "rounds" });
+    await startRunning(t);
+    t.ev("blue").onDeath();
+    t.ev("red").onStatus({ connected: false, alive: false, health: 0, absorption: 0, food: 20, heldItem: "" });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("finished"));
+    expect(t.manager.getState().result).toEqual({ winner: null, reason: "error" });
+    expect(t.logs).toContainEqual({ level: "error", text: "Rojo se desconectó del servidor entre rondas" });
+  });
+});
+
+describe("MatchManager: una sola pelea no cambia", () => {
+  it("sin serie, una muerte termina la pelea y rendirse no hace nada", async () => {
+    const t = setup();
+    await startRunning(t);
+    expect(t.manager.getState().series).toBeNull();
+    expect(t.fighters.red?.rounds).toBeNull();
+    t.ev("red").onSurrender();
+    expect(t.manager.getState().phase).toBe("running");
+    expect(t.logs.some((l) => l.text.includes("rindió"))).toBe(false);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.manager.getState().result).toMatchObject({ winner: "red", reason: "kill" });
+    expect(t.stored()?.series).toBeNull();
+    expect(t.calls.red.map((c) => c.call)).toEqual(["start"]);
+    expect(t.entries.some((e) => e.entry.type === "round_start" || e.entry.type === "round_end")).toBe(false);
   });
 });

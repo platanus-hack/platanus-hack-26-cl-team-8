@@ -5,6 +5,7 @@ import {
   clearPlacedBlocksCommands,
   fighterKitCommands,
   prepareFighter,
+  resetFighterForRound,
   runCountdown,
 } from "./arena";
 import type { RconLike } from "./rcon";
@@ -152,6 +153,35 @@ describe("prepareFighter", () => {
     await prepareFighter(rcon, "red", KITS.classic, (text) => warnings.push(text));
     expect(warnings).toHaveLength(KITS.classic.items.length + KITS.classic.effects.length);
     for (const warning of warnings) expect(warning).toContain('"item replace entity AgenteRojo ');
+  });
+});
+
+describe("resetFighterForRound", () => {
+  it("lo lleva a su lugar con la vida completa, sin tocar el inventario ni darle el kit", async () => {
+    const { rcon, sent } = recorder();
+    await resetFighterForRound(rcon, "red", KITS.classic);
+    const spawn = ARENA.spawns.red;
+    expect(sent).toEqual([
+      `tp AgenteRojo ${spawn.x + 0.5} ${spawn.y} ${spawn.z + 0.5} ${spawn.yaw} 0`,
+      "attribute AgenteRojo minecraft:generic.max_health base set 30",
+      "effect give AgenteRojo minecraft:instant_health 1 10 true",
+      "effect give AgenteRojo minecraft:saturation 1 10 true",
+    ]);
+  });
+
+  it("devuelve los efectos permanentes del kit (morir los borra), pero no sus ítems", async () => {
+    const { rcon, sent } = recorder();
+    await resetFighterForRound(rcon, "red", KITS.berserker);
+    expect(KITS.berserker.effects.length).toBeGreaterThan(0);
+    for (const effect of KITS.berserker.effects) {
+      expect(sent).toContain(`effect give AgenteRojo minecraft:${effect.id} infinite ${effect.amplifier} true`);
+    }
+    expect(sent.some((command) => command.startsWith("item replace") || command.startsWith("clear"))).toBe(false);
+  });
+
+  it("falla con un mensaje claro si el peleador no está en el servidor", async () => {
+    const { rcon } = recorder((command) => (command.startsWith("tp ") ? "No entity was found" : ""));
+    await expect(resetFighterForRound(rcon, "blue", KITS.classic)).rejects.toThrow("AgenteAzul no está conectado");
   });
 });
 

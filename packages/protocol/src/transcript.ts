@@ -54,7 +54,11 @@ function resultLine(record: MatchRecord): string {
   const { winner, reason } = record.result;
   const length = clock(record.endedAt, record.startedAt).trim();
   if (winner && reason === "kill") return `Gana ${SIDE_NAME[winner]} por K.O. a los ${length}.`;
+  if (winner && reason === "rounds" && record.series) {
+    return `Gana ${SIDE_NAME[winner]} la serie: ${record.series.wins[winner]} rondas a ${record.series.wins[winner === "red" ? "blue" : "red"]}.`;
+  }
   if (winner) return `Gana ${SIDE_NAME[winner]}: se acabó el tiempo y tenía más vida.`;
+  if (reason === "draw" && record.series) return "Empate: la serie terminó con las mismas rondas ganadas.";
   if (reason === "draw") return "Empate: se acabó el tiempo con la misma vida.";
   if (reason === "stopped") return `Pelea detenida a los ${length}.`;
   return "La pelea terminó por un error.";
@@ -126,6 +130,22 @@ export function formatTranscript(entries: TranscriptEntry[]): string {
       case "death":
         line(entry.at, entry.side, "cae en combate");
         break;
+      case "round_start":
+        out.push("");
+        line(entry.at, null, `Empieza la ronda ${entry.round}.`);
+        break;
+      case "round_end": {
+        const { result, series } = entry;
+        const how =
+          result.reason === "kill"
+            ? "por K.O."
+            : result.reason === "surrender"
+              ? "porque el otro se rindió"
+              : "por tener más vida al acabarse el tiempo";
+        const outcome = result.winner ? `gana ${SIDE_NAME[result.winner]} ${how}` : "empate";
+        line(entry.at, null, `Termina la ronda ${result.round}: ${outcome}. Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}.`);
+        break;
+      }
       case "log":
         line(entry.at, null, entry.level === "info" ? entry.text : `[${entry.level === "warn" ? "aviso" : "error"}] ${entry.text}`);
         break;

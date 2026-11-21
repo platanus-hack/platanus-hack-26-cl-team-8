@@ -1,4 +1,4 @@
-import type { MatchResult, Side } from "@phack/protocol";
+import { seriesLeader, type MatchResult, type RoundResult, type Series, type Side } from "@phack/protocol";
 
 /** Lógica pura para decidir el resultado de una pelea. */
 
@@ -34,7 +34,45 @@ export function decideTimeoutResult(red: Vitals, blue: Vitals): MatchResult {
   return { winner: redHealth > blueHealth ? "red" : "blue", reason: "timeout_health" };
 }
 
-export function describeResult(result: MatchResult): string {
+/** Modo por rondas: gana la serie quien ganó más rondas; con las mismas, empate. */
+export function seriesResult(series: Pick<Series, "wins">): MatchResult {
+  const leader = seriesLeader(series);
+  return leader ? { winner: leader, reason: "rounds" } : { winner: null, reason: "draw" };
+}
+
+/**
+ * Cómo terminó una ronda, contado a uno de los agentes ("la ganaste", "la perdiste").
+ * Le llega al reanudar, como resultado de su última acción.
+ */
+export function roundNote(result: RoundResult, side: Side): string {
+  const head = `terminó la ronda ${result.round}`;
+  if (result.winner === null) return `${head}: empate, se acabó el tiempo con la misma vida`;
+  const won = result.winner === side;
+  switch (result.reason) {
+    case "kill":
+      return `${head}: la ${won ? "ganaste" : "perdiste"} por K.O.`;
+    case "surrender":
+      return won ? `${head}: la ganaste porque el otro agente se rindió` : `${head}: la perdiste porque te rendiste`;
+    default:
+      return `${head}: la ${won ? "ganaste" : "perdiste"} por tener ${won ? "más" : "menos"} vida al acabarse el tiempo`;
+  }
+}
+
+/** Línea del registro al terminar una ronda, con cómo va la serie. */
+export function describeRound(result: RoundResult, series: Pick<Series, "wins">): string {
+  const score = `Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}`;
+  if (result.winner === null) return `Ronda ${result.round}: empate, se acabó el tiempo con la misma vida. ${score}`;
+  const how =
+    result.reason === "kill"
+      ? "por KO"
+      : result.reason === "surrender"
+        ? `porque ${SIDE_LABEL[otherSide(result.winner)]} se rindió`
+        : "por tener más vida al acabarse el tiempo";
+  return `Ronda ${result.round}: ganó ${SIDE_LABEL[result.winner]} ${how}. ${score}`;
+}
+
+/** `series`: en el modo por rondas, para contar el marcador final. */
+export function describeResult(result: MatchResult, series: Pick<Series, "wins"> | null = null): string {
   switch (result.reason) {
     case "kill":
       return result.winner ? `Ganó ${SIDE_LABEL[result.winner]} por KO` : "Pelea terminada por KO";
@@ -43,7 +81,12 @@ export function describeResult(result: MatchResult): string {
         ? `Se acabó el tiempo: ganó ${SIDE_LABEL[result.winner]} por tener más vida`
         : "Se acabó el tiempo";
     case "draw":
-      return "Se acabó el tiempo: empate";
+      return series ? `La serie terminó empatada: ${series.wins.red} a ${series.wins.blue} en rondas` : "Se acabó el tiempo: empate";
+    case "rounds": {
+      if (!result.winner) return "Terminó la serie";
+      const score = series ? ` ${series.wins[result.winner]} a ${series.wins[otherSide(result.winner)]}` : "";
+      return `Ganó ${SIDE_LABEL[result.winner]} la serie${score}`;
+    }
     case "stopped":
       return "Pelea detenida manualmente";
     case "error":

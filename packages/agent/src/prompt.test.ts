@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildCustomKit, KIT_LIST, kitItemTitle, KITS, type CommsMode, type Kit } from "@phack/protocol";
+import { createLlmClient } from "@phack/llm";
+import { buildCustomKit, KIT_LIST, kitItemTitle, KITS, MAX_ROUNDS, type CommsMode, type Kit } from "@phack/protocol";
 import { buildSystemPrompt } from "./prompt";
-import { kitToolNames, TOOL_NAMES } from "./tools";
+import { kitToolDefs, kitToolNames, TOOL_NAMES } from "./tools";
 
 function promptFor(kit: Kit, strategy = "Pega fuerte y no retrocedas.", comms: CommsMode = "none"): string {
   return buildSystemPrompt({
@@ -340,5 +341,88 @@ describe("buildSystemPrompt: límite de tiempo", () => {
     const prompt = buildSystemPrompt({ ...base, durationSeconds: null });
     expect(prompt).toContain("La partida no tiene límite de tiempo");
     expect(prompt).not.toContain("La partida dura");
+  });
+});
+
+describe("buildSystemPrompt: modo por rondas", () => {
+  const base = {
+    side: "red" as const,
+    username: "AgenteRojo",
+    opponentUsername: "AgenteAzul",
+    kit: KITS.classic,
+    strategy: "Pega fuerte y no retrocedas.",
+    tickMs: 1500,
+    comms: "none" as const,
+  };
+  const SERIES_LINES = [
+    "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas.",
+    "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
+    '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".',
+  ];
+  const SURRENDER_LINE = "- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente.";
+
+  it("con límite de tiempo cambia cómo termina la partida por la serie, y nada más", () => {
+    const single = buildSystemPrompt({ ...base, durationSeconds: 120 }).split("\n");
+    const rounds = buildSystemPrompt({ ...base, durationSeconds: 120, rounds: { maxRounds: MAX_ROUNDS } }).split("\n");
+    const ending = "- La partida dura 120 segundos y termina antes si alguno de los dos muere. No hay reaparición.";
+    const at = single.indexOf(ending);
+    expect(at).toBeGreaterThan(-1);
+    expect(rounds.slice(at, at + 4)).toEqual([
+      `- La partida es una serie de hasta ${MAX_ROUNDS} rondas. Una ronda termina cuando uno de los dos muere o se rinde, o cuando pasan 120 segundos: ahí la gana quien tenga más vida.`,
+      ...SERIES_LINES,
+    ]);
+    expect(rounds.join("\n")).not.toContain("No hay reaparición");
+    // Lo demás queda igual: solo cambian esa línea y la herramienta surrender.
+    const expected = [...single];
+    expected.splice(at, 1, ...rounds.slice(at, at + 4));
+    const tools = section(rounds.join("\n"), "HERRAMIENTAS");
+    expect(tools).toContain(SURRENDER_LINE);
+    expect(rounds.filter((line) => line !== SURRENDER_LINE)).toEqual(expected);
+  });
+
+  it("sin límite de tiempo no nombra ninguna duración", () => {
+    const prompt = buildSystemPrompt({ ...base, durationSeconds: null, rounds: { maxRounds: MAX_ROUNDS } });
+    expect(prompt).toContain(
+      `- La partida es una serie de hasta ${MAX_ROUNDS} rondas. Una ronda termina cuando uno de los dos muere o se rinde.\n`,
+    );
+    for (const line of SERIES_LINES) expect(prompt).toContain(line);
+    expect(prompt).not.toContain("segundos: ahí la gana");
+    expect(prompt).not.toContain("La partida no tiene límite de tiempo");
+  });
+
+  it("en una sola pelea no habla de rondas ni de rendirse", () => {
+    for (const durationSeconds of [120, null]) {
+      const prompt = buildSystemPrompt({ ...base, durationSeconds });
+      expect(prompt).toBe(buildSystemPrompt({ ...base, durationSeconds, rounds: null }));
+      expect(prompt).not.toMatch(/ronda|surrender|rind/i);
+      expect(prompt).toContain("No hay reaparición");
+    }
+  });
+
+  it("solo cuenta la mecánica: no aconseja cuándo rendirse ni cómo gastar", () => {
+    const single = buildSystemPrompt({ ...base, durationSeconds: 120 }).split("\n");
+    const added = buildSystemPrompt({ ...base, durationSeconds: 120, rounds: { maxRounds: MAX_ROUNDS } })
+      .split("\n")
+      .filter((line) => !single.includes(line))
+      .join("\n");
+    expect(added).not.toMatch(/conviene|te recomendamos|deberías|guarda|ahorra|mejor/i);
+  });
+
+  it("las líneas nuevas no cambian el estilo que elige el LLM de prueba", async () => {
+    const mock = createLlmClient({ provider: "mock", apiKeys: {} });
+    const pick = async (rounds: { maxRounds: number } | null): Promise<string | undefined> => {
+      const system = buildSystemPrompt({ ...base, durationSeconds: 120, rounds });
+      const observation = { distance: 9, health: 20, opponentHealth: 20, inventory: { iron_sword: 1, bow: 1, arrow: 16 } };
+      const response = await mock.complete({
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: JSON.stringify(observation) },
+        ],
+        tools: kitToolDefs(KITS.classic, "none", rounds !== null),
+      });
+      return response.toolCalls[0]?.name;
+    };
+    expect(await pick(null)).toBe("approach");
+    expect(await pick({ maxRounds: MAX_ROUNDS })).toBe("approach");
   });
 });

@@ -44,6 +44,8 @@ export type SystemPromptInput = {
   durationSeconds: number | null;
   /** Qué sabe del rival además de lo que ve. */
   comms: CommsMode;
+  /** Modo por rondas: la partida es una serie de hasta `maxRounds` rondas. Ausente o null = una sola pelea. */
+  rounds?: { maxRounds: number } | null;
 };
 
 const SIDE_NAMES: Record<Side, string> = { red: "rojo", blue: "azul" };
@@ -270,6 +272,25 @@ function commsSection(comms: CommsMode): string[] {
   }
 }
 
+/** Cómo termina la partida: una sola pelea o, en el modo por rondas, la serie. */
+function endingLines(input: SystemPromptInput): string[] {
+  if (!input.rounds) {
+    return [
+      input.durationSeconds === null
+        ? "- La partida no tiene límite de tiempo: sigue hasta que alguno de los dos muera o hasta que la detengan desde afuera. No hay reaparición."
+        : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
+    ];
+  }
+  const timeout =
+    input.durationSeconds === null ? "" : `, o cuando pasan ${input.durationSeconds} segundos: ahí la gana quien tenga más vida`;
+  return [
+    `- La partida es una serie de hasta ${input.rounds.maxRounds} rondas. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`,
+    "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas.",
+    "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
+    '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".',
+  ];
+}
+
 /**
  * Prompt de sistema: describe el mundo (arena, mecánicas, herramientas, kit y
  * comunicación) pero NO le fija un objetivo al agente. Qué quiere lograr lo dicen las
@@ -286,9 +307,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "LA ARENA",
     `- Un recinto cuadrado de unos ${side} x ${side} bloques, con muros de vidrio y un techo invisible: nadie puede salir.`,
-    input.durationSeconds === null
-      ? "- La partida no tiene límite de tiempo: sigue hasta que alguno de los dos muera o hasta que la detengan desde afuera. No hay reaparición."
-      : `- La partida dura ${input.durationSeconds} segundos y termina antes si alguno de los dos muere. No hay reaparición.`,
+    ...endingLines(input),
     "- Los dos tienen equipo de combate: el otro agente puede hacerte daño, y tú a él.",
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
@@ -301,6 +320,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
+    ...(input.rounds ? ["- surrender: rendirte en esta ronda; la ronda termina y la gana el otro agente."] : []),
     `Todas aceptan un argumento opcional "reason": una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.`,
     `Si respondes sin herramientas, usa también una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras.`,
     "",
