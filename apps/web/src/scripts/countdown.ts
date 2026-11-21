@@ -1,0 +1,104 @@
+/**
+ * Cuenta regresiva antes de la pelea: "3", "2", "1" y "¡Pelea!" en grande sobre el video.
+ * El servidor avisa a qué hora empieza la pelea (`countdownEndsAt`); el número sale, en
+ * cada cuadro, de esa hora menos la del instante que se ve en pantalla (videoServerNow),
+ * así va al paso de la imagen y del primer golpe.
+ */
+import { COUNTDOWN_SECONDS, type MatchState } from "@phack/protocol";
+import { byId, el } from "./dom";
+import { videoServerNow } from "./player";
+import { playCount } from "./sound";
+
+/** Cuánto se queda "¡Pelea!" en pantalla después de llegar a cero. */
+const GO_MS = 800;
+const GO_TEXT = "¡Pelea!";
+
+let holder: HTMLElement | null = null;
+let onZero: (() => void) | null = null;
+/** Hora del servidor en que la cuenta llega a cero; null = no hay cuenta en pantalla. */
+let endsAt: number | null = null;
+/** Lo que está escrito ahora ("3", "¡Pelea!"): se anima y suena solo cuando cambia. */
+let shown = "";
+/** El número más bajo que ya se mostró en esta cuenta; null si aún no se muestra ninguno. */
+let lowest: number | null = null;
+let frame: number | undefined;
+
+function hide(): void {
+  endsAt = null;
+  shown = "";
+  lowest = null;
+  if (frame !== undefined) window.cancelAnimationFrame(frame);
+  frame = undefined;
+  if (holder && !holder.hidden) {
+    holder.hidden = true;
+    holder.replaceChildren();
+  }
+}
+
+function render(): void {
+  frame = undefined;
+  if (!holder || endsAt === null) return;
+
+  const remaining = endsAt - videoServerNow();
+  if (remaining <= -GO_MS) {
+    hide();
+    return;
+  }
+
+  // Entre rondas el final de la cuenta se conoce antes de que empiece: se espera a que falte
+  // lo que dura la cuenta (3, 2, 1) para mostrarla.
+  if (remaining > COUNTDOWN_SECONDS * 1000) {
+    if (!holder.hidden) {
+      holder.hidden = true;
+      holder.replaceChildren();
+      shown = "";
+    }
+    frame = window.requestAnimationFrame(render);
+    return;
+  }
+
+  const counting = remaining > 0;
+  // Nunca más que el número inicial, aunque el estado se haya aplicado antes que la imagen.
+  let text = GO_TEXT;
+  if (counting) {
+    // La cuenta solo baja. Si la página abre (o el video vuelve) a mitad de cuenta, el
+    // instante que se ve retrocede de golpe; sin esto el número subiría y sonaría de nuevo.
+    const step = Math.min(COUNTDOWN_SECONDS, Math.ceil(remaining / 1000), lowest ?? COUNTDOWN_SECONDS);
+    lowest = step;
+    text = String(step);
+  }
+  if (text !== shown) {
+    shown = text;
+    // Un elemento nuevo por paso: así la animación de entrada parte de nuevo cada vez.
+    holder.replaceChildren(el("span", "countdown__step", text));
+    holder.dataset.step = counting ? "count" : "go";
+    holder.hidden = false;
+    if (counting) playCount();
+    else onZero?.();
+  }
+  frame = window.requestAnimationFrame(render);
+}
+
+/**
+ * `zero` se llama una vez cuando la cuenta llega a cero en pantalla: ahí suena el inicio
+ * de la pelea (main.ts cuida que no suene dos veces).
+ */
+export function initCountdown(zero: () => void): void {
+  holder = byId("countdown");
+  onZero = zero;
+}
+
+/** Con cada estado de la pelea: parte, sigue o quita la cuenta regresiva. */
+export function updateCountdown(state: Pick<MatchState, "phase" | "countdownEndsAt">): void {
+  if (state.countdownEndsAt !== null) {
+    endsAt = state.countdownEndsAt;
+  } else if (state.phase !== "running") {
+    // Sin cuenta y sin pelea: no ha partido, o se canceló o falló a medio contar.
+    hide();
+    return;
+  } else if (endsAt !== null) {
+    // La pelea ya empezó: si a la cuenta le faltaba, pasa directo a "¡Pelea!".
+    endsAt = Math.min(endsAt, videoServerNow());
+  }
+  if (endsAt !== null && frame === undefined) frame = window.requestAnimationFrame(render);
+}

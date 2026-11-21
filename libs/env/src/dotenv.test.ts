@@ -26,9 +26,9 @@ describe("parseDotEnv", () => {
 
 describe("applyDotEnv", () => {
   it("no pisa variables ya definidas y omite valores vacíos", () => {
-    const target: Record<string, string | undefined> = { LLM_PROVIDER: "openai" };
+    const target: Record<string, string | undefined> = { LLM_PROVIDER: "vercel" };
     const applied = applyDotEnv({ LLM_PROVIDER: "mock", LLM_MODEL: "", RCON_PASSWORD: "secreta" }, target);
     expect(applied).toEqual(["RCON_PASSWORD"]);
-    expect(target).toEqual({ LLM_PROVIDER: "openai", RCON_PASSWORD: "secreta" });
+    expect(target).toEqual({ LLM_PROVIDER: "vercel", RCON_PASSWORD: "secreta" });
   });
 });

@@ -2,11 +2,19 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import {
   AgentConfigSchema,
+  DEFAULT_KIT,
   DEFAULT_PROMPTS,
+  DEFAULT_SETTINGS,
+  LEGACY_SERIES_ROUNDS,
+  syncMode,
   MatchRecordSchema,
+  MatchSettingsSchema,
+  ProviderSchema,
   SIDES,
+  kitOf,
   type AgentConfig,
   type MatchRecord,
+  type MatchSettings,
   type PromptsResponse,
   type Side,
   type UpdatePromptBody,
@@ -19,18 +27,55 @@ export const MAX_HISTORY = 50;
 
 export function defaultPrompts(): PromptsResponse {
   return {
-    red: { side: "red", prompt: DEFAULT_PROMPTS.red },
-    blue: { side: "blue", prompt: DEFAULT_PROMPTS.blue },
+    red: { side: "red", prompt: DEFAULT_PROMPTS.red, kit: DEFAULT_KIT },
+    blue: { side: "blue", prompt: DEFAULT_PROMPTS.blue, kit: DEFAULT_KIT },
   };
 }
 
-/** Normaliza lo que llega del cliente: modelo vacío = sin modelo. */
+/** Normaliza lo que llega del cliente: modelo vacío = sin modelo; kit ausente o desconocido = kit por defecto. */
 export function normalizeConfig(side: Side, body: UpdatePromptBody): AgentConfig {
-  const config: AgentConfig = { side, prompt: body.prompt };
+  const config: AgentConfig = { side, prompt: body.prompt, kit: kitOf(body).id };
   if (body.provider) config.provider = body.provider;
   const model = body.model?.trim();
   if (model) config.model = model;
   return config;
+}
+
+/**
+ * Adapta una configuración guardada antes de que quedaran solo los proveedores "mock" y
+ * "vercel". "gateway" era el mismo servicio que "vercel", y los modelos de "openrouter" ya
+ * venían con el formato del gateway ("openai/gpt-…"): los dos pasan a "vercel" con su
+ * modelo. Con cualquier otro proveedor que ya no existe ("openai", "anthropic"…) se borran
+ * el proveedor y el modelo, que fuera de ese proveedor no significa nada: ese lado pasa a
+ * usar el proveedor y el modelo por defecto. El prompt se conserva siempre. Se aplica al
+ * leer, no reescribe archivos y repetirla no cambia nada.
+ * `keepModel`: para el historial, donde el modelo no se vuelve a usar y es la verdad de lo
+ * que peleó, se conserva igual.
+ */
+export function migrateStoredConfig(raw: unknown, keepModel = false): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const config = { ...(raw as Record<string, unknown>) };
+  if (config.provider === undefined || ProviderSchema.safeParse(config.provider).success) return config;
+  if (config.provider === "gateway" || config.provider === "openrouter") {
+    config.provider = "vercel";
+  } else {
+    delete config.provider;
+    if (!keepModel) delete config.model;
+  }
+  return config;
+}
+
+/** Aplica migrateStoredConfig a los dos lados de una pelea guardada (conservando los modelos). */
+function migrateStoredRecord(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  const record = raw as Record<string, unknown>;
+  const configs = record.configs;
+  if (typeof configs !== "object" || configs === null) return raw;
+  const bySide = configs as Record<string, unknown>;
+  return {
+    ...record,
+    configs: { ...bySide, red: migrateStoredConfig(bySide.red, true), blue: migrateStoredConfig(bySide.blue, true) },
+  };
 }
 
 /** Interpreta prompts.json; cualquier lado faltante o corrupto vuelve al valor por defecto. */
@@ -44,7 +89,7 @@ export function parsePrompts(raw: string): PromptsResponse {
   }
   if (typeof data !== "object" || data === null) return prompts;
   for (const side of SIDES) {
-    const parsed = AgentConfigSchema.safeParse((data as Record<string, unknown>)[side]);
+    const parsed = AgentConfigSchema.safeParse(migrateStoredConfig((data as Record<string, unknown>)[side]));
     if (parsed.success) prompts[side] = normalizeConfig(side, parsed.data);
   }
   return prompts;
@@ -62,7 +107,7 @@ export function parseMatchLines(raw: string, limit: number = MAX_HISTORY): Match
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const parsed = MatchRecordSchema.safeParse(JSON.parse(trimmed));
+      const parsed = MatchRecordSchema.safeParse(migrateStoredRecord(JSON.parse(trimmed)));
       // Map.set sobre una clave existente no cambia su orden de inserción.
       if (parsed.success) byId.set(parsed.data.id, parsed.data);
     } catch {
@@ -128,6 +173,61 @@ export class PromptStore {
   }
 }
 
+/** Interpreta settings.json; si falta o está corrupto, los ajustes por defecto. */
+export function parseSettings(raw: string): MatchSettings {
+  try {
+    const data: unknown = JSON.parse(raw);
+    const parsed = MatchSettingsSchema.safeParse(data);
+    if (!parsed.success) return { ...DEFAULT_SETTINGS };
+    // Un archivo de antes con mode "rounds" y sin rondas era una serie de 5.
+    const stored = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    if (stored.mode === "rounds" && stored.rounds === undefined) return syncMode({ ...parsed.data, rounds: LEGACY_SERIES_ROUNDS });
+    return syncMode(parsed.data);
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+/** Ajustes pendientes para la próxima pelea (modo de comunicación): en memoria + DATA_DIR/settings.json. */
+export class SettingsStore {
+  private settings: MatchSettings = { ...DEFAULT_SETTINGS };
+  private readonly file: string;
+  private writeChain: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly dataDir: string,
+    private readonly log: LogFn,
+  ) {
+    this.file = join(dataDir, "settings.json");
+  }
+
+  async load(): Promise<void> {
+    const raw = await readIfExists(this.file);
+    if (raw !== null) this.settings = parseSettings(raw);
+  }
+
+  get(): MatchSettings {
+    return structuredClone(this.settings);
+  }
+
+  async update(change: Partial<MatchSettings>): Promise<MatchSettings> {
+    this.settings = syncMode(MatchSettingsSchema.parse({ ...this.settings, ...change }));
+    const snapshot = JSON.stringify(this.settings, null, 2);
+    this.writeChain = this.writeChain.then(async () => {
+      try {
+        await mkdir(this.dataDir, { recursive: true });
+        const tmp = `${this.file}.tmp`;
+        await writeFile(tmp, snapshot, "utf8");
+        await rename(tmp, this.file);
+      } catch (err) {
+        this.log("error", `No se pudieron guardar los ajustes: ${errorMessage(err)}`);
+      }
+    });
+    await this.writeChain;
+    return this.get();
+  }
+}
+
 /** Historial de peleas: DATA_DIR/matches.jsonl + caché de las últimas 50 en memoria. */
 export class MatchStore {
   private recent: MatchRecord[] = [];
@@ -150,6 +250,36 @@ export class MatchStore {
     return structuredClone(this.recent);
   }
 
+  /**
+   * Deja el historial vacío para empezar a medir de cero. No borra nada: el archivo se
+   * mueve a DATA_DIR/archive/matches-<fecha>.jsonl (se puede recuperar a mano). Devuelve
+   * el nombre del archivo guardado, o null si no había historial.
+   */
+  async archive(now: Date = new Date()): Promise<string | null> {
+    const raw = await readIfExists(this.file);
+    this.recent = [];
+    if (raw === null || raw.trim() === "") return null;
+    const dir = join(this.dataDir, "archive");
+    await mkdir(dir, { recursive: true });
+    const name = `matches-${now.toISOString().replace(/[:.]/g, "-")}.jsonl`;
+    await rename(this.file, join(dir, name));
+    return name;
+  }
+
+  /** Todo el historial guardado (para el tablero de benchmarks), más recientes primero. */
+  async all(): Promise<MatchRecord[]> {
+    const raw = await readIfExists(this.file);
+    if (raw === null) return this.latest();
+    return parseMatchLines(raw, Number.POSITIVE_INFINITY);
+  }
+
+  /** Una pelea por id: de las recientes o, si no, del archivo completo. */
+  async find(id: string): Promise<MatchRecord | null> {
+    const recent = this.recent.find((record) => record.id === id);
+    if (recent) return structuredClone(recent);
+    return (await this.all()).find((record) => record.id === id) ?? null;
+  }
+
   async append(record: MatchRecord): Promise<void> {
     this.recent = [record, ...this.recent].slice(0, MAX_HISTORY);
     await this.writeLine(record, "No se pudo guardar la pelea en el historial");
@@ -164,7 +294,14 @@ export class MatchStore {
   async update(id: string, change: (record: MatchRecord) => MatchRecord): Promise<boolean> {
     const index = this.recent.findIndex((record) => record.id === id);
     const current = this.recent[index];
-    if (!current) return false;
+    if (!current) {
+      // Una pelea más vieja que las de la caché (p. ej. calificada desde el tablero): se
+      // corrige igual en el archivo, con una línea nueva del mismo id.
+      const old = (await this.all()).find((record) => record.id === id);
+      if (!old) return false;
+      await this.writeLine({ ...change(old), id }, "No se pudo actualizar la pelea en el historial");
+      return true;
+    }
     const updated: MatchRecord = { ...change(structuredClone(current)), id };
     this.recent = this.recent.map((record, i) => (i === index ? updated : record));
     await this.writeLine(updated, "No se pudo actualizar la pelea en el historial");

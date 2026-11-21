@@ -1,0 +1,235 @@
+---
+// Catálogo de todos los ítems de Minecraft 1.20.4, con imagen y nombre en español. Sirve
+// para escribir prompts con kit "Personalizado": dice el id de cada cosa y cuáles se pueden
+// pedir. El catálogo lo genera scripts/items/catalog.mjs; las imágenes (texturas de Mojang)
+// las copia ese mismo script a public/items/ y no van al repositorio: si faltan, la página
+// se ve igual, solo sin imágenes.
+import "@fontsource-variable/instrument-sans";
+import { CUSTOM_KIT_ITEMS } from "@phack/protocol";
+import catalog from "../../../../docs/items/minecraft-items-1.20.4.json";
+import "../styles/global.css";
+
+type CatalogItem = {
+  id: string;
+  name: string;
+  nameEs: string | null;
+  stackSize: number;
+  block: boolean;
+  texture: string | null;
+};
+
+const items = (catalog.items as CatalogItem[]).map((item) => ({
+  ...item,
+  label: item.nameEs ?? item.name,
+  inKit: Object.prototype.hasOwnProperty.call(CUSTOM_KIT_ITEMS, item.id),
+}));
+const inKit = items.filter((item) => item.inKit).length;
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#101113" />
+    <title>Ítems de Minecraft</title>
+    <meta name="description" content={`Los ${items.length} ítems de Minecraft ${catalog.version}, con su id y cuáles se pueden pedir en un kit personalizado.`} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <main class="page items-page">
+      <header class="section__head">
+        <p><a class="items-page__back" href="/">← Volver a la arena</a></p>
+        <h1 class="section__title">Ítems de Minecraft {catalog.version}</h1>
+        <p class="section__hint">
+          {items.length} ítems. Los {inKit} marcados como <strong>kit</strong> se pueden pedir en el kit
+          "Personalizado" escribiéndolos en el prompt (por nombre o por id); el resto se ignora.
+        </p>
+      </header>
+
+      <div class="items-page__filters">
+        <label class="field">
+          <span class="field__label">Buscar</span>
+          <input id="items-search" type="search" placeholder="espada, wool, cubo…" autocomplete="off" />
+        </label>
+        <label class="items-page__check">
+          <input id="items-kit" type="checkbox" />
+          Solo los que sirven en el kit personalizado
+        </label>
+        <span class="items-page__count" id="items-count" role="status">{items.length} ítems</span>
+      </div>
+
+      <ul class="items-grid" id="items-grid">
+        {
+          items.map((item) => (
+            <li
+              class="item-card"
+              data-search={`${item.id} ${item.label} ${item.name}`.toLowerCase()}
+              data-kit={item.inKit ? "1" : "0"}
+            >
+              <span class="item-card__img">
+                {item.texture && (
+                  <img src={`/items/${item.id}.png`} alt="" width="32" height="32" loading="lazy" decoding="async" onerror="this.remove()" />
+                )}
+              </span>
+              <span class="item-card__text">
+                <span class="item-card__name">{item.label}</span>
+                <code class="item-card__id">{item.id}</code>
+              </span>
+              <span class="item-card__meta">
+                {item.stackSize > 1 ? `x${item.stackSize}` : "x1"}
+                {item.inKit && <span class="item-card__kit">kit</span>}
+              </span>
+            </li>
+          ))
+        }
+      </ul>
+    </main>
+
+    <script>
+      const search = document.getElementById("items-search") as HTMLInputElement;
+      const onlyKit = document.getElementById("items-kit") as HTMLInputElement;
+      const count = document.getElementById("items-count") as HTMLElement;
+      const cards = Array.from(document.querySelectorAll<HTMLElement>("#items-grid .item-card"));
+
+      // Sin tildes: "lana roja" encuentra "Lana roja" y "pocion" encuentra "Poción".
+      const fold = (text: string): string => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+      const haystacks = cards.map((card) => fold(card.dataset.search ?? ""));
+
+      function filter(): void {
+        const words = fold(search.value).split(/\s+/).filter(Boolean);
+        let shown = 0;
+        cards.forEach((card, i) => {
+          const text = haystacks[i] ?? "";
+          const visible = (!onlyKit.checked || card.dataset.kit === "1") && words.every((word) => text.includes(word));
+          card.hidden = !visible;
+          if (visible) shown += 1;
+        });
+        count.textContent = `${shown} ítems`;
+      }
+
+      search.addEventListener("input", filter);
+      onlyKit.addEventListener("change", filter);
+    </script>
+  </body>
+</html>
+
+<style>
+  .items-page {
+    padding-bottom: 48px;
+  }
+
+  .items-page__back {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .items-page__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px 24px;
+    margin-bottom: 20px;
+  }
+
+  .items-page__filters .field {
+    flex: 1 1 260px;
+    max-width: 420px;
+  }
+
+  .items-page__filters input[type="search"] {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .items-page__check {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  .items-page__count {
+    font-size: 13px;
+    color: var(--faint);
+  }
+
+  .items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .item-card {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 10px 6px 6px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .item-card[hidden] {
+    display: none;
+  }
+
+  .item-card__img {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.25);
+  }
+
+  /* Las texturas animadas vienen como una tira vertical: se muestra el primer cuadro. */
+  .item-card__img img {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    object-position: top;
+    image-rendering: pixelated;
+  }
+
+  .item-card__text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .item-card__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .item-card__id {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 12px/1.4 var(--mono);
+    color: var(--muted);
+  }
+
+  .item-card__meta {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--faint);
+  }
+
+  .item-card__kit {
+    padding: 0 6px;
+    border: 1px solid var(--ok);
+    color: var(--ok);
+    font-size: 11px;
+  }
+</style>

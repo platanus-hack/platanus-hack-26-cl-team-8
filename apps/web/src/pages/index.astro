@@ -2,11 +2,35 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
+import {
+  COMMS_LABELS,
+  COMMS_MODES,
+  DEFAULT_COMMS,
+  DEFAULT_KIT,
+  KITS,
+  KIT_LIST,
+  MAX_HEALTH,
+  TIMER_LABELS,
+  VOICE_LABELS,
+  DEFAULT_SCENARIO,
+  HORIZONS,
+  MAX_ROUNDS,
+  RULE_IDS,
+  RULE_LABELS,
+  SCENARIOS,
+  SCENARIO_IDS,
+  SERIES_WINS,
+  SERIES_WIN_LABELS,
+} from "@phack/protocol";
+import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
 
 // Los ids generados aquí (fighter-red, prompt-blue, ...) son el contrato con
 // src/scripts/*.ts. Todo el contenido dinámico se escribe con textContent.
+// Un corazón por cada 2 puntos de vida.
+const hearts = Array.from({ length: Math.ceil(MAX_HEALTH / 2) });
+
 const sides = [
   { id: "red", label: "Rojo", bot: "AgenteRojo" },
   { id: "blue", label: "Azul", bot: "AgenteAzul" },
@@ -17,38 +41,16 @@ const sides = [
 // en global.css); `label` es el nombre para lectores de pantalla.
 const stats = [
   { id: "food", icon: "food", label: "Comida", tip: "Comida, de 0 a 20. Con la barra alta el agente recupera vida solo; comer la repone." },
-  { id: "damage", icon: "damage", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
+  { id: "damage", icon: "sword", label: "Daño hecho", tip: "Daño que este agente le ha hecho al rival en esta pelea." },
   { id: "decisions", icon: "decisions", label: "Decisiones", tip: "Decisiones: cuántas veces el modelo eligió qué hacer." },
   { id: "speed", icon: "clock", label: "Tiempo por decisión", tip: "Lo que tarda el modelo en decidir, en promedio. Un modelo lento pierde turnos." },
   { id: "cost", icon: "emerald", label: "Costo del modelo", tip: "Lo que ha costado el modelo en esta pelea." },
 ] as const;
 
-// Lo que un agente puede tener en la mano (scoreboard.ts elige cuál se ve).
-const heldItems = [
-  { id: "sword", icon: "damage" },
-  { id: "bow", icon: "bow" },
-  { id: "food", icon: "steak" },
-] as const;
-
-// Ícono de cada herramienta del agente (ver scripts/actions.ts).
-const actionIcons = [
-  { tool: "approach", icon: "forward" },
-  { tool: "attack", icon: "damage" },
-  { tool: "retreat", icon: "back" },
-  { tool: "shoot", icon: "bow" },
-  { tool: "eat", icon: "steak" },
-  { tool: "wait", icon: "pause" },
-] as const;
-
-const providers = [
-  { value: "", label: "Por defecto del servidor" },
-  { value: "mock", label: "Simulado (mock)" },
-  { value: "vercel", label: "Vercel AI Gateway" },
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "gateway", label: "Vercel AI Gateway" },
-] as const;
+// El ítem en la mano cambia en vivo: su casillero va vacío aquí y lo dibuja
+// scripts/scoreboard.ts. Lo mismo el inventario del kit de cada editor
+// (scripts/inventory.ts), que cambia con el desplegable, y las columnas de pensamientos
+// (scripts/thoughts.ts).
 ---
 
 <!doctype html>
@@ -58,7 +60,7 @@ const providers = [
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#101113" />
-    <title>Arena de prompts</title>
+    <title>Prompt Arena</title>
     <meta
       name="description"
       content="Dos agentes de IA pelean en una arena de Minecraft, cada uno guiado por un prompt. Mira la pelea en vivo, edita los prompts y descubre cuál gana."
@@ -79,7 +81,7 @@ const providers = [
       <header class="top">
         <div class="brand">
           <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
-          <h1 class="brand__title">Arena de prompts</h1>
+          <h1 class="brand__title">Prompt Arena</h1>
         </div>
         <span class="live" aria-hidden="true" data-tip="La transmisión de la arena está llegando.">En vivo</span>
         <button
@@ -109,27 +111,37 @@ const providers = [
                 <h2 class="hud__name">{side.label}</h2>
                 <span class="model-tag hud__model" id={`fighter-model-${side.id}`} hidden />
                 <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
-                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip="Vida, de 0 a 20: cada bloque de la barra son 2 puntos.">
+                <span class="hud__hp" id={`hp-value-${side.id}`} data-tip={`Vida, de 0 a ${MAX_HEALTH}: cada corazón son 2 puntos.`}>
                 –
               </span>
               </div>
+              <!-- Vida en corazones, con el mismo dibujo del juego: cada uno son 2 puntos. scoreboard.ts recorta el rojo. -->
               <div
-                class="hp"
+                class="hearts"
                 id={`hp-${side.id}`}
                 role="meter"
                 aria-label={`Vida de ${side.label}`}
                 aria-valuemin="0"
-                aria-valuemax="20"
+                aria-valuemax={MAX_HEALTH}
                 aria-valuenow="0"
-                data-level="high"
+                data-level="ok"
               >
-                <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
+                {
+                  hearts.map(() => (
+                    <span class="heart">
+                      <HeartSprite kind="container" />
+                      <span class="heart__fill">
+                        <HeartSprite kind="full" />
+                      </span>
+                    </span>
+                  ))
+                }
               </div>
               <dl class="stats">
-                <div class="slot" id={`held-${side.id}`} data-item="none" data-tip="En la mano: nada">
+                <div class="slot" id={`held-${side.id}`} data-tip="En la mano: nada.">
                   <dt class="sr-only">En la mano</dt>
                   <dd>
-                    {heldItems.map((item) => <span data-item={item.id}><PixelIcon name={item.icon} /></span>)}
+                    <span class="slot__icon" id={`held-icon-${side.id}`} />
                     <span class="sr-only" id={`held-name-${side.id}`}>nada</span>
                   </dd>
                 </div>
@@ -154,6 +166,8 @@ const providers = [
             --:--
           </div>
           <span class="phase" id="phase">Conectando…</span>
+          <!-- Modo por rondas: un cuadro por ronda, del color de quien la ganó (scoreboard.ts). -->
+          <ol class="rounds" id="rounds" hidden></ol>
         </div>
       </div>
 
@@ -163,31 +177,42 @@ const providers = [
         <p class="winner__why" id="winner-why" hidden></p>
       </div>
 
-      <!-- Qué piensa cada agente, como subtítulos que aparecen con cada novedad, y el botón de la pelea al centro. -->
-      <div class="minds">
+      <!-- Cuenta regresiva antes de la pelea ("3", "2", "1", "¡Pelea!"): la escribe scripts/countdown.ts. -->
+      <div class="countdown" id="countdown" data-step="count" aria-hidden="true" hidden></div>
+
+      <!--
+        Pensamientos en vivo: una columna por agente a cada lado del video, con sus últimos
+        pensamientos (el más nuevo abajo) y la acción que eligió con cada uno. Las llena
+        scripts/thoughts.ts. La lista cambia varias veces por segundo, así que los lectores
+        de pantalla leen solo el resumen oculto de cada columna.
+      -->
+      <div class="thoughts">
         {
           sides.map((side) => (
-            <article
-              class={`mind mind--${side.id} is-stale`}
-              id={`mind-${side.id}`}
+            <section
+              class={`thoughts__col thoughts__col--${side.id}`}
               data-side={side.id}
-              aria-label={`Agente ${side.label}`}
+              aria-label={`Pensamientos de ${side.label}`}
             >
-              <span class="sr-only">Último pensamiento</span>
-              <p class="mind__thought" id={`thought-${side.id}`}>—</p>
-              <span class="sr-only">Última acción</span>
-              <p class="mind__action" id={`action-${side.id}`} data-tool="">
-                {actionIcons.map((action) => <span data-tool={action.tool}><PixelIcon name={action.icon} /></span>)}
-                <span id={`action-label-${side.id}`}>—</span>
-                <span class="mind__result" id={`action-result-${side.id}`}></span>
+              <p class="sr-only">
+                Último pensamiento: <span id={`last-thought-${side.id}`}>—</span>
               </p>
-            </article>
+              <p class="sr-only">
+                Última acción: <span id={`last-action-${side.id}`}>—</span>
+              </p>
+              <ol class="thoughts__list" id={`thoughts-list-${side.id}`} aria-hidden="true" />
+              <div class="thoughts__thinking" id={`thinking-${side.id}`} aria-hidden="true">
+                <i /><i /><i />
+              </div>
+            </section>
           ))
         }
-        <div class="controls">
-          <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
-          <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
-        </div>
+      </div>
+
+      <!-- El botón de la pelea, abajo al centro: uno solo a la vez (iniciar o detener). -->
+      <div class="controls">
+        <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
+        <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
       </div>
     </section>
 
@@ -197,9 +222,105 @@ const providers = [
         <header class="section__head">
           <h2 class="section__title" id="prompts-title">Prompts</h2>
           <p class="section__hint">
-            Escribe cómo debe pelear cada agente. Cualquiera puede editarlos; valen desde la próxima pelea.
+            Escribe qué quiere lograr cada agente y cómo, y elige su kit. Cualquiera puede editarlos; valen desde la próxima pelea.
+            Con el kit "Personalizado", mira en <a href="/items">la lista de ítems</a> cuáles se pueden pedir.
           </p>
         </header>
+
+        <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
+        <div class="match-settings" id="settings-field">
+          <!-- Pre-ajuste: elegir uno lo carga de inmediato; si algo cambia, vuelve a "Personalizado" (scripts/presetpicker.ts). -->
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Pre-ajuste</span>
+              <select id="preset" aria-describedby="preset-description">
+                <option value="">Personalizado</option>
+              </select>
+            </label>
+            <p class="comms__description" id="preset-description"></p>
+            <p class="comms__description preset__active" id="preset-active-row" hidden>
+              <span id="preset-active"></span>
+              <button type="button" class="btn btn--small" id="preset-reset">Quitar</button>
+            </p>
+          </div>
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Rondas</span>
+              <input
+                id="rounds-count"
+                class="count-input"
+                type="number"
+                min="1"
+                max={MAX_ROUNDS}
+                step="1"
+                value="1"
+                inputmode="numeric"
+                aria-describedby="mode-description"
+              />
+            </label>
+            <p class="comms__description" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
+          </div>
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Comunicación entre agentes</span>
+              <select id="comms" aria-describedby="comms-description">
+                {COMMS_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_COMMS}>{COMMS_LABELS[mode].name}</option>)}
+              </select>
+            </label>
+            <p class="comms__description" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Límite de tiempo</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="timer" aria-describedby="timer-description" checked />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="timer-state">Encendido</span>
+              </span>
+            </label>
+            <!-- Cuánto dura, cuando el límite está encendido: una cantidad y su unidad. -->
+            <div class="duration" id="timer-duration">
+              <input
+                type="number"
+                id="timer-amount"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                aria-label="Duración de la pelea"
+                aria-describedby="timer-description"
+              />
+              <select id="timer-unit" aria-label="Unidad de la duración">
+                <option value="60">minutos</option>
+                <option value="3600">horas</option>
+              </select>
+            </div>
+            <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Voz de los agentes</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="voice-state">Apagado</span>
+              </span>
+            </label>
+            <p class="comms__description" id="voice-description">{VOICE_LABELS.off}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Juez</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="judge" aria-describedby="judge-description" />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="judge-state">Apagado</span>
+              </span>
+            </label>
+            <p class="comms__description" id="judge-description">
+              Al terminar la partida, un LLM lee la transcripción y califica a cada agente (necesita un LLM real).
+            </p>
+          </div>
+        </div>
 
         <div class="editors">
           {
@@ -208,12 +329,34 @@ const providers = [
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
+                  <!-- Espejo: trae el prompt guardado del otro lado (texto, modelo y kit). -->
+                  <button
+                    type="button"
+                    class="btn btn--small editor__copy"
+                    id={`copy-${side.id}`}
+                    data-tip={`Pone en ${side.label} el prompt, el modelo y el kit guardados de ${side.id === "red" ? "Azul" : "Rojo"}.`}
+                  >
+                    Copiar del {side.id === "red" ? "azul" : "rojo"}
+                  </button>
                 </div>
 
-                <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
+                <textarea class="editor__text" id={`prompt-${side.id}`} rows="12" spellcheck="false"></textarea>
+
+                <!-- Kit del lado: se guarda con el prompt. El inventario lo dibuja scripts/inventory.ts. -->
+                <div class="kit">
+                  <label class="field">
+                    <span class="field__label">Kit</span>
+                    <select id={`kit-${side.id}`} aria-describedby={`kit-description-${side.id}`}>
+                      {KIT_LIST.map((kit) => <option value={kit.id} selected={kit.id === DEFAULT_KIT}>{kit.name}</option>)}
+                    </select>
+                  </label>
+                  <p class="kit__description" id={`kit-description-${side.id}`}>{KITS[DEFAULT_KIT].description}</p>
+                  <div class="inv" id={`inv-${side.id}`} role="group" aria-label="Inventario del kit" />
+                </div>
+
 
                 <div class="editor__options">
-                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts sobre el catálogo. -->
+                  <!-- Selector de modelo: lo arma scripts/modelpicker.ts con la lista de modelos permitidos. -->
                   <div class="picker" id={`picker-${side.id}`}>
                     <span class="field__label" id={`picker-label-${side.id}`}>Modelo</span>
                     <button
@@ -242,30 +385,6 @@ const providers = [
                   <button type="submit" class="btn btn--save" id={`save-${side.id}`}>Guardar</button>
                 </div>
 
-                <!-- Los dos campos reales del formulario: el selector de arriba escribe aquí. -->
-                <details class="advanced">
-                  <summary>Avanzado</summary>
-                  <div class="advanced__fields">
-                    <label class="field">
-                      <span class="field__label">Proveedor</span>
-                      <select id={`provider-${side.id}`}>
-                        {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span class="field__label">Id del modelo</span>
-                      <input
-                        id={`model-${side.id}`}
-                        type="text"
-                        maxlength="100"
-                        placeholder="Por defecto del servidor"
-                        autocomplete="off"
-                        spellcheck="false"
-                      />
-                    </label>
-                  </div>
-                </details>
-
                 <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
 
                 <div class="editor__conflict" id={`conflict-${side.id}`} hidden>
@@ -279,13 +398,40 @@ const providers = [
       </section>
 
         <aside class="feed" aria-label="Eventos en vivo">
-          <h2 class="feed__title">Eventos</h2>
+          <header class="feed__head">
+            <h2 class="feed__title">Eventos</h2>
+            <a
+              class="feed__transcript"
+              id="transcript-link"
+              target="_blank"
+              rel="noopener"
+              data-tip="Todo lo que pasó en esta pelea, paso a paso: qué vio, pensó, dijo e hizo cada agente."
+              hidden
+            >
+              Ver transcripción
+            </a>
+          </header>
           <ol class="feed__list" id="feed-list" aria-live="off">
-            <li class="feed__empty">Aquí aparecerán los pensamientos, acciones y golpes de cada agente.</li>
+            <li class="feed__empty">Aquí aparecerá lo que cada agente piensa, dice y hace.</li>
           </ol>
           <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
         </aside>
       </div>
+      <!-- Las últimas peleas y los prompts marcados: lo arma scripts/history.ts. -->
+      <!-- Parte plegado: el historial es largo y lo de arriba (video y prompts) es lo principal. -->
+      <details class="history" id="history">
+        <summary class="history__toggle">
+          <h2 class="section__title" id="history-title">Historial</h2>
+          <span class="history__count" id="history-count"></span>
+        </summary>
+        <p class="section__hint history__hint">
+          Las últimas peleas y los prompts que alguien marcó. Abre una pelea para ver el prompt de cada lado; márcalo para
+          guardarlo con etiquetas y una nota, y después compararlo con otros o cargarlo de nuevo en un editor.
+        </p>
+        <div class="history__filters" id="history-filters" role="group" aria-label="Filtrar el historial"></div>
+        <p class="history__summary" id="history-summary" hidden></p>
+        <ol class="history__list" id="history-list"></ol>
+      </details>
     </main>
 
     <footer class="footer">

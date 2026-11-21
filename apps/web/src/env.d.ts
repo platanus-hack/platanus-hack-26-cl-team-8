@@ -7,6 +7,11 @@ interface ImportMetaEnv {
   readonly PUBLIC_HLS_URL?: string;
   /** "1" = permite el modo maqueta (`?mock`) también en el sitio compilado. */
   readonly PUBLIC_MOCK?: string;
+  /**
+   * Ms entre que algo pasa en el juego y la hora del cuadro que lo muestra (cliente de
+   * Minecraft + captura + codificador). Por defecto 400; ver PIPELINE_MS en scripts/player.ts.
+   */
+  readonly PUBLIC_STREAM_PIPELINE_MS?: string;
 }
 
 interface ImportMeta {

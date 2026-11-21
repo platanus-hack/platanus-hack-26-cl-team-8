@@ -77,4 +77,17 @@ describe("geometry", () => {
     expect(Number.isFinite(target.z)).toBe(true);
     expect(distanceXZ(target, center)).toBeLessThanOrEqual(radius);
   });
+
+  it("con un paso largo cruza la arena sin salirse (escape con perla)", () => {
+    const target = retreatTarget({
+      self: { x: 6, y: 65, z: 0 },
+      opponent: { x: 8, y: 65, z: 0 },
+      center,
+      radius,
+      step: 12,
+    });
+    expect(target.x).toBeCloseTo(-6);
+    expect(target.z).toBeCloseTo(0);
+    expect(distanceXZ(target, center)).toBeLessThanOrEqual(radius - 1.5 + 1e-9);
+  });
 });

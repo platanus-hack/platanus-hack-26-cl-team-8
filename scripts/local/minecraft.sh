@@ -140,7 +140,7 @@ cat > server.properties <<EOF
 server-ip=127.0.0.1
 server-port=$MC_PORT
 online-mode=false
-motd=Arena de prompts - Platanus Hackathon 2026 (local)
+motd=Prompt Arena - Platanus Hackathon 2026 (local)
 enable-rcon=true
 rcon.port=$RCON_PORT
 rcon.password=$RCON_PASSWORD

@@ -1,4 +1,4 @@
-# Arena de prompts — stack completo en un solo servidor.
+# Prompt Arena — stack completo en un solo servidor.
 #
 #   docker compose up -d --build                    # todo menos el túnel
 #   docker compose --profile tunnel up -d --build   # + Cloudflare Tunnel
@@ -25,13 +25,11 @@ x-node-env: &node-env
   LLM_PROVIDER: ${LLM_PROVIDER:-mock}
   LLM_MODEL: ${LLM_MODEL:-}
   VERCEL_API_KEY: ${VERCEL_API_KEY:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-  AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
   ORCHESTRATOR_PORT: "8787"
   MATCH_DURATION_SECONDS: ${MATCH_DURATION_SECONDS:-180}
+  MATCH_MAX_SECONDS: ${MATCH_MAX_SECONDS:-1800}
   AGENT_TICK_MS: ${AGENT_TICK_MS:-1500}
+  AGENT_OBSERVATION_RADIUS: ${AGENT_OBSERVATION_RADIUS:-16}
   DATA_DIR: /data
   CAMERA_USERNAME: ${CAMERA_USERNAME:-Camara}
   CAMERA_WIDTH: ${CAMERA_WIDTH:-1280}
@@ -68,7 +66,7 @@ services:
       # Heap de la JVM. El límite del contenedor (mem_limit) deja margen para el resto de la JVM.
       MEMORY: ${MC_MEMORY:-2G}
       TZ: ${TZ:-America/Santiago}
-      MOTD: "Arena de prompts - Platanus Hackathon 2026"
+      MOTD: "Prompt Arena - Platanus Hackathon 2026"
       # Los bots entran con nombre de usuario plano, sin cuenta de Mojang.
       ONLINE_MODE: "FALSE"
       ENABLE_RCON: "true"
@@ -153,6 +151,17 @@ services:
     restart: unless-stopped
     environment:
       <<: *node-env
+      # Voz de los agentes (ElevenLabs). Solo el orquestador las necesita: la clave no llega
+      # a la cámara. Sin clave o sin las dos voces, los mensajes solo se leen.
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_RED: ${ELEVENLABS_VOICE_RED:-}
+      ELEVENLABS_VOICE_BLUE: ${ELEVENLABS_VOICE_BLUE:-}
+      ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_flash_v2_5}
+      ELEVENLABS_SPEED: ${ELEVENLABS_SPEED:-1.1}
+      ELEVENLABS_OUTPUT_FORMAT: ${ELEVENLABS_OUTPUT_FORMAT:-mp3_44100_64}
+      ELEVENLABS_LANGUAGE: ${ELEVENLABS_LANGUAGE:-}
+      VOICE_MAX_CHARS: ${VOICE_MAX_CHARS:-300}
+      VOICE_MIN_CREDITS_LEFT: ${VOICE_MIN_CREDITS_LEFT:-5000}
     volumes:
       - orchestrator-data:/data
     depends_on:
@@ -209,6 +218,8 @@ services:
         # Vacío = mismo origen (/api y /live detrás de Caddy). Ver .env.example.
         PUBLIC_API_BASE: ${PUBLIC_API_BASE:-}
         PUBLIC_HLS_URL: ${PUBLIC_HLS_URL:-/live/arena/index.m3u8}
+        # Calibración de la sincronía video/datos, en ms. Vacío = 400 (ver docs/handoff/medir-sincronia.md).
+        PUBLIC_STREAM_PIPELINE_MS: ${PUBLIC_STREAM_PIPELINE_MS:-}
     restart: unless-stopped
     volumes:
       # El Caddyfile del repo manda aunque la imagen traiga uno propio:

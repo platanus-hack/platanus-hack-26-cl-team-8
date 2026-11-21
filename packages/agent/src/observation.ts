@@ -1,6 +1,23 @@
+import type { ConversationLine } from "./comms";
 import { distance3, distanceToWall, round1, type Vec3Like } from "./geometry";
+import type { Bounds, ConstructionPlan } from "./construction";
+import type { describeResources, ResourceItem } from "./resources";
+import type { SpatialSnapshot } from "./spatial";
+import { seriesObservation, type SeriesObservation, type SeriesView } from "./rounds";
 
-export type ObservationInput = {
+type SpatialContext = {
+  world?: SpatialSnapshot;
+  buildBounds?: Bounds;
+  resources?: ReturnType<typeof describeResources>;
+  equipment?: Record<string, ResourceItem | null>;
+  motion?: { velocity: Vec3Like; yaw: number; pitch: number; onGround: boolean };
+  effects?: { id: number; name: string; amplifier: number; durationTicks: number }[];
+  opponentState?: { position: Vec3Like; velocity: Vec3Like; yaw: number; pitch: number; lineOfSight: boolean; equipment: ({ name: string; count: number } | null)[] } | null;
+  construction?: ReturnType<ConstructionPlan["snapshot"]> | null;
+  nearbyEntities?: { id: number; name: string; type: string; position: Vec3Like; velocity: Vec3Like; item?: { name: string; count: number } }[];
+};
+
+export type ObservationInput = SpatialContext & {
   /** Epoch ms actual. */
   now: number;
   /** Epoch ms en que partió el bucle de decisiones. */
@@ -11,12 +28,27 @@ export type ObservationInput = {
     food: number;
     heldItem: string | null;
     inventory: { name: string; count: number }[];
+    /** Vida extra en corazones amarillos (ausente o 0 = no tiene). */
+    absorption?: number;
   };
   /** null si el rival no está a la vista. */
   opponent: { position: Vec3Like; health: number | null } | null;
   arena: { center: Vec3Like; radius: number };
   currentAction: string;
   lastActionResult: string;
+  /** Herramientas que siguen en cola después de la acción actual, en orden. */
+  queuedActions?: string[];
+  /** Epoch ms desde el que se puede lanzar otra perla (ausente o pasado = ya se puede). */
+  pearlReadyAt?: number;
+  /** Lo que se ve de los bloques alrededor (ver Observation). */
+  terrain?: { height: number; blocksBetween: number; enclosed: boolean };
+  /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
+  rivalThoughts?: string[];
+  rivalMessages?: string[];
+  /** Modo "chat": últimos mensajes entre los dos, el más viejo primero. */
+  conversation?: ConversationLine[];
+  /** Modo por rondas: cómo va la serie. Ausente en una sola pelea. */
+  series?: SeriesView | null;
 };
 
 /**
@@ -24,7 +56,7 @@ export type ObservationInput = {
  * mensaje "user". Los campos distance / health / opponentHealth son contrato
  * (el LLM de prueba "mock" depende de ellos).
  */
-export type Observation = {
+export type Observation = SpatialContext & {
   secondsElapsed: number;
   health: number;
   food: number;
@@ -39,10 +71,43 @@ export type Observation = {
   inventory: Record<string, number>;
   currentAction: string;
   lastActionResult: string;
-};
+  /**
+   * Herramientas que esperan su turno después de la acción actual, en orden (las que
+   * quedan de una respuesta que llamó varias). Solo aparece si queda alguna.
+   */
+  queuedActions?: string[];
+  /** Segundos que faltan para poder lanzar otra perla. Solo aparece mientras hay recarga. */
+  pearlCooldown?: number;
+  /** Altura de tus pies sobre el piso de la arena. Solo aparece si estás arriba de algo. */
+  height?: number;
+  /** Bloques colocados en la línea recta entre tú y el rival. Solo aparece si hay alguno. */
+  blocksBetween?: number;
+  /** true si tienes bloques a los cuatro lados (estás encerrado). Solo aparece en ese caso. */
+  enclosed?: boolean;
+  /** Modo "thoughts": razonamientos del rival desde tu decisión anterior (el más nuevo al final). */
+  rivalThoughts?: string[];
+  /** Modo "chat": mensajes que te mandó el rival desde tu decisión anterior (el más nuevo al final). */
+  rivalMessages?: string[];
+  /**
+   * Modo "chat": los últimos mensajes que se mandaron los dos ("tú" = este agente), el más
+   * viejo primero. El historial de turnos que ve el LLM es corto; esto no se pierde con él.
+   */
+  conversation?: ConversationLine[];
+  /**
+   * Vida extra en corazones amarillos (la da la manzana dorada y no cuenta en `health`).
+   * Solo aparece mientras queda alguna: comer otra manzana no la suma, solo la renueva.
+   */
+  absorption?: number;
+} & Partial<SeriesObservation>;
 
 function roundVec(v: Vec3Like): Vec3Like {
   return { x: round1(v.x), y: round1(v.y), z: round1(v.z) };
+}
+
+/** Segundos (un decimal) que faltan para `readyAt`; 0 si ya pasó o no hay recarga. */
+function cooldownSeconds(readyAt: number | undefined, now: number): number {
+  if (readyAt === undefined || !Number.isFinite(readyAt)) return 0;
+  return Math.max(0, round1((readyAt - now) / 1000));
 }
 
 export function summarizeInventory(items: { name: string; count: number }[]): Record<string, number> {
@@ -55,12 +120,13 @@ export function summarizeInventory(items: { name: string; count: number }[]): Re
 
 export function buildObservation(input: ObservationInput): Observation {
   const { self, opponent, arena } = input;
-  return {
+  const pearlCooldown = cooldownSeconds(input.pearlReadyAt, input.now);
+  const observation: Observation = {
     secondsElapsed: Math.max(0, Math.round((input.now - input.startedAt) / 1000)),
     health: round1(self.health),
     food: round1(self.food),
     position: roundVec(self.position),
-    opponentVisible: opponent !== null,
+    opponentVisible: opponent !== null && (input.opponentState?.lineOfSight ?? true),
     distance: opponent ? round1(distance3(self.position, opponent.position)) : null,
     opponentHealth: opponent && opponent.health !== null ? round1(opponent.health) : null,
     opponentRelative: opponent
@@ -76,4 +142,33 @@ export function buildObservation(input: ObservationInput): Observation {
     currentAction: input.currentAction,
     lastActionResult: input.lastActionResult,
   };
+  for (const key of ["world", "buildBounds", "resources", "equipment", "motion", "effects", "opponentState", "construction", "nearbyEntities"] as const) {
+    if (input[key] !== undefined) Object.assign(observation, { [key]: input[key] });
+  }
+  // Las recargas solo se mandan mientras corren: la observación se repite varias veces en
+  // el historial y conviene que sea corta.
+  if (input.queuedActions && input.queuedActions.length > 0) observation.queuedActions = [...input.queuedActions];
+  if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
+  // Lo del terreno, igual: solo cuando dice algo (casi siempre estás en el piso, sin bloques cerca).
+  const terrain = input.terrain;
+  if (terrain) {
+    if (terrain.height >= 0.5) observation.height = round1(terrain.height);
+    if (terrain.blocksBetween > 0) observation.blocksBetween = terrain.blocksBetween;
+    if (terrain.enclosed) observation.enclosed = true;
+  }
+  // Igual que las recargas: solo aparecen cuando traen algo nuevo.
+  if (input.rivalThoughts && input.rivalThoughts.length > 0) observation.rivalThoughts = [...input.rivalThoughts];
+  if (input.rivalMessages && input.rivalMessages.length > 0) observation.rivalMessages = [...input.rivalMessages];
+  if (input.conversation && input.conversation.length > 0) {
+    observation.conversation = input.conversation.map((line) => ({ ...line }));
+  }
+  // Igual con los corazones amarillos: solo los tiene quien acaba de comer una manzana dorada.
+  const absorption = self.absorption;
+  if (absorption !== undefined && Number.isFinite(absorption) && absorption > 0) {
+    // Nunca 0 mientras quede algo, para que "aparece el campo" siempre signifique "tienes".
+    observation.absorption = Math.max(0.1, round1(absorption));
+  }
+  // Modo por rondas: en qué ronda va y cuántas ganó, perdió y empató.
+  if (input.series) Object.assign(observation, seriesObservation(input.series));
+  return observation;
 }

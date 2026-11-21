@@ -14,6 +14,7 @@ import type { Env } from "@phack/env";
 import { createLlmClient, type GatewayRouting } from "@phack/llm";
 import {
   BENCHMARK_PROMPT,
+  DEFAULT_SETTINGS,
   type FrozenModel,
   type MatchAttempt,
   type MatchSpec,
@@ -83,6 +84,8 @@ export function classifyOutcome(
   const winnerSide = outcome.result.winner;
   const winner = winnerSide === "red" ? spec.red : winnerSide === "blue" ? spec.blue : null;
   const reason = outcome.result.reason;
+  // Las peleas del torneo son sueltas: un resultado "por rondas" no debería ocurrir.
+  if (reason === "rounds") return { status: "infra", error: "resultado por rondas en una pelea suelta" };
   return { status: "valid", outcome: { winner, reason: winner === null ? "draw" : reason } };
 }
 
@@ -182,7 +185,12 @@ export async function createRealMatchManager(
     rcon,
     hub: NOOP_HUB,
     prompts: { get: () => defaultPrompts() },
+    // runOnce fija sus propios ajustes (ver tournamentSettings); estos solo cubren start().
+    settings: { get: () => DEFAULT_SETTINGS },
     history: { append: async () => {}, update: async () => false },
+    // Sin web: ni transcripciones ni lista de permitidos (los modelos del torneo ya vienen congelados).
+    transcripts: { append: () => {} },
+    models: { isAllowed: () => true },
     createFighter,
     createLlmClient,
     log,

@@ -3,7 +3,7 @@
 # con el stack ya levantado (docker compose up -d --build).
 #
 # Revisa cada eslabón de la cadena e imprime una línea PASS/FAIL por cada uno:
-#   contenedores -> RCON -> /api/health -> /api/state -> websocket -> HLS -> pelea completa
+#   contenedores -> RCON -> /api/health -> /api/state -> /api/models -> websocket -> HLS -> pelea completa
 #
 # Uso:
 #   bash scripts/smoke.sh
@@ -12,7 +12,8 @@
 #   BASE_URL            URL del sitio (por defecto http://127.0.0.1:$WEB_PORT, WEB_PORT leído de .env o 8080)
 #   SMOKE_SKIP_MATCH    1 = no correr la pelea de prueba
 #   SMOKE_FORCE_MOCK    1 = antes de la pelea, PISA los prompts de ambos lados con uno de
-#                       prueba y proveedor "mock" (ojo: es la sala pública, todos lo ven)
+#                       prueba, proveedor "mock" y el kit clásico (ojo: es la sala pública,
+#                       todos lo ven)
 #   SMOKE_MATCH_TIMEOUT segundos máximos de espera de la pelea
 #                       (por defecto MATCH_DURATION_SECONDS del orquestador + 120)
 #   SMOKE_HLS_TIMEOUT   segundos máximos de espera del video (por defecto 90)
@@ -94,11 +95,11 @@ body_snippet() {
   head -c 300 "$BODY_FILE" | tr '\n' ' ' || true
 }
 
-echo "Arena de prompts — verificación en ${BASE_URL}"
+echo "Prompt Arena — verificación en ${BASE_URL}"
 echo
 
 # ---------------------------------------------------------------------------
-echo "[1/7] Contenedores"
+echo "[1/8] Contenedores"
 # servicio:tiene_healthcheck
 for entry in minecraft:yes mediamtx:no orchestrator:yes camera:no web:yes; do
   svc="${entry%%:*}"
@@ -120,7 +121,7 @@ for entry in minecraft:yes mediamtx:no orchestrator:yes camera:no web:yes; do
 done
 
 # ---------------------------------------------------------------------------
-echo "[2/7] RCON de Minecraft"
+echo "[2/8] RCON de Minecraft"
 # rcon-cli viene en la imagen de itzg y usa la contraseña del propio contenedor.
 rcon_out="$(docker compose exec -T minecraft rcon-cli list 2>&1 || true)"
 if echo "$rcon_out" | grep -qi "players online"; then
@@ -130,7 +131,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[3/7] API: /api/health"
+echo "[3/8] API: /api/health"
 code="$(http_get "$BASE_URL/api/health")"
 if [ "$code" = "200" ] && grep -q '"ok"' "$BODY_FILE"; then
   pass "/api/health -> 200 $(body_snippet)"
@@ -139,7 +140,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[4/7] API: /api/state"
+echo "[4/8] API: /api/state"
 code="$(http_get "$BASE_URL/api/state")"
 phase="$(json_string phase)"
 if [ "$code" = "200" ] && [ -n "$phase" ]; then
@@ -149,7 +150,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[5/7] Websocket: /api/ws"
+echo "[5/8] API: /api/models"
+# La lista de modelos que la web deja elegir. Nunca debe venir vacía: si el orquestador
+# no pudo descargar el catálogo, responde su lista fija (source=fallback).
+code="$(http_get "$BASE_URL/api/models")"
+# Cada modelo trae un "inputPrice": contarlos es contar modelos (sin jq).
+models_count="$(grep -o '"inputPrice"' "$BODY_FILE" | wc -l | tr -d '[:space:]' || true)"
+models_count="${models_count:-0}"
+models_source="$(json_string source)"
+if [ "$code" = "200" ] && [ "$models_count" -gt 0 ]; then
+  pass "/api/models -> 200 ($models_count modelos, source=${models_source:-?})"
+  if [ "$models_source" = "fallback" ]; then
+    warn "/api/models usa la lista fija: el orquestador no pudo descargar el catálogo de modelos (ver: docker compose logs --tail 50 orchestrator)"
+  fi
+elif [ "$code" = "200" ]; then
+  fail "/api/models -> 200 pero la lista de modelos viene vacía: $(body_snippet)"
+else
+  fail "/api/models -> HTTP $code $(body_snippet)"
+fi
+
+# ---------------------------------------------------------------------------
+echo "[6/8] Websocket: /api/ws"
 # Un 101 es suficiente: después curl se queda esperando y lo corta --max-time.
 ws_code="$(curl -s -o /dev/null -w '%{http_code}' --http1.1 --max-time 4 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
@@ -162,7 +183,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[6/7] Video HLS: /live/arena/index.m3u8"
+echo "[7/8] Video HLS: /live/arena/index.m3u8"
 hls_url="$BASE_URL/live/arena/index.m3u8"
 hls_ok=0
 hls_code="000"
@@ -217,7 +238,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "[7/7] Pelea completa"
+echo "[8/8] Pelea completa"
 if [ "${SMOKE_SKIP_MATCH:-0}" = "1" ]; then
   info "omitida (SMOKE_SKIP_MATCH=1)"
 else
@@ -241,9 +262,9 @@ else
   else
     if [ "${SMOKE_FORCE_MOCK:-0}" = "1" ]; then
       for side in red blue; do
-        code="$(http_send PUT "$BASE_URL/api/prompts/$side" '{"prompt":"Prueba de humo: acércate al rival y atácalo.","provider":"mock"}')"
+        code="$(http_send PUT "$BASE_URL/api/prompts/$side" '{"prompt":"Prueba de humo: acércate al rival y atácalo.","provider":"mock","kit":"classic"}')"
         if [ "$code" = "200" ]; then
-          pass "prompt de $side fijado a proveedor mock"
+          pass "prompt de $side fijado a proveedor mock y kit clásico"
         else
           fail "PUT /api/prompts/$side -> HTTP $code $(body_snippet)"
         fi

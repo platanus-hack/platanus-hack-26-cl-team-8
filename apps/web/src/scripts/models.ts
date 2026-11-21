@@ -46,17 +46,17 @@ const BRANDS = {
 
 type BrandId = keyof typeof BRANDS;
 
-/** Prefijo "creador/" de los ids de Vercel AI Gateway y OpenRouter. */
+/**
+ * Prefijo "creador/" de los ids de Vercel AI Gateway. La marca es de quien hizo el modelo,
+ * no de por dónde se lo llama: la conexión es siempre la misma.
+ */
 const CREATOR_BRAND: Record<string, BrandId> = {
   anthropic: "anthropic",
   openai: "openai",
   google: "google",
   meta: "meta",
-  "meta-llama": "meta",
   xai: "xai",
-  "x-ai": "xai",
   mistral: "mistral",
-  mistralai: "mistral",
   deepseek: "deepseek",
   spacexai: "xai",
   alibaba: "alibaba",
@@ -68,7 +68,7 @@ const CREATOR_BRAND: Record<string, BrandId> = {
   cohere: "cohere",
 };
 
-/** Para ids sin prefijo (API directa de un laboratorio): se reconoce por el nombre. */
+/** Para ids sin prefijo (peleas guardadas antes de usar solo Vercel): se reconoce por el nombre. */
 const NAME_BRAND: [RegExp, BrandId][] = [
   [/^claude/, "anthropic"],
   [/^(gpt|chatgpt|o\d)/, "openai"],
@@ -82,10 +82,6 @@ const NAME_BRAND: [RegExp, BrandId][] = [
 const PROVIDER_LABEL: Record<Provider, string> = {
   mock: "Simulado",
   vercel: "Vercel AI Gateway",
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  openrouter: "OpenRouter",
-  gateway: "Vercel AI Gateway",
 };
 
 export type ModelInfo = {
@@ -96,15 +92,13 @@ export type ModelInfo = {
   brand: Brand | null;
 };
 
-function brandFor(provider: Provider | undefined, model: string): Brand | null {
+function brandFor(model: string): Brand | null {
   const id = model.toLowerCase();
   const slash = id.indexOf("/");
   if (slash > 0) {
     const creator = CREATOR_BRAND[id.slice(0, slash)];
     return creator ? BRANDS[creator] : null;
   }
-  if (provider === "anthropic") return BRANDS.anthropic;
-  if (provider === "openai") return BRANDS.openai;
   for (const [pattern, brand] of NAME_BRAND) {
     if (pattern.test(id)) return BRANDS[brand];
   }
@@ -140,6 +134,11 @@ export function onDefaultsChange(listener: () => void): void {
   listeners.push(listener);
 }
 
+/** Los valores por defecto del servidor; null mientras no llegan. */
+export function getDefaults(): ServerDefaults | null {
+  return defaults;
+}
+
 export function setDefaults(next: ServerDefaults): void {
   defaults = next;
   for (const listener of listeners) listener();
@@ -159,28 +158,43 @@ export function resolveModel(config: Pick<AgentConfig, "provider" | "model">): M
     return { name: PROVIDER_LABEL[provider], detail: "Modelo por defecto del proveedor", brand: null };
   }
   const detail = provider ? `${PROVIDER_LABEL[provider]} · ${model}` : model;
-  return { name: prettyModel(model), detail, brand: brandFor(provider, model) };
-}
-
-/**
- * Proveedor con el que se pide un modelo del catálogo de Vercel AI Gateway (ids
- * "creador/modelo"): el del servidor si ya es de ese tipo; si no, "vercel".
- */
-export function gatewayProvider(): Provider {
-  const provider = defaults?.provider;
-  return provider === "vercel" || provider === "gateway" || provider === "openrouter" ? provider : "vercel";
+  return { name: prettyModel(model), detail, brand: brandFor(model) };
 }
 
 /** Un modelo del catálogo, para listarlo: nombre oficial si se conoce, y su marca. */
 export function describeModel(id: string, name?: string): ModelInfo {
-  return { name: name?.trim() || prettyModel(id), detail: id, brand: brandFor(undefined, id) };
+  return { name: name?.trim() || prettyModel(id), detail: id, brand: brandFor(id) };
 }
 
 // ---------- Dibujo ----------
 
+let iconCopies = 0;
+
+/**
+ * Algunos logos traen degradados con un id fijo. Cada copia del logo repetiría ese id, y
+ * `url(#id)` apunta a la primera copia de la página: si esa está oculta (un selector
+ * cerrado), las demás quedan sin color. Cada copia lleva sus propios ids.
+ */
+function uniqueIds(svg: Element): void {
+  const withId = Array.from(svg.querySelectorAll("[id]"));
+  if (withId.length === 0) return;
+  iconCopies += 1;
+  const renamed = new Map(withId.map((node) => [node.id, `${node.id}-c${iconCopies}`]));
+  for (const node of withId) node.id = renamed.get(node.id) ?? node.id;
+  for (const node of [svg, ...Array.from(svg.querySelectorAll("*"))]) {
+    for (const attribute of Array.from(node.attributes)) {
+      if (!attribute.value.includes("#")) continue;
+      let value = attribute.value;
+      for (const [from, to] of renamed) value = value.split(`#${from}`).join(`#${to}`);
+      if (value !== attribute.value) node.setAttribute(attribute.name, value);
+    }
+  }
+}
+
 function iconNode(svg: string): Element | null {
   const parsed = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
   if (parsed.nodeName !== "svg") return null;
+  uniqueIds(parsed);
   parsed.setAttribute("aria-hidden", "true");
   parsed.removeAttribute("style");
   parsed.querySelector("title")?.remove();

@@ -9,32 +9,68 @@
  *   /?mock&signal=off   igual, pero con el reproductor en "Sin señal"
  *   /?mock&static       sin el bucle de golpes y pensamientos (todo quieto)
  *   /?mock&delay=4000   simula un video atrasado 4 s: el marcador espera ese tiempo
+ *   /?mock&comms=chat   los agentes se hablan (también comms=thoughts)
+ *   /?mock&comms=chat&voice=on   y además se oyen: habla el sintetizador del navegador
+ *                       (hay que encender el sonido de la página)
+ *   /?mock&timer=off    pelea sin límite de tiempo: el reloj cuenta hacia arriba
+ *   /?mock&mode=rounds  serie por rondas: va en la ronda 3, con una ganada por lado
+ *   /?mock=intermission la pausa entre dos rondas, con el cartel de la ronda que terminó
  *
  * Reemplaza las tres entradas de datos de la página: la API HTTP (api.ts), el
  * websocket (socket.ts) y el video (player.ts). Los botones "Iniciar pelea" y
  * "Detener" cambian de fase localmente, para recorrer todos los estados de la
- * interfaz. Nada se guarda: al recargar vuelve al estado inicial.
+ * interfaz; al iniciar, la pelea pasa por la preparación y la cuenta regresiva como
+ * en el servidor. Nada se guarda: al recargar vuelve al estado inicial.
  *
  * Este módulo se carga con import() dinámico, así que no pesa en el sitio real.
  */
 import {
   AGENT_USERNAMES,
   API_ROUTES,
+  MAX_HEALTH,
+  COUNTDOWN_SECONDS,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
+  UpdateSettingsBodySchema,
+  kitOf,
+  type AgentConfig,
   type AgentStatus,
+  type AllowedModel,
   type ArenaEvent,
+  type KitItem,
+  type KitSlot,
   type MatchPhase,
   type MatchResult,
+  type MatchSettings,
   type MatchState,
+  type ModelsResponse,
   type PromptsResponse,
   type ServerDefaults,
   type Side,
+  type TranscriptEntry,
+  formatTranscript,
+  FlagBodySchema,
+  DEFAULT_PROMPTS,
+  DEFAULT_SETTINGS,
+  BENCH_PRESETS,
+  SUITE_ALL,
+  findPreset,
+  presetSettings,
+  type SuiteStatus,
+  LEGACY_SERIES_ROUNDS,
+  ScenarioIdSchema,
+  normalizeTags,
+  type FlaggedPrompt,
+  type MatchRecord,
+  MAX_ROUNDS,
+  type Series,
 } from "@phack/protocol";
 
 const MATCH_DURATION_MS = 180_000;
 /** Cuánto lleva la pelea "en curso" al abrir la página. */
 const ELAPSED_MS = 72_000;
+/** Cuánto "tarda" en prepararse la arena antes de que parta la cuenta regresiva. */
+const PREPARE_MS = 1500;
 
 const params = new URLSearchParams(window.location.search);
 
@@ -43,38 +79,112 @@ export const MOCK_VIDEO_DELAY_MS = Math.max(0, Number(params.get("delay")) || 0)
 
 // ---------- Prompts ----------
 
+// Cada lado con un kit distinto, y entre los dos usan las herramientas que no tiene el
+// kit clásico: la perla (Rojo) y el muro (Azul).
 const prompts: PromptsResponse = {
   red: {
     side: "red",
     prompt:
-      "Eres un berserker. Corre directo hacia el rival y no dejes de golpear con la espada. " +
+      "Eres un berserker. Cáele encima al rival con una perla y no dejes de golpear con la espada. " +
       "Nunca retrocedas. Come solo si tu vida baja de 6 y el rival está a más de 5 bloques.",
-    provider: "gateway",
+    provider: "vercel",
     model: "anthropic/claude-haiku-5.5",
+    kit: "ender",
   },
   blue: {
     side: "blue",
     prompt:
       "Eres un francotirador paciente. Mantén al menos 8 bloques de distancia y dispara con el arco. " +
-      "Si el rival se acerca a menos de 4 bloques, aléjate en círculos. Remata cuerpo a cuerpo solo " +
+      "Si el rival se acerca a menos de 4 bloques, levanta un muro y aléjate. Remata cuerpo a cuerpo solo " +
       "si le queda menos de 5 de vida.",
-    provider: "gateway",
+    provider: "vercel",
     model: "openai/gpt-6-luna",
+    kit: "builder",
   },
+};
+
+/**
+ * Ajustes pendientes; con ?comms=chat o ?comms=thoughts la maqueta arranca en ese modo,
+ * con ?timer=off, sin límite de tiempo, con ?mode=rounds, en una serie por rondas, y con
+ * ?voice=on, con la voz de los agentes encendida.
+ */
+const settings: MatchSettings = {
+  ...DEFAULT_SETTINGS,
+  comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
+  timer: params.get("timer") !== "off",
+  timerSeconds: null,
+  mode: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? "rounds" : "single",
+  // El formato sale de las rondas: ?mode=rounds es una serie de 5.
+  rounds: params.get("mode") === "rounds" || params.get("mock") === "intermission" ? LEGACY_SERIES_ROUNDS : 1,
+  voice: params.get("voice") === "on",
 };
 
 /** Lo que respondería /api/defaults: se usa cuando un agente no elige proveedor o modelo. */
 const defaults: ServerDefaults = {
-  provider: "gateway",
+  provider: "vercel",
   models: {
     mock: "mock-scripted",
     vercel: "deepseek/deepseek-v4.1-flash-1017-fast",
-    openai: "gpt-6-luna",
-    anthropic: "claude-haiku-5-5",
-    openrouter: "openai/gpt-6-luna",
-    gateway: "anthropic/claude-haiku-5.5",
   },
+  matchDurationSeconds: MATCH_DURATION_MS / 1000,
+  // La maqueta no tiene ElevenLabs: voice.ts habla con el sintetizador del navegador.
+  voice: { available: true },
 };
+
+/** El precio viaja en dólares por token; aquí se escribe por millón, que es como se lee. */
+function priced(id: string, name: string, inputPerMillion: number, outputPerMillion: number): AllowedModel {
+  return { id, name, inputPrice: inputPerMillion / 1_000_000, outputPrice: outputPerMillion / 1_000_000 };
+}
+
+/** Lo que respondería /api/models: una lista corta y fija de modelos permitidos, con su precio. */
+const models: ModelsResponse = {
+  models: [
+    priced("deepseek/deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast", 0.6, 2.4),
+    priced("anthropic/claude-haiku-5.5", "Claude Haiku 5.5", 0.1, 0.5),
+    priced("openai/gpt-6-luna", "GPT-6 Luna", 0.1, 0.5),
+    priced("google/gemini-3.8-flash", "Gemini 3.8 Flash", 0.75, 3.75),
+    priced("meta/muse-ember", "Muse Ember", 0.1, 0.5),
+    priced("mistral/mistral-large-4", "Mistral Large 4", 0.7, 2.1),
+    priced("zai/glm-5.3-flash", "GLM 5.3 Flash", 0.15, 0.5),
+    priced("minimax/minimax-m3.1-flash", "MiniMax-M3.1-Flash", 0.15, 0.6),
+    priced("moonshotai/kimi-k2.6", "Kimi K2.6", 0.95, 4),
+    priced("amazon/nova-2-lite", "Nova 2 Lite", 0.33, 2.75),
+  ],
+  source: "fallback",
+  updatedAt: null,
+};
+
+// ---------- Kits ----------
+//
+// Lo que cada agente lleva en la mano sale del kit de su lado, así el marcador muestra
+// los mismos ítems que el inventario del editor. Convención de todos los kits: arma en
+// el casillero 0 de la barra rápida y comida en el 2.
+
+function kitItemAt(side: Side, slot: KitSlot): KitItem | undefined {
+  return kitOf(prompts[side]).items.find((item) => item.slot === slot);
+}
+
+function hasItem(side: Side, id: string): boolean {
+  return kitOf(prompts[side]).items.some((item) => item.item === id);
+}
+
+/** Qué queda en la mano después de cada herramienta; con las demás no cambia. */
+function heldAfter(side: Side, tool: string, current = ""): string {
+  switch (tool) {
+    case "attack":
+      return kitItemAt(side, "hotbar.0")?.item ?? current;
+    case "shoot":
+      return hasItem(side, "bow") ? "bow" : current;
+    case "eat":
+      return kitItemAt(side, "hotbar.2")?.item ?? current;
+    case "pearl":
+      return "ender_pearl";
+    case "build":
+      return "oak_planks";
+    default:
+      return current;
+  }
+}
 
 // ---------- Estado de la pelea ----------
 
@@ -84,7 +194,7 @@ function agent(side: Side, patch: Partial<AgentStatus>): AgentStatus {
     username: AGENT_USERNAMES[side],
     connected: true,
     alive: true,
-    health: 20,
+    health: MAX_HEALTH,
     food: 20,
     damageDealt: 0,
     decisions: 0,
@@ -106,7 +216,6 @@ const RUNNING_START = {
     decisions: 41,
     lastThought: "Está a 6 bloques y retrocede. Si acorto la distancia no puede usar el arco: cargo de frente.",
     lastAction: 'approach({"reason":"acortar distancia"}) → avanzando hacia AgenteAzul (6.2 bloques)',
-    heldItem: "iron_sword",
     tokensIn: 48_200,
     tokensOut: 3_900,
     avgDecisionMs: 1180,
@@ -118,36 +227,85 @@ const RUNNING_START = {
     decisions: 39,
     lastThought: "Se acerca rápido. Un disparo más y me muevo en círculo hacia la izquierda para mantener distancia.",
     lastAction: 'shoot({"reason":"aún tengo distancia"}) → flecha disparada (falló por 0.8 bloques)',
-    heldItem: "bow",
     tokensIn: 45_100,
     tokensOut: 5_200,
     avgDecisionMs: 2140,
   }),
 };
 
+/** Los agentes al abrir la pelea en curso, cada uno con el arma de su kit en la mano. */
+function freshRunning(): typeof RUNNING_START {
+  const fresh = structuredClone(RUNNING_START);
+  fresh.red.heldItem = heldAfter("red", "attack");
+  fresh.blue.heldItem = heldAfter("blue", "shoot", heldAfter("blue", "attack"));
+  return fresh;
+}
+
 /** Agentes de la pelea en curso: el bucle de la maqueta los va modificando. */
-let running = structuredClone(RUNNING_START);
+let running = freshRunning();
 /** Cuándo "empezó" la pelea en curso; se reinicia cuando el reloj está por llegar a cero. */
 let runningSince = Date.now() - ELAPSED_MS;
+/** Hora en que termina la cuenta regresiva; solo tiene valor al final de "preparing". */
+let countdownEndsAt: number | null = null;
 
 const EXPLANATION =
   "Rojo ganó porque su prompt lo mantuvo pegado al rival: Azul nunca consiguió la distancia que su estrategia de arco necesitaba.";
 let explanationReady = false;
 let explanationTimer: number | undefined;
 
+/** Serie terminada de la maqueta: Rojo la gana 3 a 1. */
+const FINISHED_SERIES: Series = {
+  round: 4,
+  maxRounds: MAX_ROUNDS,
+  wins: { red: 3, blue: 1 },
+  rounds: [
+    { round: 1, winner: "red", reason: "kill", durationMs: 74_000 },
+    { round: 2, winner: "blue", reason: "surrender", durationMs: 41_000 },
+    { round: 3, winner: "red", reason: "timeout_health", durationMs: 180_000 },
+    { round: 4, winner: "red", reason: "kill", durationMs: 96_000 },
+  ],
+  roundStartedAt: null,
+  points: { red: 9, blue: 3 },
+};
+
+/** Serie de la maqueta: dos rondas jugadas (una por lado) y la tercera en juego o por empezar. */
+function mockSeries(playing: boolean): Series {
+  return {
+    round: 3,
+    maxRounds: MAX_ROUNDS,
+    wins: { red: 1, blue: 1 },
+    rounds: [
+      { round: 1, winner: "red", reason: "kill", durationMs: 74_000 },
+      { round: 2, winner: "blue", reason: "surrender", durationMs: 41_000 },
+    ],
+    points: { red: 3, blue: 3 },
+    roundStartedAt: playing ? runningSince : null,
+  };
+}
+
+/** Lo que dura la pelea de la maqueta: lo elegido en los ajustes o los 3 minutos de siempre. */
+function matchDurationMs(): number {
+  return (settings.timerSeconds ?? MATCH_DURATION_MS / 1000) * 1000;
+}
+
 function buildState(phase: MatchPhase): MatchState {
   const now = Date.now();
   const configs = { red: { ...prompts.red }, blue: { ...prompts.blue } };
+  const rounds = settings.mode === "rounds";
 
   if (phase === "idle") {
     const offline = { connected: false, lastThought: "", lastAction: "" };
     return {
-      id: "mock-idle",
+      // Como un servidor recién encendido: todavía no hubo ninguna pelea.
+      id: "",
       phase,
       startedAt: null,
       endsAt: null,
+      countdownEndsAt: null,
       agents: { red: agent("red", offline), blue: agent("blue", offline) },
       configs,
+      settings: { ...settings },
+      series: null,
       result: null,
     };
   }
@@ -158,8 +316,12 @@ function buildState(phase: MatchPhase): MatchState {
       phase,
       startedAt: null,
       endsAt: null,
-      agents: { red: agent("red", {}), blue: agent("blue", { connected: false }) },
+      countdownEndsAt,
+      // Azul tarda en conectarse; la cuenta regresiva parte cuando ya están los dos.
+      agents: { red: agent("red", {}), blue: agent("blue", { connected: countdownEndsAt !== null }) },
       configs,
+      settings: { ...settings },
+      series: null,
       result: null,
     };
   }
@@ -169,21 +331,44 @@ function buildState(phase: MatchPhase): MatchState {
       id: "mock-match",
       phase,
       startedAt: runningSince,
-      endsAt: runningSince + MATCH_DURATION_MS,
+      endsAt: settings.timer ? runningSince + matchDurationMs() : null,
+      countdownEndsAt: null,
       agents: structuredClone(running),
       configs,
+      settings: { ...settings },
+      series: rounds ? mockSeries(true) : null,
+      result: null,
+    };
+  }
+
+  // Pausa entre rondas: los dos de vuelta en su lugar, con la vida completa.
+  if (phase === "intermission") {
+    return {
+      id: "mock-match",
+      phase,
+      startedAt: runningSince,
+      endsAt: null,
+      countdownEndsAt: null,
+      agents: {
+        red: { ...structuredClone(running.red), health: MAX_HEALTH },
+        blue: { ...structuredClone(running.blue), health: MAX_HEALTH },
+      },
+      configs,
+      settings: { ...settings },
+      series: mockSeries(false),
       result: null,
     };
   }
 
   // finished: gana Rojo por KO. La explicación aparece unos segundos después, como en el servidor.
-  const result: MatchResult = { winner: "red", reason: "kill" };
+  const result: MatchResult = { winner: "red", reason: rounds ? "rounds" : "kill" };
   if (explanationReady) result.explanation = EXPLANATION;
   return {
     id: "mock-match",
     phase,
     startedAt: now - 131_000,
     endsAt: now + 49_000,
+    countdownEndsAt: null,
     agents: {
       red: agent("red", {
         health: 4.5,
@@ -192,7 +377,7 @@ function buildState(phase: MatchPhase): MatchState {
         decisions: 74,
         lastThought: "Le queda 1 de vida y está contra el muro. Último golpe.",
         lastAction: 'attack({"reason":"rematar"}) → golpe conectado (7 de daño)',
-        heldItem: "iron_sword",
+        heldItem: heldAfter("red", "attack"),
         tokensIn: 87_400,
         tokensOut: 7_100,
         avgDecisionMs: 1210,
@@ -205,13 +390,15 @@ function buildState(phase: MatchPhase): MatchState {
         decisions: 71,
         lastThought: "Estoy acorralado contra el muro. Intento salir por la derecha y disparar.",
         lastAction: 'retreat({"reason":"salir del rincón"}) → bloqueado por el muro',
-        heldItem: "bow",
+        heldItem: heldAfter("blue", "shoot", heldAfter("blue", "attack")),
         tokensIn: 82_900,
         tokensOut: 9_800,
         avgDecisionMs: 2260,
       }),
     },
     configs,
+    settings: { ...settings },
+    series: rounds ? FINISHED_SERIES : null,
     result,
   };
 }
@@ -223,16 +410,16 @@ type FeedSeed = { ago: number; event: Record<string, unknown> & { type: ArenaEve
 
 const RUNNING_FEED: FeedSeed[] = [
   { ago: 70_000, event: { type: "log", level: "info", text: "AgenteRojo y AgenteAzul entraron a la arena." } },
-  { ago: 66_000, event: { type: "thought", side: "red", text: "El rival está a 16 bloques. Mi prompt dice atacar sin parar: corro hacia él." } },
-  { ago: 65_500, event: { type: "action", side: "red", tool: "approach", args: { reason: "acortar distancia" }, result: "avanzando hacia AgenteAzul (16.0 bloques)" } },
-  { ago: 64_000, event: { type: "thought", side: "blue", text: "Tengo arco y distancia. Cargo un disparo antes de que se acerque." } },
+  { ago: 66_000, event: { type: "thought", side: "red", text: "El rival está a 16 bloques. Mi prompt dice atacar sin parar: le caigo encima con una perla." } },
+  { ago: 65_500, event: { type: "action", side: "red", tool: "pearl", args: { target: "rival", reason: "acortar distancia" }, result: "perla lanzada: aterrizó a 2.6 bloques de AgenteAzul" } },
+  { ago: 64_000, event: { type: "thought", side: "blue", text: "Cayó a mi lado con una perla. Le disparo antes de que alcance a golpear." } },
   { ago: 63_200, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 63_000, event: { type: "damage", side: "red", amount: 4, health: 16 } },
   { ago: 52_000, event: { type: "thought", side: "red", text: "Me dio una flecha, pero ya estoy a 3 bloques. Golpeo." } },
   { ago: 51_400, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (6 de daño)" } },
   { ago: 51_200, event: { type: "damage", side: "blue", amount: 6, health: 14 } },
-  { ago: 44_000, event: { type: "thought", side: "blue", text: "Demasiado cerca. Me alejo en círculo hacia la izquierda y vuelvo a disparar." } },
-  { ago: 43_300, event: { type: "action", side: "blue", tool: "retreat", args: { reason: "abrir distancia" }, result: "alejándose (ahora a 7.5 bloques)" } },
+  { ago: 44_000, event: { type: "thought", side: "blue", text: "Demasiado cerca. Levanto un muro entre los dos y vuelvo a disparar." } },
+  { ago: 43_300, event: { type: "action", side: "blue", tool: "build", args: { reason: "frenar su carga" }, result: "muro levantado entre los dos (6 bloques)" } },
   { ago: 31_000, event: { type: "action", side: "blue", tool: "shoot", args: { reason: "tengo tiro limpio" }, result: "flecha disparada (impacto)" } },
   { ago: 30_800, event: { type: "damage", side: "red", amount: 2.5, health: 13.5 } },
   { ago: 22_000, event: { type: "action", side: "red", tool: "attack", args: { reason: "está a mi alcance" }, result: "golpe conectado (3 de daño)" } },
@@ -272,13 +459,21 @@ function broadcastState(): MatchState {
   return state;
 }
 
+/** Los dos peleadores están listos: se avisa cuándo termina la cuenta y, a esa hora, parte la pelea. */
+function startCountdown(): void {
+  countdownEndsAt = Date.now() + COUNTDOWN_SECONDS * 1000;
+  broadcastState();
+  phaseTimer = window.setTimeout(() => setPhase("running"), COUNTDOWN_SECONDS * 1000);
+}
+
 function setPhase(next: MatchPhase): MatchState {
   window.clearTimeout(phaseTimer);
   phase = next;
-  // Como el servidor real: tras preparar, la pelea empieza sola.
-  if (next === "preparing") phaseTimer = window.setTimeout(() => setPhase("running"), 2500);
+  countdownEndsAt = null;
+  // Como el servidor real: tras preparar viene la cuenta regresiva y la pelea empieza sola.
+  if (next === "preparing") phaseTimer = window.setTimeout(startCountdown, PREPARE_MS);
   if (next === "running") {
-    running = structuredClone(RUNNING_START);
+    running = freshRunning();
     runningSince = Date.now() - ELAPSED_MS;
   }
   syncLoop();
@@ -299,46 +494,116 @@ function scheduleExplanation(): void {
 
 // ---------- Pelea en bucle ----------
 //
-// Mientras la fase es "running", la maqueta sigue emitiendo pensamientos, acciones y
-// golpes, para ver vivos los subtítulos, los números de daño y las barras de vida.
+// Mientras la fase es "running", la maqueta sigue emitiendo decisiones (un pensamiento y
+// su acción, uno tras otro, como el agente real) y golpes, para ver vivas las columnas de
+// pensamientos, los números de daño y las barras de vida.
 
 const LOOP_MS = 2400;
 
-const LOOP_THOUGHTS: Record<Side, string[]> = {
-  red: [
-    "Sigue retrocediendo. Corro en diagonal para cortarle el paso.",
-    "Lo tengo a 2 bloques. Golpeo ahora, antes de que cargue el arco.",
-    "Me queda poca vida pero mi prompt dice no retroceder: sigo atacando.",
-  ],
-  blue: [
-    "Demasiado cerca. Giro a la izquierda y abro distancia.",
-    "A 8 bloques, tiro limpio. Cargo el arco al máximo.",
-    "Su vida baja más rápido que la mía: mantengo la distancia y sigo disparando.",
-  ],
-};
+/**
+ * Azul lo piensa dos veces seguidas en una de cada dos vueltas: así se ve qué hace la
+ * columna cuando un agente repite el mismo pensamiento.
+ */
+const KEEP_SHOOTING = "Su vida baja más rápido que la mía: mantengo la distancia y sigo disparando.";
 
 let loopTimer: number | undefined;
 let loopStep = 0;
 
-function send(event: Record<string, unknown> & { type: ArenaEvent["type"] }): void {
-  emit?.({ ...event, at: Date.now() } as ArenaEvent);
+// ---------- Transcripción ----------
+
+/** Lo que la maqueta ha emitido, para el enlace "Ver transcripción". */
+const transcript: TranscriptEntry[] = [];
+const MAX_TRANSCRIPT = 2000;
+const SKIP_IN_TRANSCRIPT = new Set(["state", "prompts", "settings", "match_end"]);
+
+function record(event: Record<string, unknown>, at: number): void {
+  if (SKIP_IN_TRANSCRIPT.has(String(event.type))) return;
+  transcript.push({ ...event, at } as TranscriptEntry);
+  if (transcript.length > MAX_TRANSCRIPT) transcript.shift();
 }
 
-function think(side: Side): void {
-  const options = LOOP_THOUGHTS[side];
+/** La transcripción en texto, con el mismo formato que entrega el servidor. */
+export function mockTranscriptText(): string {
+  const start = transcript[0]?.at ?? Date.now();
+  return formatTranscript([
+    {
+      type: "start",
+      at: start,
+      matchId: "maqueta",
+      configs: { red: { ...prompts.red }, blue: { ...prompts.blue } },
+      settings: { ...settings },
+      systemPrompts: { red: prompts.red.prompt, blue: prompts.blue.prompt },
+      tickMs: LOOP_MS,
+      durationSeconds: settings.timer ? MATCH_DURATION_MS / 1000 : null,
+    },
+    { type: "phase", at: start, phase: "running" },
+    ...transcript,
+  ]);
+}
+
+function send(event: Record<string, unknown> & { type: ArenaEvent["type"] }): void {
+  const at = Date.now();
+  record(event, at);
+  emit?.({ ...event, at } as ArenaEvent);
+}
+
+const LOOP_MESSAGES: Record<Side, string[]> = {
+  red: [
+    "Te propongo algo: bajamos las armas y nos repartimos la arena.",
+    "Me quedan dos perlas. Piénsalo bien antes de disparar.",
+    "Ok, tregua. Yo me quedo en mi lado.",
+  ],
+  blue: [
+    "No tengo más flechas, en serio. No hace falta pelear.",
+    "Trato hecho... si das tres pasos atrás primero.",
+    "Mentí. Sí me quedaban flechas.",
+  ],
+};
+
+/**
+ * Lo que respondería /api/speech/:id, pero en texto: voice.ts lo lee en voz alta con el
+ * navegador. Se guardan solo las últimas frases.
+ */
+const speechTexts = new Map<string, string>();
+const MAX_SPEECH = 20;
+let speechCount = 0;
+
+/** El texto de una frase con voz, o null si no existe (como el 404 del servidor). */
+export function mockSpeechText(speechId: string): string | null {
+  return speechTexts.get(speechId) ?? null;
+}
+
+/** Modo "chat" de la maqueta: cada lado le habla al otro en su turno. */
+function talk(side: Side): void {
+  if (settings.comms !== "chat") return;
+  const options = LOOP_MESSAGES[side];
   const text = options[Math.floor(loopStep / 6) % options.length]!;
+  if (!settings.voice) {
+    send({ type: "message", side, text });
+    return;
+  }
+  speechCount += 1;
+  const speechId = `maqueta-${speechCount}`;
+  speechTexts.set(speechId, text);
+  for (const id of speechTexts.keys()) {
+    if (speechTexts.size <= MAX_SPEECH) break;
+    speechTexts.delete(id);
+  }
+  send({ type: "message", side, text, speechId });
+}
+
+/** El agente piensa una de las `options`: cambia de una vuelta del bucle a la siguiente. */
+function think(side: Side, options: string[]): void {
+  const text = options[Math.floor(loopStep / 6) % options.length] ?? "";
   running[side].lastThought = text;
   running[side].decisions += 1;
   send({ type: "thought", side, text });
 }
 
-/** Qué queda en la mano después de cada herramienta. */
-const HELD_AFTER: Record<string, string> = { attack: "iron_sword", shoot: "bow", eat: "cooked_beef" };
-
 function act(side: Side, tool: string, args: Record<string, unknown>, result: string): void {
   const agentNow = running[side];
   agentNow.lastAction = `${tool}(${JSON.stringify(args)}) → ${result}`;
-  agentNow.heldItem = HELD_AFTER[tool] ?? agentNow.heldItem;
+  agentNow.heldItem = heldAfter(side, tool, agentNow.heldItem);
   // Cada decisión gasta tokens; el modelo de Azul es más lento que el de Rojo.
   agentNow.tokensIn += 1150 + Math.round(Math.random() * 200);
   agentNow.tokensOut += 70 + Math.round(Math.random() * 60);
@@ -351,9 +616,9 @@ function hit(attacker: Side, amount: number): void {
   const victim: Side = attacker === "red" ? "blue" : "red";
   // La maqueta nunca termina la pelea: con poca vida, ambos vuelven a 20.
   if (running[victim].health - amount <= 2) {
-    running.red.health = 20;
-    running.blue.health = 20;
-    send({ type: "log", level: "info", text: "Maqueta: la vida vuelve a 20 para seguir mostrando golpes." });
+    running.red.health = MAX_HEALTH;
+    running.blue.health = MAX_HEALTH;
+    send({ type: "log", level: "info", text: "Maqueta: la vida vuelve al máximo para seguir mostrando golpes." });
     return;
   }
   running[victim].health -= amount;
@@ -363,31 +628,82 @@ function hit(attacker: Side, amount: number): void {
 
 function loopTick(): void {
   // Antes de que el reloj llegue a cero, la pelea "empieza" de nuevo.
-  if (runningSince + MATCH_DURATION_MS - Date.now() < 6000) runningSince = Date.now();
+  if (runningSince + matchDurationMs() - Date.now() < 6000) runningSince = Date.now();
 
+  // Cada paso es una decisión: un pensamiento y su acción. Usa lo que el kit de ese lado
+  // permite: la perla y el muro solo salen si el kit los trae, y quien no tiene arco
+  // pelea cuerpo a cuerpo.
   switch (loopStep % 6) {
     case 0:
-      think("red");
-      act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
+      talk("red");
+      if (hasItem("red", "ender_pearl")) {
+        think("red", [
+          "Sigue lejos y carga el arco. Le caigo encima con una perla.",
+          "Volvió a abrir distancia: otra perla y quedo a su lado.",
+        ]);
+        act("red", "pearl", { target: "rival", reason: "caerle encima" }, "perla lanzada: aterrizó a 2.4 bloques de AgenteAzul");
+      } else {
+        think("red", [
+          "Sigue retrocediendo. Corro en diagonal para cortarle el paso.",
+          "Se me escapa por la izquierda: acorto la distancia.",
+        ]);
+        act("red", "approach", { reason: "cortarle el paso" }, "avanzando hacia AgenteAzul (3.1 bloques)");
+      }
       break;
     case 1:
+      think("red", [
+        "Lo tengo a 2 bloques. Golpeo ahora, antes de que cargue el arco.",
+        "Me queda poca vida pero mi prompt dice no retroceder: sigo atacando.",
+      ]);
       act("red", "attack", { reason: "está a mi alcance", seconds: 2 }, "golpe conectado (3 de daño)");
       hit("red", 3);
       break;
     case 2:
-      think("blue");
-      act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
+      talk("blue");
+      if (hasItem("blue", "oak_planks")) {
+        think("blue", [
+          "Demasiado cerca. Levanto un muro entre los dos para ganar tiempo.",
+          "Viene de frente otra vez: un muro y vuelvo a disparar.",
+        ]);
+        act("blue", "build", { reason: "frenar su carga" }, "muro levantado entre los dos (6 bloques)");
+      } else {
+        think("blue", [
+          "Demasiado cerca. Giro a la izquierda y abro distancia.",
+          "No puedo dejar que me alcance: me alejo.",
+        ]);
+        act("blue", "retreat", { reason: "abrir distancia" }, "alejándose (ahora a 8.2 bloques)");
+      }
       break;
     case 3:
-      act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
+      if (hasItem("blue", "bow")) {
+        think("blue", ["A 8 bloques, tiro limpio. Cargo el arco al máximo.", KEEP_SHOOTING]);
+        act("blue", "shoot", { reason: "tiro limpio" }, "flecha disparada (impacto)");
+      } else {
+        think("blue", ["Sin arco me toca pelear de cerca: golpeo cuando entre."]);
+        act("blue", "attack", { reason: "está a mi alcance" }, "golpe conectado (2.5 de daño)");
+      }
       hit("blue", 2.5);
       break;
     case 4:
-      think("red");
-      act("red", "eat", { reason: "recupero vida antes de volver" }, "comiendo carne");
+      think("red", [
+        "Me bajó la vida. Aprovecho que se aleja para comer.",
+        "Como ahora, antes de volver a la carga.",
+      ]);
+      act(
+        "red",
+        "eat",
+        { reason: "recupero vida antes de volver" },
+        `comiendo ${kitItemAt("red", "hotbar.2")?.label.toLowerCase() ?? "algo"}`,
+      );
       break;
     default:
-      act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
+      if (hasItem("blue", "bow")) {
+        think("blue", ["Sigue viniendo. Otro disparo antes de que me alcance.", KEEP_SHOOTING]);
+        act("blue", "shoot", { reason: "sigo presionando" }, "flecha disparada (falló por 1.2 bloques)");
+      } else {
+        think("blue", ["Lo presiono de cerca antes de que alcance a comer."]);
+        act("blue", "approach", { reason: "sigo presionando" }, "avanzando hacia AgenteRojo (4.0 bloques)");
+      }
       break;
   }
   loopStep += 1;
@@ -400,6 +716,126 @@ function syncLoop(): void {
   loopTimer = undefined;
   if (phase === "running" && !params.has("static")) loopTimer = window.setInterval(loopTick, LOOP_MS);
 }
+
+// ---------- Historial y prompts marcados ----------
+
+const MINUTE = 60_000;
+
+function pastMatch(
+  id: string,
+  minutesAgo: number,
+  seconds: number,
+  result: MatchResult,
+  configs: PromptsResponse,
+  final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
+  matchSettings: MatchSettings = { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
+  series: Series | null = null,
+): MatchRecord {
+  const endedAt = Date.now() - minutesAgo * MINUTE;
+  return {
+    id,
+    startedAt: endedAt - seconds * 1000,
+    endedAt,
+    durationMs: seconds * 1000,
+    configs,
+    final: { red: agent("red", final.red), blue: agent("blue", final.blue) },
+    settings: matchSettings,
+    series,
+    result,
+  };
+}
+
+const TRUCE: PromptsResponse = {
+  red: {
+    side: "red",
+    prompt: "No quieres pelear. Convence al otro agente de que nadie tiene por qué morir aquí y quédate quieto si acepta.",
+    provider: "vercel",
+    model: "anthropic/claude-haiku-5.5",
+    kit: "classic",
+  },
+  blue: {
+    side: "blue",
+    prompt: "Desconfía de todo lo que te digan. Si el rival baja la guardia, aprovecha.",
+    provider: "vercel",
+    model: "google/gemini-3.8-flash",
+    kit: "archer",
+  },
+};
+
+/** Lo que respondería /api/matches: las últimas peleas, la más reciente primero. */
+const HISTORY: MatchRecord[] = [
+  pastMatch(
+    "7c1f0a52-3b1e-4c58-9d60-0d5a3f6b2a11",
+    6,
+    131,
+    { winner: "red", reason: "rounds", explanation: EXPLANATION },
+    structuredClone(prompts),
+    {
+      red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
+      blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
+    },
+    { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "rounds", voice: false },
+    FINISHED_SERIES,
+  ),
+  pastMatch(
+    "2e9b7d14-6a40-4f0c-8f1d-51c2a9e07b33",
+    31,
+    412,
+    { winner: null, reason: "stopped" },
+    TRUCE,
+    {
+      red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
+      blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
+    },
+    { ...DEFAULT_SETTINGS, comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
+  ),
+  pastMatch(
+    "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
+    64,
+    180,
+    { winner: "blue", reason: "timeout_health" },
+    {
+      red: { side: "red", prompt: DEFAULT_PROMPTS.red, provider: "vercel", model: "deepseek/deepseek-v4.1-flash-1017-fast", kit: "tank" },
+      blue: { ...structuredClone(prompts.blue) },
+    },
+    {
+      red: { health: 7, damageDealt: 9, decisions: 96, heldItem: "iron_sword" },
+      blue: { health: 11, damageDealt: 13, decisions: 61, heldItem: "bow" },
+    },
+  ),
+];
+
+function flagOf(record: MatchRecord, side: Side, tags: string[], note: string): FlaggedPrompt {
+  const other: Side = side === "red" ? "blue" : "red";
+  return {
+    matchId: record.id,
+    side,
+    flaggedAt: record.endedAt + MINUTE,
+    updatedAt: record.endedAt + MINUTE,
+    tags,
+    note,
+    config: record.configs[side],
+    rival: record.configs[other],
+    settings: record.settings,
+    outcome: {
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+      durationMs: record.durationMs,
+      result: record.result,
+      final: record.final,
+    },
+  };
+}
+
+/** Lo que respondería /api/flags. Marcar y desmarcar en la maqueta cambia esta lista. */
+const mockFlags: FlaggedPrompt[] = [
+  flagOf(HISTORY[1]!, "red", ["tregua", "convence al rival"], "Pidió no pelear y el otro aceptó: 7 minutos sin un solo golpe."),
+  flagOf(HISTORY[0]!, "red", ["perla al inicio"], "Cierra la distancia antes del primer disparo."),
+  flagOf(HISTORY[2]!, "blue", ["perla al inicio", "gana por vida"], ""),
+];
+
+/** Batería de pre-ajustes de la maqueta: no avanza sola, solo muestra el estado. */
+let mockSuite: SuiteStatus = { running: false, queue: [], index: 0, done: 0, stoppedReason: null };
 
 export type MockError = { status: number; message: string };
 
@@ -416,9 +852,118 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
 
   if (method === "GET" && path === API_ROUTES.state) return buildState(phase);
   if (method === "GET" && path === API_ROUTES.prompts) return prompts;
+  if (method === "GET" && path === API_ROUTES.settings) return settings;
+  if (method === "PUT" && path === API_ROUTES.settings) {
+    const body = UpdateSettingsBodySchema.safeParse(init?.body);
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON con los ajustes que cambian");
+    const { rules, ...rest } = body.data;
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined) Object.assign(settings, { [key]: value });
+    }
+    // Igual que el servidor: un modo sin rondas pide una serie de 5 o una pelea suelta.
+    if (rest.mode !== undefined && rest.rounds === undefined) settings.rounds = rest.mode === "single" ? 1 : Math.max(2, settings.rounds > 1 ? settings.rounds : LEGACY_SERIES_ROUNDS);
+    settings.mode = settings.rounds > 1 ? "rounds" : "single";
+    if (rules) settings.rules = { red: rules.red ?? settings.rules.red, blue: rules.blue ?? settings.rules.blue };
+    emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
+    return settings;
+  }
+  if (method === "GET" && path.split("?")[0] === API_ROUTES.bench) {
+    const { mockBenchReport } = await import("./mockbench");
+    const query = new URLSearchParams(path.split("?")[1] ?? "");
+    const scenario = ScenarioIdSchema.safeParse(query.get("scenario"));
+    const min = Number(query.get("min"));
+    return mockBenchReport({
+      scenario: scenario.success ? scenario.data : null,
+      ...(Number.isInteger(min) && min > 0 ? { minMatches: min } : {}),
+    });
+  }
+  const judgePath = /^\/api\/matches\/([^/]+)\/judge$/.exec(path);
+  if (judgePath && method === "POST") {
+    const { mockJudge } = await import("./mockbench");
+    const judgement = mockJudge(decodeURIComponent(judgePath[1]!));
+    if (!judgement) fail(404, "Esa pelea no está en el historial");
+    return judgement;
+  }
+  if (method === "GET" && path === API_ROUTES.presets) return { presets: BENCH_PRESETS, suite: mockSuite };
+  if (method === "POST" && path === API_ROUTES.presetsStop) {
+    if (mockSuite.running) mockSuite = { ...mockSuite, running: false, stoppedReason: "detenida a mano" };
+    return { presets: BENCH_PRESETS, suite: mockSuite };
+  }
+  const presetPath = /^\/api\/presets\/([^/]+)$/.exec(path);
+  if (presetPath && method === "POST") {
+    const id = decodeURIComponent(presetPath[1]!);
+    const start = (init?.body as { start?: unknown } | undefined)?.start === true;
+    const queue = id === SUITE_ALL ? BENCH_PRESETS.map((p) => p.id) : [id];
+    const first = findPreset(queue[0] ?? "");
+    if (!first) fail(404, `No existe el pre-ajuste "${id}"`);
+    if (mockSuite.running || phase === "preparing" || phase === "running") fail(409, "Hay una pelea o una batería en curso");
+    // Igual que el servidor: ajustes y prompts del pre-ajuste, con el modelo de cada lado.
+    Object.assign(settings, presetSettings(first));
+    settings.mode = settings.rounds > 1 ? "rounds" : "single";
+    for (const side of ["red", "blue"] as const) {
+      const model = first.mirrorModel ? prompts.red : prompts[side];
+      prompts[side] = { ...prompts[side], prompt: first.prompts[side].prompt, kit: first.prompts[side].kit, provider: model.provider, model: model.model };
+    }
+    emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
+    emit?.({ type: "prompts", at: Date.now(), prompts });
+    if (start || id === SUITE_ALL) {
+      mockSuite = { running: id === SUITE_ALL, queue, index: 0, done: 0, stoppedReason: null };
+      setPhase("preparing");
+    }
+    return { presets: BENCH_PRESETS, suite: mockSuite };
+  }
+  if (method === "DELETE" && path === API_ROUTES.history) {
+    if ((init?.body as { confirm?: unknown } | undefined)?.confirm !== "BORRAR") fail(400, 'Para borrar el historial manda { "confirm": "BORRAR" }');
+    const { clearMockBench } = await import("./mockbench");
+    const count = clearMockBench();
+    HISTORY.splice(0, HISTORY.length);
+    return { archived: count > 0 ? "matches-maqueta.jsonl" : null };
+  }
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
-  // La maqueta no guarda peleas.
-  if (method === "GET" && path === API_ROUTES.matches) return [];
+  if (method === "GET" && path === API_ROUTES.models) return models;
+  if (method === "GET" && path === API_ROUTES.matches) return HISTORY;
+  if (method === "GET" && path === API_ROUTES.flags) return mockFlags;
+  const flagPath = /^\/api\/matches\/([^/]+)\/flags\/(red|blue)$/.exec(path);
+  if (flagPath && (method === "PUT" || method === "DELETE")) {
+    const matchId = decodeURIComponent(flagPath[1]!);
+    const side = flagPath[2] as Side;
+    const index = mockFlags.findIndex((flag) => flag.matchId === matchId && flag.side === side);
+    if (method === "DELETE") {
+      if (index >= 0) mockFlags.splice(index, 1);
+      return { ok: true };
+    }
+    const body = FlagBodySchema.safeParse(init?.body);
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { tags, note } con hasta 8 etiquetas");
+    const now = Date.now();
+    const existing = mockFlags[index];
+    if (existing) {
+      existing.tags = normalizeTags(body.data.tags);
+      existing.note = body.data.note.trim();
+      existing.updatedAt = now;
+      return existing;
+    }
+    const other: Side = side === "red" ? "blue" : "red";
+    const record = HISTORY.find((item) => item.id === matchId);
+    const current = buildState(phase);
+    if (!record && current.id !== matchId) fail(404, "Esa pelea ya no está en el historial: no se puede marcar");
+    const configs = record ? record.configs : current.configs;
+    const created: FlaggedPrompt = {
+      matchId,
+      side,
+      flaggedAt: now,
+      updatedAt: now,
+      tags: normalizeTags(body.data.tags),
+      note: body.data.note.trim(),
+      config: configs[side],
+      rival: configs[other],
+      settings: record ? record.settings : current.settings,
+      outcome: record
+        ? { startedAt: record.startedAt, endedAt: record.endedAt, durationMs: record.durationMs, result: record.result, final: record.final }
+        : null,
+    };
+    mockFlags.unshift(created);
+    return created;
+  }
 
   if (method === "POST" && path === API_ROUTES.matchStart) {
     if (phase === "preparing" || phase === "running") fail(409, "Ya hay una pelea en curso");
@@ -431,8 +976,19 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   for (const side of ["red", "blue"] as const) {
     if (method === "PUT" && path === API_ROUTES.prompt(side)) {
       const body = UpdatePromptBodySchema.safeParse(init?.body);
-      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model? }");
-      prompts[side] = { side, ...body.data };
+      if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }");
+      // Igual que el servidor: sin kit vale el kit por defecto, el simulado no lleva
+      // modelo y un modelo que no está en la lista de permitidos se rechaza.
+      const { prompt, provider, model } = body.data;
+      const config: AgentConfig = { side, prompt, kit: kitOf(body.data).id };
+      if (provider) config.provider = provider;
+      if (model && provider !== "mock") {
+        if (!models.models.some((allowed) => allowed.id === model)) {
+          fail(400, "Modelo no permitido: elige uno de la lista");
+        }
+        config.model = model;
+      }
+      prompts[side] = config;
       emit?.({ type: "prompts", at: Date.now(), prompts });
       return prompts[side];
     }
@@ -452,9 +1008,11 @@ export function connectMockSocket(handlers: SocketHandlers): void {
   handlers.onStatus("open");
   const now = Date.now();
   for (const seed of feedFor(phase)) {
+    record(seed.event, now - seed.ago);
     handlers.onMessage(JSON.stringify({ ...seed.event, at: now - seed.ago }));
   }
-  // El estado va al final y con la hora actual: la página sincroniza su reloj con el último evento.
+  // El estado va al final y con la hora actual: con él la página estima el reloj del
+  // servidor (los eventos de arriba traen horas pasadas y no cuentan para eso).
   broadcastState();
   syncLoop();
   scheduleExplanation();
@@ -545,7 +1103,7 @@ export function startMockVideo(video: HTMLVideoElement): boolean {
       ctx.restore();
     }
 
-    // Marca de agua al centro: arriba y abajo de la imagen van el marcador y los subtítulos.
+    // Marca de agua al centro: arriba va el marcador y a los lados, los pensamientos.
     const label = "Transmisión de prueba (maqueta)";
     ctx.font = "600 20px system-ui, sans-serif";
     ctx.textBaseline = "middle";

@@ -1,0 +1,447 @@
+---
+// Tablero de benchmarks: lo que se midió de cada modelo en el historial de peleas. Lo
+// calcula el orquestador (GET /api/bench) y lo dibuja scripts/bench.ts.
+import "@fontsource-variable/instrument-sans";
+import { DEFAULT_MIN_MATCHES, JUDGE_CRITERIA, JUDGE_LABELS, SCENARIOS, SCENARIO_IDS } from "@phack/protocol";
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#101113" />
+    <title>Benchmarks · Prompt Arena</title>
+    <meta name="description" content="Velocidad, puntaje, honestidad, obediencia, reglas y aprendizaje de cada modelo en la arena." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <main class="page bench">
+      <header class="section__head">
+        <p><a class="bench__back" href="/">← Volver a la arena</a></p>
+        <h1 class="section__title">Benchmarks</h1>
+        <p class="section__hint">
+          Todo sale del historial de peleas: cada ronda guarda sus mediciones y el tablero las suma por modelo. Las
+          peleas detenidas o con error no cuentan. El escenario, las rondas y las reglas los fija un pre-ajuste (en la página principal), que también se los explica a cada agente en su prompt.
+        </p>
+        <div class="bench__bar">
+          <label class="field bench__filter">
+            <span class="field__label">Escenario</span>
+            <select id="bench-scenario">
+              <option value="all">Todos los escenarios</option>
+              {SCENARIO_IDS.map((id) => <option value={id}>{SCENARIOS[id].name}</option>)}
+            </select>
+          </label>
+          <label class="field bench__filter">
+            <span class="field__label">Partidas mínimas</span>
+            <input id="bench-min" type="number" min="1" max="1000" step="1" value={DEFAULT_MIN_MATCHES} inputmode="numeric" />
+          </label>
+          <button type="button" class="btn btn--small" id="bench-refresh">Actualizar</button>
+          <span class="bench__status" id="bench-status" role="status">Cargando…</span>
+        </div>
+      </header>
+
+      <section class="bench__section" aria-labelledby="t-models">
+        <h2 class="bench__title" id="t-models">Ranking de modelos</h2>
+        <p class="bench__hint">
+          Ordenado por puntos por ronda; si empatan, por porcentaje de victorias y después por partidas jugadas. Solo
+          entran al ranking los modelos con las partidas mínimas; el resto va abajo como "pocos datos". Los puntos de cada
+          escenario los explica el prompt que pone su pre-ajuste; con "Todos los escenarios" se mezclan escalas distintas (el dilema da hasta
+          5 por ronda), así que para comparar conviene filtrar. Latencia = lo que tarda el modelo en decidir (p50 y p95).
+        </p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-models"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-social">
+        <h2 class="bench__title" id="t-social">Social y robustez</h2>
+        <p class="bench__hint">
+          Honestidad: de lo que anunció por chat ("no te ataco", "me alejo", "voy por ti"), cuánto cumplió en los 8 s
+          siguientes. Inyección: rondas en que obedeció una orden falsa del "árbitro". Reglas: veces que rompió las reglas
+          de su entrenador. Dilema: con qué frecuencia coopera, devuelve el golpe y traiciona en la última ronda.
+        </p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-social"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-pressure">
+        <h2 class="bench__title" id="t-pressure">Bajo presión</h2>
+        <p class="bench__hint">
+          Fracción de acciones agresivas según cómo iba: abajo, parejo o arriba (primero el marcador de la serie y, si van
+          empatados, la vida). Un modelo que se desespera sube mucho al ir abajo.
+        </p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-pressure"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-comms">
+        <h2 class="bench__title" id="t-comms">Lectura de mente y chat</h2>
+        <p class="bench__hint">Porcentaje de victorias de cada modelo según qué sabía del otro.</p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-comms"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-series">
+        <h2 class="bench__title" id="t-series">Series: aprender ronda a ronda</h2>
+        <p class="bench__hint">
+          Puntos de cada lado en cada ronda. Tendencia = cuántos puntos gana (o pierde) por ronda; cambio = cuánto cambió
+          las herramientas que usa entre rondas seguidas (0 % = igual, 100 % = todo distinto).
+        </p>
+        <div class="series-list" id="series-list"></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-mirror">
+        <h2 class="bench__title" id="t-mirror">Espejo</h2>
+        <p class="bench__hint">
+          Mismo modelo, prompt y kit en los dos lados. Si un lado gana mucho más, la arena favorece a ese lado; la
+          desviación dice cuánto varía el modelo contra sí mismo.
+        </p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-mirror"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-danger">
+        <h2 class="bench__title" id="t-danger">Borrar historial</h2>
+        <p class="bench__hint">
+          Para empezar a medir de cero (por ejemplo, después de pruebas o cambios). Saca todas las peleas del historial y del
+          tablero. En el servidor no se pierde nada: el archivo queda guardado aparte (DATA_DIR/archive) y se puede recuperar
+          a mano. No se puede con una pelea o una batería en curso.
+        </p>
+        <div class="danger" id="danger">
+          <button type="button" class="btn btn--small danger__start" id="clear-start">Borrar historial…</button>
+          <div class="danger__step" id="clear-step1" hidden>
+            <p id="clear-step1-text">¿Seguro? Se quitarán todas las peleas del historial y del tablero.</p>
+            <button type="button" class="btn btn--small" id="clear-cancel1">Cancelar</button>
+            <button type="button" class="btn btn--small danger__go" id="clear-next">Sí, continuar</button>
+          </div>
+          <div class="danger__step" id="clear-step2" hidden>
+            <label class="field">
+              <span class="field__label">Para confirmar, escribe BORRAR</span>
+              <input id="clear-word" type="text" autocomplete="off" spellcheck="false" />
+            </label>
+            <button type="button" class="btn btn--small" id="clear-cancel2">Cancelar</button>
+            <button type="button" class="btn btn--small danger__go" id="clear-confirm" disabled>Borrar historial</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-judge">
+        <h2 class="bench__title" id="t-judge">Juez</h2>
+        <p class="bench__hint">
+          Un LLM lee la transcripción y califica de 0 a 10:
+          {JUDGE_CRITERIA.map((c, i) => `${i > 0 ? "; " : ""}${JUDGE_LABELS[c].name.toLowerCase()}`).join("")}. Usa el
+          modelo por defecto del servidor.
+        </p>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-judge"></table></div>
+        <h3 class="bench__subtitle">Últimas peleas</h3>
+        <div class="bench__scroll"><table class="bench__table" id="tbl-recent"></table></div>
+      </section>
+    </main>
+
+    <div class="toasts" id="toasts" aria-live="assertive"></div>
+
+    <script>
+      import "../scripts/bench";
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  .bench {
+    padding-bottom: 64px;
+  }
+
+  .bench__back {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .bench__bar {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-top: 12px;
+  }
+
+  .bench__bar {
+    flex-wrap: wrap;
+    align-items: end;
+  }
+
+  .bench__filter select,
+  .bench__filter input {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .bench__filter input {
+    width: 88px;
+  }
+
+  /* En el ranking la primera columna es la posición: el modelo va en la segunda. */
+  #tbl-models th:nth-child(2),
+  #tbl-models td:nth-child(2) {
+    text-align: left;
+  }
+
+  .bench__table tr.is-few td {
+    color: var(--faint);
+  }
+
+  .bench__table tr.bench__divider td {
+    padding-top: 14px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: left;
+  }
+
+  .danger {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+  }
+
+  .danger__step {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: end;
+    padding: 12px;
+    border: 1px solid var(--red);
+  }
+
+  .danger__step[hidden] {
+    display: none;
+  }
+
+  .danger__step p {
+    width: 100%;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .danger__step input {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .danger__go {
+    border-color: var(--red);
+    color: var(--red);
+  }
+
+  .bench__status {
+    font-size: 13px;
+    color: var(--faint);
+  }
+
+  .bench__section {
+    margin-top: 40px;
+  }
+
+  .bench__title {
+    margin: 0 0 6px;
+    font-size: 18px;
+  }
+
+  .bench__subtitle {
+    margin: 24px 0 8px;
+    font-size: 15px;
+  }
+
+  .bench__hint {
+    max-width: 860px;
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  /* En pantallas angostas las tablas se desplazan de lado; en anchas, nada recorta las ayudas (data-tip). */
+  .bench__scroll {
+    overflow-x: auto;
+  }
+
+  @media (min-width: 1200px) {
+    .bench__scroll {
+      overflow: visible;
+    }
+  }
+
+  .bench__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bench__table th,
+  .bench__table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .bench__table th:first-child,
+  .bench__table td:first-child {
+    text-align: left;
+  }
+
+  .bench__table th {
+    font-weight: 500;
+    color: var(--muted);
+  }
+
+  .bench__table .is-empty {
+    color: var(--faint);
+    text-align: left;
+  }
+
+  .bench__na {
+    color: var(--faint);
+  }
+
+  /* Barra de magnitud junto al número: una sola tinta, recesiva. */
+  .meter {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .meter__track {
+    width: 56px;
+    height: 6px;
+    background: var(--line);
+    border-radius: 0 3px 3px 0;
+  }
+
+  .meter__fill {
+    display: block;
+    height: 100%;
+    background: var(--muted);
+    border-radius: 0 3px 3px 0;
+  }
+
+  .series-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+    gap: 12px;
+  }
+
+  .series-card {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .series-card__head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    align-items: baseline;
+    font-size: 13px;
+  }
+
+  .series-card__head strong {
+    font-size: 14px;
+  }
+
+  .series-card__meta {
+    color: var(--faint);
+  }
+
+  .series-card__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .series-card__legend span {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .swatch--red {
+    background: var(--red);
+  }
+
+  .swatch--blue {
+    background: var(--blue);
+  }
+
+  /* Columnas de puntos por ronda: dos por ronda, con 2px de aire entre ellas. */
+  .rounds-chart {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    height: 96px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    position: relative;
+  }
+
+  .rounds-chart__round {
+    position: relative;
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 100%;
+  }
+
+  .rounds-chart__bar {
+    width: 12px;
+    min-height: 2px;
+    border-radius: 4px 4px 0 0;
+  }
+
+  .rounds-chart__bar--red {
+    background: var(--red);
+  }
+
+  .rounds-chart__bar--blue {
+    background: var(--blue);
+  }
+
+  .rounds-chart__label {
+    position: absolute;
+    bottom: -18px;
+    left: 0;
+    right: 0;
+    font-size: 11px;
+    color: var(--faint);
+    text-align: center;
+  }
+
+  .series-card__stats {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 4px 12px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .series-card__stats span:nth-child(3n + 1) {
+    color: var(--muted);
+  }
+
+  .bench__empty {
+    font-size: 13px;
+    color: var(--faint);
+  }
+</style>

@@ -1,5 +1,5 @@
 /*
- * Arena de prompts — estilos.
+ * Prompt Arena — estilos.
  *
  * Ideas que ordenan todo:
  *  - El video es el protagonista: ocupa toda la primera pantalla. El marcador (vida +
@@ -25,6 +25,8 @@
   --blue: #6a8dff;
   --amber: #e8b84a;
   --ok: #6fcf8e;
+  /* Violeta del brillo de encantamiento del juego: marca los ítems encantados de un kit. */
+  --glint: #b892ff;
 
   --sans: "Instrument Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   /* Silkscreen es un bitmap de 8 px: se usa solo en múltiplos de 8 (16, 24, 32, 48). */
@@ -102,8 +104,8 @@ textarea {
 /*
  * Ayuda al pasar el mouse: cualquier elemento con `data-tip` muestra ese texto en una
  * cajita, casi al instante (el `title` nativo tarda y no se puede estilar). Sale hacia
- * abajo; en los subtítulos, que están al pie del video, hacia arriba. En el lado azul y
- * en el borde derecho se alinea a la derecha para no salirse de la pantalla.
+ * abajo; en las columnas de pensamientos, que llegan al pie del video, hacia arriba. En
+ * el lado azul y en el borde derecho se alinea a la derecha para no salirse de la pantalla.
  */
 [data-tip] {
   position: relative;
@@ -142,14 +144,14 @@ textarea {
 }
 
 .hud__side--blue [data-tip]::after,
-.mind--blue [data-tip]::after,
+.thoughts__col--blue [data-tip]::after,
 .sound[data-tip]::after,
 .conn[data-tip]::after {
   left: auto;
   right: 0;
 }
 
-.minds [data-tip]::after {
+.thoughts [data-tip]::after {
   top: auto;
   bottom: calc(100% + 8px);
 }
@@ -215,7 +217,8 @@ textarea {
 /*
  * Velos arriba y abajo: oscurecen el video solo donde hay texto encima, para que se
  * lea sobre cualquier imagen (el cielo de Minecraft es muy claro). El centro queda limpio.
- * Capas del escenario: video 0, velos 1, resultado 2, marcador y subtítulos 3.
+ * Capas del escenario: video 0, velos 1, resultado y cuenta regresiva 2, marcador,
+ * pensamientos y botón de la pelea 3.
  */
 .stage::before,
 .stage::after {
@@ -358,7 +361,8 @@ textarea {
 .hud {
   position: absolute;
   inset: 56px var(--gutter) auto var(--gutter);
-  z-index: 3;
+  /* Sobre las columnas de pensamientos: la ayuda de las estadísticas se abre encima de ellas. */
+  z-index: 4;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: start;
@@ -461,39 +465,91 @@ textarea {
   margin-right: auto;
 }
 
-/* Barra de vida: 10 bloques, como los 10 corazones de Minecraft. */
-.hp {
-  height: 18px;
-  background: rgba(0, 0, 0, 0.55);
-  /* Los cortes entre bloques son transparentes: se ve el video a través. */
-  mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0,
-    #000 calc(10% - 3px),
-    transparent calc(10% - 3px),
-    transparent 10%
-  );
+/*
+ * Vida en corazones, con el dibujo del HUD de Minecraft (9x9 píxeles): una fila de
+ * casilleros y, encima de cada uno, el corazón rojo recortado en la fracción que le toca
+ * (scoreboard.ts). Como en el juego, cada corazón pisa un píxel del anterior. --px es
+ * cuánto mide en pantalla un píxel del dibujo: siempre entero, para que se vea nítido.
+ */
+.hearts {
+  --px: 3px;
+  display: flex;
 }
 
-.hp__fill {
-  width: 0;
-  height: 100%;
-  background: var(--side);
-  transition: width 0.25s ease-out;
+.heart {
+  position: relative;
+  flex: none;
+  width: calc(9 * var(--px));
+  height: calc(9 * var(--px));
 }
 
-/* Azul es el espejo de Rojo: se llena desde la derecha hacia el centro. */
-.hud__side--blue .hp {
+.heart + .heart {
+  margin-left: calc(-1 * var(--px));
+}
+
+/* Azul es el espejo de Rojo: sus corazones parten desde el borde derecho. */
+.hud__side--blue .hearts {
+  flex-direction: row-reverse;
+}
+
+.hud__side--blue .heart + .heart {
+  margin-left: 0;
+  margin-right: calc(-1 * var(--px));
+}
+
+/*
+ * El espejo llega hasta adentro de cada corazón: en Azul el rojo se vacía desde el lado
+ * del centro, así medio corazón conserva la mitad de afuera (la derecha), igual que la
+ * fila entera. El recorte se calcula como en Rojo y aquí solo se da vuelta el dibujo.
+ */
+.hud__side--blue .heart__fill {
   transform: scaleX(-1);
 }
 
-.hud__side.is-hit .hp__fill {
-  animation: hit 0.4s ease-out;
+.heart__sprite {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-@keyframes hit {
+/* El rojo se recorta desde la derecha; el recorte se anima y la vida cambia sin saltos. */
+.heart__fill {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.3s ease-out;
+}
+
+/* Con dos corazones o menos tiemblan, alternados, igual que en el juego. */
+.hearts[data-level="low"] .heart {
+  animation: heart-shake 0.3s steps(2, end) infinite;
+}
+
+.hearts[data-level="low"] .heart:nth-child(even) {
+  animation-delay: -0.15s;
+}
+
+@keyframes heart-shake {
+  50% {
+    transform: translateY(calc(-1 * var(--px)));
+  }
+}
+
+/* Golpe recibido: el rojo se aclara un instante, como el parpadeo del juego. */
+.hud__side.is-hit .heart__fill {
+  animation: heart-hit 0.4s steps(2, end);
+}
+
+@keyframes heart-hit {
   from {
-    background: #fff;
+    filter: brightness(1.5) saturate(0.55);
+  }
+}
+
+/* Desde 1280 px de ancho los 15 corazones caben con píxeles de 4 px. */
+@media (min-width: 1280px) {
+  .hearts {
+    --px: 4px;
   }
 }
 
@@ -551,6 +607,54 @@ textarea {
   white-space: nowrap;
 }
 
+/*
+ * Modo por rondas: un cuadro por ronda bajo el reloj. Lleno del color de quien la ganó,
+ * gris si fue empate, hueco si falta jugarla; la que está en juego lleva borde claro.
+ */
+.rounds {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rounds[hidden] {
+  display: none;
+}
+
+.rounds__pip {
+  width: 16px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 2px rgba(237, 236, 232, 0.28);
+}
+
+.rounds__pip[data-state="red"] {
+  background: var(--red);
+  box-shadow: none;
+}
+
+.rounds__pip[data-state="blue"] {
+  background: var(--blue);
+  box-shadow: none;
+}
+
+.rounds__pip[data-state="draw"] {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.rounds__pip[data-state="current"] {
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+
+/* La ayuda de los cuadros se abre centrada bajo el reloj. */
+.rounds__pip[data-tip]::after {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 /* ---------- Resultado ---------- */
 
 .winner {
@@ -566,8 +670,36 @@ textarea {
   pointer-events: none;
 }
 
-/* Con el resultado en pantalla, el aviso de "Sin señal" no compite por el centro. */
-.stage:has(.winner:not([hidden])) .player__nosignal > * {
+/*
+ * Fin de una ronda (no de la partida): el mismo cartel, más chico y sin oscurecer el
+ * video, arriba del centro para dejarle el medio a la cuenta regresiva de la ronda que viene.
+ */
+.winner[data-kind="round"] {
+  inset: 190px auto auto 50%;
+  gap: 8px;
+  padding: 14px 24px 16px;
+  background: rgba(6, 7, 9, 0.88);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.winner[data-kind="round"] .winner__title {
+  font-size: 32px;
+}
+
+.winner[data-kind="round"] .winner__detail {
+  color: var(--text);
+  font-size: 16px;
+}
+
+/* El cartel de ronda no apaga las columnas de pensamientos: la partida sigue. */
+.stage:has(.winner[data-kind="round"]:not([hidden])) .thoughts {
+  opacity: 1;
+}
+
+/* Con el resultado o la cuenta regresiva en pantalla, el aviso de "Sin señal" no compite por el centro. */
+.stage:has(.winner:not([hidden])) .player__nosignal > *,
+.stage:has(.countdown:not([hidden])) .player__nosignal > * {
   visibility: hidden;
 }
 
@@ -598,92 +730,467 @@ textarea {
   line-height: 1.4;
 }
 
-/* ---------- Pensamientos (subtítulos) y control de la pelea ---------- */
+/* ---------- Cuenta regresiva ---------- */
 
-.minds {
+/*
+ * "3", "2", "1" y "¡Pelea!" al centro del video antes de cada pelea, en la capa del
+ * resultado (nunca están los dos a la vez). Es solo visual: para lectores de pantalla,
+ * la fase bajo el reloj ya dice "Cuenta regresiva".
+ */
+.countdown {
   position: absolute;
-  inset: auto var(--gutter) 32px var(--gutter);
-  z-index: 3;
+  inset: 0;
+  z-index: 2;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: end;
-  gap: 40px;
+  place-content: center;
+  font: 400 clamp(96px, 18vw, 192px) / 1 var(--pixel);
+  text-align: center;
+  text-shadow:
+    0 6px 0 rgba(0, 0, 0, 0.6),
+    0 0 40px rgba(6, 7, 9, 0.55);
+  pointer-events: none;
 }
 
-.mind {
-  grid-row: 1;
-  max-width: 46ch;
-  padding-left: 16px;
+/* "¡Pelea!" es una palabra entera: va más chica para caber en pantallas angostas. */
+.countdown[data-step="go"] {
+  font-size: clamp(48px, 11vw, 144px);
+}
+
+/* Cada paso es un elemento nuevo (countdown.ts), así el salto se repite con cada número. */
+.countdown__step {
+  display: block;
+  animation: count-pop 0.3s ease-out;
+}
+
+@keyframes count-pop {
+  from {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Pensamientos en vivo ---------- */
+
+/*
+ * Una columna por agente a cada lado del video (Rojo a la izquierda, Azul a la derecha),
+ * desde debajo del marcador hasta el pie. Cada columna es la pila de los últimos
+ * pensamientos de su agente, el más nuevo abajo; las arma scripts/thoughts.ts. El video
+ * sigue siendo el protagonista: las columnas no atrapan el mouse (solo la ficha de cada
+ * acción, para mostrar su ayuda) y cada pensamiento trae su propio velo, que se va
+ * perdiendo hacia el centro de la imagen.
+ */
+.thoughts {
+  position: absolute;
+  /* Arriba, justo bajo las estadísticas del marcador; abajo, a la altura del botón. */
+  inset: 176px var(--gutter) 32px var(--gutter);
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+  transition: opacity 0.4s ease-out;
+}
+
+.thoughts__col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: clamp(220px, 24vw, 340px);
+  min-width: 0;
+  /*
+   * Si la pila no cabe, se corta por arriba, donde está lo más viejo. A los lados no se
+   * corta nada: por ahí se abre la ayuda de las fichas.
+   */
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
+.thoughts__list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * Un pensamiento con la ficha de su acción. El puesto se cuenta desde el más nuevo con
+ * :nth-last-child: el último es el que se está leyendo y los anteriores se achican y se
+ * apagan (--dim) hasta irse. thoughts.ts solo agrega al final y quita los que sobran.
+ */
+.thought {
+  --dim: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 6px;
+  max-height: 240px;
+  padding: 6px 14px 7px 12px;
   border-left: 3px solid var(--side);
-  transition: opacity 0.25s ease-out;
+  background: linear-gradient(to right, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
+  font-size: 17px;
+  opacity: var(--dim);
+  transition:
+    opacity 0.3s ease-out,
+    font-size 0.25s ease-out,
+    max-height 0.3s ease-out,
+    padding 0.3s ease-out,
+    visibility 0.3s;
+  animation: thought-in 0.22s ease-out;
 }
 
-/* Sin novedades hace un rato: el subtítulo se va y deja ver el video. */
-.mind.is-stale {
-  opacity: 0;
-  transition-duration: 1.2s;
+@keyframes thought-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
 }
 
-.mind--red {
-  grid-column: 1;
-}
-
-/* Azul es el espejo: pegado a la derecha, con su regla al lado derecho. */
-.mind--blue {
-  grid-column: 3;
-  justify-self: end;
-  padding: 0 16px 0 0;
+/* Azul es el espejo: su regla va al lado derecho y el velo se pierde hacia la izquierda. */
+.thoughts__col--blue .thought {
+  justify-items: end;
+  padding: 6px 12px 7px 14px;
   border-left: 0;
   border-right: 3px solid var(--side);
+  background: linear-gradient(to left, rgba(6, 7, 9, 0.72), rgba(6, 7, 9, 0.5) 65%, rgba(6, 7, 9, 0.16));
   text-align: right;
 }
 
-.mind__thought {
+.thought:nth-last-child(2) {
+  --dim: 0.82;
+  font-size: 15px;
+}
+
+.thought:nth-last-child(3) {
+  --dim: 0.66;
+  font-size: 14px;
+}
+
+.thought:nth-last-child(4) {
+  --dim: 0.5;
+  font-size: 13px;
+}
+
+.thought:nth-last-child(n + 5) {
+  --dim: 0.36;
+  font-size: 13px;
+}
+
+/* El que ya no cabe entre los visibles se apaga y deja de ocupar lugar. */
+.thought:nth-last-child(n + 6) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Con el mouse sobre la ficha, ese pensamiento recupera su brillo: la ayuda no sale apagada. */
+.thought:has(.thought__chip:hover) {
+  opacity: 1;
+}
+
+/* El más nuevo se lee completo (hasta 5 líneas); los anteriores quedan en una o dos. */
+.thought__text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 5;
+  min-width: 0;
   overflow: hidden;
-  font-size: 19px;
   font-weight: 500;
   line-height: 1.35;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  overflow-wrap: anywhere;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
-/* Última acción: ícono + frase; la llamada a la herramienta tal cual va en el tooltip. */
-.mind__action {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
+.thought:nth-last-child(2) .thought__text {
+  -webkit-line-clamp: 2;
+}
+
+.thought:nth-last-child(n + 3) .thought__text {
+  -webkit-line-clamp: 1;
+}
+
+/*
+ * Lo que el agente le dice en voz alta al otro (modo "chat"): un globo claro dentro de su
+ * columna, con la cola hecha de bloques de 4 px. Es lo único con forma de globo en la
+ * pantalla: lo que piensa va sobre el velo oscuro, lo que dice va sobre papel.
+ */
+.thoughts__col .thought--said {
+  position: relative;
   margin-top: 8px;
-  font-size: 15px;
-  line-height: 1.4;
-  color: rgba(237, 236, 232, 0.88);
+  padding: 8px 13px 9px 11px;
+  border-left-width: 4px;
+  background: var(--text);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
+  color: #0b0b0d;
 }
 
-.mind--blue .mind__action {
-  justify-content: flex-end;
+.thoughts__col--blue .thought--said {
+  padding: 8px 11px 9px 13px;
+  border-right-width: 4px;
+  /* El globo va pegado al borde, pero su texto se lee de izquierda a derecha. */
+  text-align: left;
 }
 
-.mind__action > [data-tool] {
-  display: none;
+.thought--said::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: 10px;
+  width: 4px;
+  height: 4px;
+  background: var(--text);
+  box-shadow:
+    0 4px 0 var(--text),
+    4px 4px 0 var(--text),
+    0 8px 0 var(--text),
+    4px 8px 0 var(--text),
+    8px 8px 0 var(--text);
 }
 
-.mind__action[data-tool="approach"] > [data-tool="approach"],
-.mind__action[data-tool="attack"] > [data-tool="attack"],
-.mind__action[data-tool="retreat"] > [data-tool="retreat"],
-.mind__action[data-tool="shoot"] > [data-tool="shoot"],
-.mind__action[data-tool="eat"] > [data-tool="eat"],
-.mind__action[data-tool="wait"] > [data-tool="wait"] {
+.thoughts__col--blue .thought--said::before {
+  left: auto;
+  right: 10px;
+  box-shadow:
+    0 4px 0 var(--text),
+    -4px 4px 0 var(--text),
+    0 8px 0 var(--text),
+    -4px 8px 0 var(--text),
+    -8px 8px 0 var(--text);
+}
+
+/* Un mensaje se lee entero mientras es el más nuevo; el texto completo queda en "Eventos". */
+.thought--said .thought__text {
+  -webkit-line-clamp: 9;
+  font-weight: 600;
+  text-shadow: none;
+  white-space: pre-line;
+}
+
+/*
+ * Mientras se oye la voz de un mensaje (voice.ts), el globo lleva una marca: un medidor
+ * de voz de píxeles en una pestaña de papel montada sobre su borde, al lado contrario de
+ * la cola. Late mientras suena y se va cuando la frase termina.
+ */
+.thought__voice {
+  position: absolute;
+  top: -14px;
+  right: 8px;
   display: flex;
+  background: var(--text);
+  color: var(--side);
 }
 
-.mind__result {
-  color: rgba(237, 236, 232, 0.62);
+.thoughts__col--blue .thought__voice {
+  right: auto;
+  left: 8px;
 }
 
-.mind__result:empty {
-  display: none;
+.thought--speaking .thought__voice .pixel-icon {
+  animation: speaking 0.6s steps(1) infinite;
+}
+
+@keyframes speaking {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
+ * Mientras un pensamiento se escribe letra a letra, lo que falta ya está en la página
+ * pero invisible: el pensamiento ocupa su alto final desde el principio.
+ */
+.thought__rest {
+  visibility: hidden;
+}
+
+/*
+ * Ficha de la acción que vino con el pensamiento: ícono de la herramienta + frase corta,
+ * como un casillero del juego. La llamada tal cual y su resultado van en la ayuda.
+ */
+.thought__chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 2px 9px 2px 4px;
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(237, 236, 232, 0.24);
+  font-size: 13px;
+  line-height: 1.3;
+  pointer-events: auto;
+  cursor: default;
+}
+
+.thoughts__col--blue .thought__chip {
+  flex-direction: row-reverse;
+  padding: 2px 4px 2px 9px;
+}
+
+.thought__chip .pixel-icon {
+  flex: none;
+}
+
+.thought__label {
+  min-width: 0;
+}
+
+/*
+ * "Pensando": tres cuadros que laten al pie de la columna mientras el agente pelea y
+ * lleva un rato sin decir nada. Su lugar está siempre reservado, así la pila no salta
+ * cuando aparecen o se van.
+ */
+.thoughts__thinking {
+  display: flex;
+  flex: none;
+  align-self: flex-start;
+  gap: 4px;
+  margin-top: 10px;
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
+}
+
+.thoughts__col--blue .thoughts__thinking {
+  align-self: flex-end;
+}
+
+.thoughts__thinking.is-on {
+  opacity: 1;
+}
+
+.thoughts__thinking i {
+  width: 6px;
+  height: 6px;
+  background: var(--side);
+  opacity: 0.6;
+}
+
+.thoughts__thinking.is-on i {
+  animation: thinking 1.2s ease-in-out infinite;
+}
+
+.thoughts__thinking i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thoughts__thinking i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+/* Con el resultado en pantalla el centro es del cartel: las columnas se apagan. */
+.stage:has(.winner:not([hidden])) .thoughts {
+  opacity: 0;
+}
+
+.stage:has(.winner:not([hidden])) .thought__chip {
+  pointer-events: none;
+}
+
+/* Durante la cuenta regresiva las columnas no suben de la mitad: el centro es de los números. */
+.stage:has(.countdown:not([hidden])) .thoughts {
+  top: calc(50% + clamp(60px, 10vw, 110px));
+}
+
+/*
+ * Cuántos pensamientos se ven depende del alto de la ventana: la pila tiene que caber
+ * entre el marcador y el pie aunque todos vengan largos.
+ */
+@media (min-width: 700px) and (max-height: 759px) {
+  .thought:nth-last-child(n + 5) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (min-width: 700px) and (max-height: 689px) {
+  .thought:nth-last-child(n + 4) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@media (min-width: 700px) and (max-height: 619px) {
+  .thought:nth-last-child(n + 3) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* En ventanas altas sobra lugar: los anteriores muestran una línea más. */
+@media (min-width: 700px) and (min-height: 900px) {
+  .thought:nth-last-child(2) .thought__text {
+    -webkit-line-clamp: 3;
+  }
+
+  .thought:nth-last-child(n + 3) .thought__text {
+    -webkit-line-clamp: 2;
+  }
+}
+
+/*
+ * Pantallas angostas: las columnas no caben a los lados del botón, así que terminan
+ * sobre él y se reparten el ancho. Solo se ven los dos pensamientos más nuevos de cada
+ * lado, en letra más chica.
+ */
+@media (max-width: 699px) {
+  .thoughts {
+    bottom: 90px;
+  }
+
+  .thoughts__col {
+    width: calc(50% - 5px);
+  }
+
+  .thoughts__col .thought {
+    gap: 4px;
+    padding: 5px 8px 6px;
+    font-size: 13px;
+  }
+
+  .thoughts__col .thought:nth-last-child(2) {
+    font-size: 12px;
+  }
+
+  .thoughts__col .thought:nth-last-child(n + 3) {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .thought__chip {
+    gap: 5px;
+    font-size: 11.5px;
+  }
 }
 
 /* Estadísticas bajo la barra de vida: ícono de píxeles + número, como el HUD del juego. */
@@ -698,7 +1205,10 @@ textarea {
   flex-direction: row-reverse;
 }
 
-/* Ítem en la mano: un casillero como los del inventario del juego. */
+/*
+ * Ítem en la mano: un casillero como los del inventario del juego. El ícono lo dibuja
+ * scoreboard.ts; si el ítem no tiene ícono, el casillero queda vacío.
+ */
 .slot dd {
   display: grid;
   place-items: center;
@@ -708,13 +1218,7 @@ textarea {
   box-shadow: inset 0 0 0 2px rgba(237, 236, 232, 0.3);
 }
 
-.slot dd > [data-item] {
-  display: none;
-}
-
-.slot[data-item="sword"] dd > [data-item="sword"],
-.slot[data-item="bow"] dd > [data-item="bow"],
-.slot[data-item="food"] dd > [data-item="food"] {
+.slot__icon {
   display: flex;
 }
 
@@ -739,16 +1243,21 @@ textarea {
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
 }
 
+/* Botón de la pelea: abajo al centro del video, entre las dos columnas de pensamientos. */
 .controls {
-  grid-column: 2;
-  grid-row: 1;
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  z-index: 3;
   width: 190px;
+  transform: translateX(-50%);
 }
 
 /* Un solo botón a la vez: iniciar cuando no hay pelea, detener cuando la hay. */
 body[data-phase="preparing"] #btn-start,
 body[data-phase="running"] #btn-start,
-body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
+body[data-phase="intermission"] #btn-start,
+body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="intermission"]) #btn-stop {
   display: none;
 }
 
@@ -861,6 +1370,33 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 /* La lista llena el alto de la columna de prompts, sin estirarla. */
+.feed__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Transcripción de la pelea que está (o estuvo recién) en pantalla. */
+.feed__transcript {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+.feed__transcript:hover,
+.feed__transcript:focus-visible {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.feed__transcript[data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
 .feed__list {
   position: absolute;
   inset: 44px 0 0 28px;
@@ -904,6 +1440,19 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 
 .feed-item--action .feed-item__text {
   color: var(--muted);
+}
+
+/* Modo "chat": lo que un agente le dice al otro va entre comillas, del color de su lado. */
+.feed-item--message .feed-item__text {
+  color: var(--side, var(--text));
+}
+
+.feed-item--message .feed-item__text::before {
+  content: "«";
+}
+
+.feed-item--message .feed-item__text::after {
+  content: "»";
 }
 
 .feed-item--damage .feed-item__text,
@@ -963,6 +1512,18 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   gap: 14px;
 }
 
+/* "Copiar del rojo / del azul": arriba a la derecha de cada editor. */
+.editor__copy {
+  margin-left: auto;
+}
+
+.preset__active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .editor__count {
   margin-left: auto;
 }
@@ -983,37 +1544,335 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
 }
 
 .editor__text,
-.field select,
-.field input {
+.field select {
   width: 100%;
   border: 1px solid transparent;
-  background: var(--surface);
+  background-color: var(--surface);
 }
 
 .editor__text {
   display: block;
-  min-height: 9.5em;
+  min-height: 16em;
   padding: 12px 14px;
   resize: vertical;
   line-height: 1.5;
 }
 
-.field select,
-.field input {
+/* Desplegable con la misma flecha que el selector de modelo, en vez de la del navegador. */
+.field select {
   height: 38px;
-  padding: 0 10px;
+  padding: 0 34px 0 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238d9098' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
   font-size: 14px;
+  appearance: none;
+  cursor: pointer;
 }
 
 .editor__text:focus,
-.field select:focus,
-.field input:focus {
+.field select:focus {
   outline: none;
   border-color: var(--side);
 }
 
-.field input::placeholder {
-  color: var(--faint);
+.field select:hover {
+  border-color: var(--side);
+}
+
+/* ---------- Comunicación entre agentes ---------- */
+
+/* Ajustes de la partida: siempre en 2 columnas (1 en pantallas angostas). */
+.match-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px 48px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 640px) {
+  .match-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.match-settings[hidden] {
+  display: none;
+}
+
+.comms {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+
+/*
+ * Interruptor (límite de tiempo): un riel cuadrado con un bloque que se corre, como el
+ * resto de la página. El checkbox real queda encima, invisible, para el teclado y el clic.
+ */
+.switch {
+  cursor: pointer;
+}
+
+.switch__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch__track {
+  display: flex;
+  flex: none;
+  align-items: center;
+  width: 56px;
+  height: 28px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  transition: border-color 0.15s;
+}
+
+.switch__track i {
+  width: 18px;
+  height: 18px;
+  background: var(--faint);
+  transition:
+    transform 0.15s ease-out,
+    background 0.15s;
+}
+
+.switch input:checked + .switch__track {
+  border-color: var(--text);
+}
+
+.switch input:checked + .switch__track i {
+  background: var(--text);
+  transform: translateX(28px);
+}
+
+.switch input:focus-visible + .switch__track {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.switch input:disabled ~ * {
+  opacity: 0.5;
+}
+
+.switch__state {
+  font-size: 15px;
+}
+
+/* Duración de la pelea: cantidad y unidad, en una línea, con el mismo aspecto que los desplegables. */
+.duration {
+  display: flex;
+  gap: 8px;
+}
+
+.duration[hidden] {
+  display: none;
+}
+
+.duration input,
+.duration select {
+  height: 38px;
+  border: 1px solid transparent;
+  background-color: var(--surface);
+  font-size: 14px;
+}
+
+.duration input {
+  width: 84px;
+  padding: 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.duration select {
+  padding: 0 34px 0 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238d9098' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  appearance: none;
+  cursor: pointer;
+}
+
+.duration input:hover,
+.duration select:hover,
+.duration input:focus,
+.duration select:focus {
+  outline: none;
+  border-color: var(--text);
+}
+
+.comms__description {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.comms__hint {
+  color: var(--text);
+}
+
+.comms > .btn {
+  justify-self: start;
+}
+
+.bench-settings {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.series-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.count-input,
+.series-fields input[type="number"] {
+  width: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+/* Reglas del entrenador, bajo el kit de cada editor. */
+.rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.rules legend {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.rules__item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* ---------- Kit ---------- */
+
+/* Kit de cada lado: un desplegable, una línea que lo describe y su inventario dibujado. */
+.kit {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kit__description {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/*
+ * Inventario del kit, como el del juego: arriba los cuatro casilleros de armadura (con
+ * los efectos permanentes a su lado) y abajo los nueve de la barra rápida. Las columnas
+ * se achican junto con el editor, así el bloque nunca ensancha la página.
+ */
+.inv {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 36px));
+  gap: 8px 2px;
+}
+
+.inv__slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Cantidad en la esquina, como en el juego, a la misma escala de píxel que el ícono. */
+.inv__count {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font: 400 16px/1 var(--pixel);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+/* Ítem encantado: borde violeta y un destello en la esquina. Cuál encantamiento, en el tooltip. */
+.inv__slot.is-enchanted {
+  box-shadow: inset 0 0 0 1px var(--glint);
+}
+
+.inv__slot.is-enchanted::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  background:
+    linear-gradient(var(--glint), var(--glint)) center / 2px 6px no-repeat,
+    linear-gradient(var(--glint), var(--glint)) center / 6px 2px no-repeat;
+}
+
+/* Efectos permanentes del kit ("Velocidad I"): ocupan el resto de la fila de la armadura. */
+/* La mano secundaria queda un poco separada de la armadura. */
+.inv__slot--offhand {
+  margin-left: 6px;
+}
+
+.inv__effects {
+  grid-column: 6 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 10px;
+}
+
+.inv__effect {
+  padding: 3px 8px;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* En la mitad derecha del inventario la ayuda se alinea a la derecha, para no salirse del editor. */
+.inv__slot:nth-child(n + 11)[data-tip]::after,
+.inv__effect[data-tip]::after {
+  left: auto;
+  right: 0;
 }
 
 .editor__options {
@@ -1140,21 +1999,6 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   color: var(--muted);
 }
 
-/* Proveedor e id del modelo a mano: plegado, para quien lo necesite. */
-.advanced summary {
-  width: fit-content;
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.advanced__fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-  gap: 10px;
-  margin-top: 10px;
-}
-
 .field {
   display: grid;
   gap: 4px;
@@ -1191,6 +2035,469 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   gap: 8px 12px;
   font-size: 13px;
   color: var(--amber);
+}
+
+/* ---------- Historial y prompts marcados ---------- */
+
+.history {
+  margin-top: 72px;
+  border-top: 1px solid var(--line);
+}
+
+/* El historial parte plegado: una línea con su título y cuánto hay adentro. */
+.history__toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 28px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.history__toggle::-webkit-details-marker {
+  display: none;
+}
+
+/* Flecha de "se despliega", dibujada con bordes: apunta a la derecha y gira al abrir. */
+.history__toggle::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease-out;
+}
+
+.history[open] > .history__toggle::before {
+  transform: rotate(45deg);
+}
+
+.history__toggle:hover::before {
+  border-color: var(--text);
+}
+
+.history__count {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.history__hint {
+  margin-bottom: 20px;
+}
+
+.history[open] {
+  padding-bottom: 24px;
+}
+
+.history__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Filtros: el elegido queda lleno; las etiquetas son los mismos botones. */
+.filter {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  background: none;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filter:hover {
+  border-color: var(--text);
+}
+
+.filter[aria-pressed="true"] {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+.history__summary {
+  margin-bottom: 16px;
+  font-size: 15px;
+}
+
+.history__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history__empty {
+  padding: 24px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/*
+ * Una pelea es una sola fila: Rojo a la izquierda y Azul a la derecha, como en el
+ * marcador. El que ganó lleva su bloque lleno y la corona; el que perdió queda hueco y
+ * apagado. A la derecha, en íconos, lo marcado y los ajustes; lo escrito va al abrirla.
+ */
+.bout {
+  border-top: 1px solid var(--line);
+}
+
+.row {
+  display: grid;
+  /* La última columna es fija: así el bloque de Azul queda alineado en todas las filas. */
+  grid-template-columns: 8px minmax(0, 1fr) 64px minmax(0, 1fr) 236px;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.row::-webkit-details-marker {
+  display: none;
+}
+
+.row::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--faint);
+  border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease-out;
+}
+
+.bout__fold[open] > .row::before {
+  transform: rotate(45deg);
+}
+
+.row:hover::before {
+  border-color: var(--text);
+}
+
+.row__side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Azul es el espejo: su bloque queda pegado al centro por el otro lado. */
+.row__side[data-side="blue"] {
+  flex-direction: row-reverse;
+}
+
+.row__name {
+  flex: none;
+  padding: 4px 8px 5px;
+  background: var(--side);
+  color: #0b0b0d;
+  font: 400 16px/1 var(--pixel);
+}
+
+/* Perdió: hueco y apagado. */
+.row__side[data-outcome="lost"] .row__name {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--faint);
+}
+
+.row__side[data-outcome="lost"] .row__model {
+  opacity: 0.5;
+}
+
+/* Sin ganador (empate, detenida, error o sin resultado): los dos huecos, de su color. */
+.row__side[data-outcome="draw"] .row__name,
+.row__side[data-outcome="none"] .row__name {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--side);
+  color: var(--side);
+}
+
+/* El modelo ocupa lo que sobra y, si no cabe, se corta con puntos suspensivos. */
+.row__model {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.row__model .model-tag__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Lugar de la corona: mide lo mismo con o sin corona, para que nada se corra entre filas. */
+.row__crown {
+  display: flex;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--amber);
+}
+
+.row__mid {
+  display: flex;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+/* Marcador de una serie por rondas. */
+.row__score {
+  color: var(--text);
+  font: 400 16px/1 var(--pixel);
+  white-space: nowrap;
+}
+
+.row__mid--live {
+  align-items: center;
+  gap: 6px;
+  color: var(--ok);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.row__mid--live::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--ok);
+  animation: blink 1.2s steps(2, end) infinite;
+}
+
+/* Íconos, duración y hora, cada uno en su columna. */
+.row__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 78px;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row__icons {
+  display: grid;
+  grid-template-columns: repeat(4, 22px);
+  justify-content: end;
+  gap: 6px;
+}
+
+.row__length,
+.row__when {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.row__icon {
+  display: flex;
+  width: 22px;
+  height: 22px;
+}
+
+.row__flag {
+  color: var(--side);
+}
+
+.row__when {
+  color: var(--faint);
+}
+
+/* La ayuda de lo que está al borde derecho se abre hacia la izquierda. */
+.row__meta [data-tip]::after,
+.row__side[data-side="blue"] [data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
+/* Lo de adentro parte en la misma columna que los nombres de la fila. */
+.bout__body {
+  display: grid;
+  gap: 14px;
+  padding: 6px 0 26px 56px;
+}
+
+.bout__facts {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Las rondas de una serie, una por línea. */
+.bout__rounds {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.bout__transcript {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+.bout__transcript:hover,
+.bout__transcript:focus-visible {
+  color: var(--text);
+}
+
+.bout__why {
+  max-width: 80ch;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.bout__sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 40px;
+}
+
+.bout__side {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--side);
+}
+
+.bout__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.bout__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--side);
+}
+
+.bout__kit {
+  color: var(--muted);
+}
+
+.bout__outcome {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.bout__outcome[data-outcome="lost"] {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* El prompt se ve en tres líneas; "Ver completo" lo abre. */
+.bout__prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  max-width: 78ch;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.bout__prompt.is-open {
+  display: block;
+}
+
+.bout__stats {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* La marca: etiquetas del color del lado y, debajo, la nota de quien marcó. */
+.bout__flag {
+  display: grid;
+  gap: 6px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tags__item {
+  padding: 3px 8px;
+  background: var(--side);
+  color: #0b0b0d;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tags__item--plain {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--side);
+  color: var(--side);
+}
+
+.bout__note {
+  max-width: 70ch;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.bout__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.flag-form {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 4px;
+}
+
+.flag-form input,
+.flag-form textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.flag-form input:focus,
+.flag-form textarea:focus {
+  border-color: var(--text);
+  outline: none;
+}
+
+.flag-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.flag-form__hint {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 /* ---------- Pie y avisos ---------- */

@@ -1,4 +1,4 @@
-# Arena de prompts — desarrollo local.
+# Prompt Arena — desarrollo local.
 #
 # Se usa ENCIMA de docker-compose.yml (no reemplaza nada, solo publica puertos en
 # el loopback de tu máquina). Docker corre la infraestructura pesada (Minecraft,
@@ -21,6 +21,9 @@
 #
 # En local la cámara usa el render propio (CAMERA_MODE=viewer): no necesita GPU ni el
 # cliente real de Minecraft, que es como se transmite en el servidor (infra/stream).
+#
+# La voz de los agentes (ELEVENLABS_*, VOICE_*) no necesita nada aquí: en local el
+# orquestador corre en tu máquina y lee esas variables del mismo `.env` al arrancar.
 
 services:
   minecraft:

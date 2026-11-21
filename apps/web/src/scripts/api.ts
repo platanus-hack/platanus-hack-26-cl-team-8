@@ -1,16 +1,29 @@
 import {
   API_ROUTES,
+  FlaggedPromptSchema,
   AgentConfigSchema,
   MatchRecordSchema,
+  MatchSettingsSchema,
   MatchStateSchema,
+  ModelsResponseSchema,
   ServerDefaultsSchema,
   type AgentConfig,
   type MatchRecord,
+  type MatchSettings,
   type MatchState,
+  type ModelsResponse,
   type PromptsResponse,
   type ServerDefaults,
   type Side,
   type UpdatePromptBody,
+  type UpdateSettingsBody,
+  type FlagBody,
+  type FlaggedPrompt,
+  JudgementSchema,
+  type BenchOptions,
+  type PresetsResponse,
+  type BenchReport,
+  type Judgement,
 } from "@phack/protocol";
 import { MOCK, apiUrl } from "./config";
 
@@ -112,6 +125,14 @@ export function savePrompt(side: Side, body: UpdatePromptBody): Promise<AgentCon
   return request(API_ROUTES.prompt(side), AgentConfigSchema, { method: "PUT", body });
 }
 
+export function fetchSettings(): Promise<MatchSettings> {
+  return request(API_ROUTES.settings, MatchSettingsSchema);
+}
+
+export function saveSettings(body: UpdateSettingsBody): Promise<MatchSettings> {
+  return request(API_ROUTES.settings, MatchSettingsSchema, { method: "PUT", body });
+}
+
 export function startMatch(): Promise<MatchState> {
   return request(API_ROUTES.matchStart, MatchStateSchema, { method: "POST" });
 }
@@ -125,8 +146,77 @@ export function fetchMatches(): Promise<MatchRecord[]> {
   return request(API_ROUTES.matches, { parse: (data) => MatchRecordSchema.array().parse(data) });
 }
 
+/** Prompts marcados, los más recientes primero. */
+export function fetchFlags(): Promise<FlaggedPrompt[]> {
+  return request(API_ROUTES.flags, { parse: (data) => FlaggedPromptSchema.array().parse(data) });
+}
+
+/** Marca (o edita la marca de) el prompt de un lado en una pelea. */
+export function saveFlag(matchId: string, side: Side, body: FlagBody): Promise<FlaggedPrompt> {
+  return request(API_ROUTES.flag(matchId, side), FlaggedPromptSchema, { method: "PUT", body });
+}
+
+export function removeFlag(matchId: string, side: Side): Promise<unknown> {
+  return request(API_ROUTES.flag(matchId, side), { parse: (data) => data }, { method: "DELETE" });
+}
+
 export function fetchDefaults(): Promise<ServerDefaults> {
   return request(API_ROUTES.defaults, ServerDefaultsSchema);
+}
+
+/** Modelos que se pueden elegir: el servidor ya dejó fuera los que pasan del tope de precio. */
+export function fetchModels(): Promise<ModelsResponse> {
+  return request(API_ROUTES.models, ModelsResponseSchema);
+}
+
+/** Tablero de benchmarks, calculado por el servidor con todo el historial. */
+export function fetchBench(options: BenchOptions = {}): Promise<BenchReport> {
+  const query = new URLSearchParams();
+  if (options.scenario) query.set("scenario", options.scenario);
+  if (options.minMatches !== undefined) query.set("min", String(options.minMatches));
+  const path = query.size > 0 ? `${API_ROUTES.bench}?${query}` : API_ROUTES.bench;
+  return request(path, {
+    parse: (data) => {
+      const report = data as BenchReport;
+      if (typeof report !== "object" || report === null || !Array.isArray(report.models)) throw new Error("formato");
+      return report;
+    },
+  });
+}
+
+/** Pide al LLM juez que califique una pelea. */
+export function judgeMatch(matchId: string): Promise<Judgement> {
+  return request(API_ROUTES.judge(matchId), JudgementSchema, { method: "POST" });
+}
+
+/** Pre-ajustes de benchmark y cómo va la batería. */
+const presetsParser: Parser<PresetsResponse> = {
+  parse: (data) => {
+    const value = data as PresetsResponse;
+    if (typeof value !== "object" || value === null || !Array.isArray(value.presets) || typeof value.suite !== "object") {
+      throw new Error("formato");
+    }
+    return value;
+  },
+};
+
+/** Carga un pre-ajuste; con `start`, lo ejecuta ("todos" corre la batería completa). */
+export function runPreset(id: string, start: boolean): Promise<PresetsResponse> {
+  return request(API_ROUTES.preset(encodeURIComponent(id)), presetsParser, { method: "POST", body: { start } });
+}
+
+/** Archiva el historial de peleas en el servidor (el tablero queda vacío). */
+export function clearHistory(): Promise<{ archived: string | null }> {
+  return request(
+    API_ROUTES.history,
+    {
+      parse: (data) => {
+        const value = data as { archived?: unknown };
+        return { archived: typeof value?.archived === "string" ? value.archived : null };
+      },
+    },
+    { method: "DELETE", body: { confirm: "BORRAR" } },
+  );
 }
 
 export function describeError(err: unknown): string {

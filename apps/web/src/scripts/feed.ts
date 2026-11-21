@@ -2,7 +2,7 @@ import type { Side } from "@phack/protocol";
 import { byId, el } from "./dom";
 import { SIDE_LABEL, formatTime } from "./format";
 
-export type FeedKind = "thought" | "action" | "damage" | "death" | "system" | "warn" | "error";
+export type FeedKind = "thought" | "message" | "action" | "damage" | "death" | "system" | "warn" | "error";
 
 export type FeedEntry = {
   at: number;
@@ -19,6 +19,7 @@ const BOTTOM_SLACK = 48;
 
 const KIND_LABEL: Record<FeedKind, string> = {
   thought: "piensa",
+  message: "dice",
   action: "actúa",
   damage: "daño",
   death: "cae",

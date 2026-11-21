@@ -40,10 +40,7 @@ export interface LlmClient {
   complete(req: LlmRequest): Promise<LlmResponse>;
 }
 
+/** Claves de los proveedores que necesitan una ("mock" no usa). */
 export type ApiKeys = {
   vercel?: string;
-  openai?: string;
-  anthropic?: string;
-  openrouter?: string;
-  gateway?: string;
 };

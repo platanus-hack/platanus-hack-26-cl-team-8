@@ -6,10 +6,12 @@
     "node": "22.x"
   },
   "scripts": {
+    "profile:context": "pnpm --filter @phack/orchestrator exec tsx ../../scripts/profile-context.ts",
     "dev": "pnpm --parallel --filter @phack/orchestrator --filter @phack/web run dev",
     "local:setup": "bash scripts/local/setup.sh",
     "local": "bash scripts/local/dev.sh",
     "local:check": "node scripts/local-check.mjs",
+    "items": "node scripts/items/catalog.mjs",
     "local:install": "pnpm install --filter \"!@phack/camera\"",
     "local:infra": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d minecraft mediamtx",
     "local:camera": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build camera",
