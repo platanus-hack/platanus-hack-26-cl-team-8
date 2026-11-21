@@ -16,6 +16,7 @@ import {
 } from "@phack/protocol";
 import { describeError, fetchPrompts, savePrompt, saveSettings } from "./api";
 import { byId, setText } from "./dom";
+import { initPresetPicker } from "./presetpicker";
 import { showToast } from "./toast";
 
 /**
@@ -134,6 +135,7 @@ async function mirrorRedToBlue(button: HTMLButtonElement): Promise<void> {
 }
 
 export function initBenchSettings(): void {
+  initPresetPicker("main");
   els = {
     scenario: byId<HTMLSelectElement>("scenario"),
     scenarioDescription: byId("scenario-description"),

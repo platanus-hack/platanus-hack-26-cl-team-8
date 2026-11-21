@@ -300,6 +300,14 @@ for (const [i, winner] of (["red", "blue", "red"] as const).entries()) {
 
 const JUDGED = new Map<string, Judgement>();
 
+/** "Borrar historial" en la maqueta: el tablero queda vacío hasta recargar la página. */
+export function clearMockBench(): number {
+  const count = records.length;
+  records.splice(0, records.length);
+  JUDGED.clear();
+  return count;
+}
+
 export function mockBenchReport(options: BenchOptions = {}): BenchReport {
   const all = records.map((record) => {
     const judgement = JUDGED.get(record.id);

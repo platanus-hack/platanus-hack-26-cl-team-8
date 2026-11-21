@@ -52,6 +52,10 @@ import {
   FlagBodySchema,
   DEFAULT_PROMPTS,
   DEFAULT_SETTINGS,
+  BENCH_PRESETS,
+  SUITE_ALL,
+  findPreset,
+  type SuiteStatus,
   LEGACY_SERIES_ROUNDS,
   ScenarioIdSchema,
   normalizeTags,
@@ -829,6 +833,9 @@ const mockFlags: FlaggedPrompt[] = [
   flagOf(HISTORY[2]!, "blue", ["perla al inicio", "gana por vida"], ""),
 ];
 
+/** Batería de pre-ajustes de la maqueta: no avanza sola, solo muestra el estado. */
+let mockSuite: SuiteStatus = { running: false, queue: [], index: 0, done: 0, stoppedReason: null };
+
 export type MockError = { status: number; message: string };
 
 function fail(status: number, message: string): never {
@@ -875,6 +882,41 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
     const judgement = mockJudge(decodeURIComponent(judgePath[1]!));
     if (!judgement) fail(404, "Esa pelea no está en el historial");
     return judgement;
+  }
+  if (method === "GET" && path === API_ROUTES.presets) return { presets: BENCH_PRESETS, suite: mockSuite };
+  if (method === "POST" && path === API_ROUTES.presetsStop) {
+    if (mockSuite.running) mockSuite = { ...mockSuite, running: false, stoppedReason: "detenida a mano" };
+    return { presets: BENCH_PRESETS, suite: mockSuite };
+  }
+  const presetPath = /^\/api\/presets\/([^/]+)$/.exec(path);
+  if (presetPath && method === "POST") {
+    const id = decodeURIComponent(presetPath[1]!);
+    const start = (init?.body as { start?: unknown } | undefined)?.start === true;
+    const queue = id === SUITE_ALL ? BENCH_PRESETS.map((p) => p.id) : [id];
+    const first = findPreset(queue[0] ?? "");
+    if (!first) fail(404, `No existe el pre-ajuste "${id}"`);
+    if (mockSuite.running || phase === "preparing" || phase === "running") fail(409, "Hay una pelea o una batería en curso");
+    // Igual que el servidor: ajustes y prompts del pre-ajuste, con el modelo de cada lado.
+    Object.assign(settings, first.settings);
+    settings.mode = settings.rounds > 1 ? "rounds" : "single";
+    for (const side of ["red", "blue"] as const) {
+      const model = first.mirrorModel ? prompts.red : prompts[side];
+      prompts[side] = { ...prompts[side], prompt: first.prompts[side].prompt, kit: first.prompts[side].kit, provider: model.provider, model: model.model };
+    }
+    emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
+    emit?.({ type: "prompts", at: Date.now(), prompts });
+    if (start || id === SUITE_ALL) {
+      mockSuite = { running: id === SUITE_ALL, queue, index: 0, done: 0, stoppedReason: null };
+      setPhase("preparing");
+    }
+    return { presets: BENCH_PRESETS, suite: mockSuite };
+  }
+  if (method === "DELETE" && path === API_ROUTES.history) {
+    if ((init?.body as { confirm?: unknown } | undefined)?.confirm !== "BORRAR") fail(400, 'Para borrar el historial manda { "confirm": "BORRAR" }');
+    const { clearMockBench } = await import("./mockbench");
+    const count = clearMockBench();
+    HISTORY.splice(0, HISTORY.length);
+    return { archived: count > 0 ? "matches-maqueta.jsonl" : null };
   }
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
   if (method === "GET" && path === API_ROUTES.models) return models;

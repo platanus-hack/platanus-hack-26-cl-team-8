@@ -1712,6 +1712,24 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   justify-self: start;
 }
 
+/* Pre-ajustes de benchmark (scripts/presetpicker.ts): ocupa toda la fila. */
+.preset {
+  display: grid;
+  flex-basis: 100%;
+  gap: 6px;
+}
+
+.preset__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+.preset__select select {
+  min-width: 240px;
+}
+
 .bench-settings {
   padding-top: 16px;
   border-top: 1px solid var(--line);

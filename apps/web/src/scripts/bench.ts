@@ -15,7 +15,8 @@ import {
   type SeriesBench,
   type Side,
 } from "@phack/protocol";
-import { describeError, fetchBench, judgeMatch } from "./api";
+import { clearHistory, describeError, fetchBench, judgeMatch } from "./api";
+import { initPresetPicker } from "./presetpicker";
 import { MOCK, apiUrl } from "./config";
 import { byId, el, setText } from "./dom";
 import { formatDateTime } from "./format";
@@ -437,6 +438,7 @@ async function load(): Promise<void> {
     renderJudge(report);
     const which = report.scenario ? SCENARIOS[report.scenario].name : "todos los escenarios";
     const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+    status.dataset.matches = String(Object.values(report.scenarios).reduce((a, b) => a + b, 0));
     setText(status, `${which} · ${plural(report.matches, "partida", "partidas")} · ${plural(report.rounds, "ronda", "rondas")} · actualizado ${formatDateTime(report.generatedAt)}`);
   } catch (err) {
     setText(status, `No se pudo cargar el tablero: ${describeError(err)}`);
@@ -444,6 +446,60 @@ async function load(): Promise<void> {
 }
 
 byId("bench-refresh").addEventListener("click", () => void load());
+
+// ---------- Pruebas automáticas ----------
+
+initPresetPicker("bench", () => void load());
+
+// ---------- Borrar historial: dos confirmaciones (y el servidor pide "BORRAR") ----------
+
+{
+  const start = byId<HTMLButtonElement>("clear-start");
+  const step1 = byId("clear-step1");
+  const step2 = byId("clear-step2");
+  const word = byId<HTMLInputElement>("clear-word");
+  const confirm = byId<HTMLButtonElement>("clear-confirm");
+  let total = 0;
+  const reset = (): void => {
+    step1.hidden = true;
+    step2.hidden = true;
+    start.hidden = false;
+    word.value = "";
+    confirm.disabled = true;
+  };
+  start.addEventListener("click", () => {
+    total = Number(status.dataset.matches ?? "0");
+    setText(
+      byId("clear-step1-text"),
+      `¿Seguro? Se quitarán todas las peleas del historial y del tablero (${total} ${total === 1 ? "partida cuenta" : "partidas cuentan"} hoy en el tablero, más las detenidas o con error).`,
+    );
+    start.hidden = true;
+    step1.hidden = false;
+  });
+  byId("clear-cancel1").addEventListener("click", reset);
+  byId("clear-cancel2").addEventListener("click", reset);
+  byId("clear-next").addEventListener("click", () => {
+    step1.hidden = true;
+    step2.hidden = false;
+    word.focus();
+  });
+  word.addEventListener("input", () => {
+    confirm.disabled = word.value.trim() !== "BORRAR";
+  });
+  confirm.addEventListener("click", () => {
+    confirm.disabled = true;
+    clearHistory()
+      .then(({ archived }) => {
+        showToast(archived ? `Historial borrado (archivado como ${archived}).` : "No había historial que borrar.", "ok");
+        reset();
+        void load();
+      })
+      .catch((err) => {
+        showToast(describeError(err));
+        confirm.disabled = false;
+      });
+  });
+}
 {
   const initial = readFilters();
   scenarioSelect.value = initial.scenario ?? "all";
