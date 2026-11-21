@@ -141,10 +141,10 @@ describe("kitToolDefs", () => {
     }
   });
 
-  it('"reason" es texto libre con lo que piensa', () => {
+  it('"reason" pide una decisión breve sin repeticiones', () => {
     for (const def of TOOL_DEFS) {
       const properties = (def.parameters as { properties: Record<string, { description?: string }> }).properties;
-      expect(properties.reason?.description).toBe("Opcional: lo que piensas al elegir esta acción. Texto libre; el público lo ve.");
+      expect(properties.reason?.description).toBe("Opcional: una frase de hasta 10 palabras con tu decisión. Omítela si repite lo anterior; el público la ve.");
     }
   });
 
@@ -198,11 +198,14 @@ describe("modo chat: argumento say", () => {
     expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(MAX_AGENT_MESSAGE_LENGTH);
   });
 
-  it("la descripción de say solo cuenta la mecánica", () => {
+  it("la descripción de say pide brevedad y explica la pausa", () => {
     const [def] = kitToolDefs(KITS.classic, "chat");
     const say = (def?.parameters as { properties: Record<string, { description: string }> }).properties["say"];
     expect(say?.description).toContain(String(MAX_AGENT_MESSAGE_LENGTH));
     expect(say?.description).toContain("tal cual");
+    expect(say?.description).toContain("hasta 10 palabras");
+    expect(say?.description).toContain("al menos 4 segundos");
+    expect(say?.description).toContain("sayCooldown");
   });
 });
 

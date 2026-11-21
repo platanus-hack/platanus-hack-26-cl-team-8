@@ -106,9 +106,13 @@ describe("buildSystemPrompt", () => {
     expect(chat).toContain('"rivalMessages"');
     expect(chat).toContain('"conversation"');
     expect(chat).toContain(
-      "- Es texto libre: qué decir, cómo, en qué idioma y cuándo lo decides tú. El sistema lo entrega tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
+      "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
     );
     expect(chat).toContain('Tu "reason" es privado');
+    expect(chat).toContain("una sola frase de hasta 10 palabras");
+    expect(chat).toContain("Puedes actuar en silencio");
+    expect(chat).toContain("al menos 4 segundos entre tus mensajes");
+    expect(chat).toContain('"sayCooldown"');
   });
 
   it("en modo chat describe la mecánica sin aconsejar qué decir ni si creerle", () => {
@@ -155,7 +159,8 @@ describe("buildSystemPrompt", () => {
       '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.',
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.',
       "- wait: quedarte quieto.",
-      'Todas aceptan un argumento opcional "reason" con lo que piensas al decidir: texto libre, el público lo ve en vivo.',
+      'Todas aceptan un argumento opcional "reason": una sola frase de hasta 10 palabras con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
+      "Si respondes sin herramientas, usa también una sola frase de hasta 10 palabras.",
     ]);
   });
 

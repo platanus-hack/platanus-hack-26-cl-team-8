@@ -1,5 +1,5 @@
 import { ARENA, CUSTOM_KIT_POTIONS, MAX_AGENT_MESSAGE_LENGTH, MAX_HEALTH, kitItemTitle, type CommsMode, type Kit, type KitItem, type Side } from "@phack/protocol";
-import { CONVERSATION_MAX } from "./comms";
+import { CONVERSATION_MAX, MESSAGE_INTERVAL_MS, RESPONSE_MAX_WORDS } from "./comms";
 import { isOpenEnded, QUEUE_STEP_DEFAULT_MS } from "./plan";
 import {
   ALWAYS_EDIBLE,
@@ -260,9 +260,11 @@ function commsSection(comms: CommsMode): string[] {
       return [
         "COMUNICACIÓN",
         `- Pueden hablarse: todas las herramientas aceptan un argumento opcional "say" con lo que le dices al otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Hablar no te cuesta la acción: la herramienta se ejecuta igual.`,
+        `- Habla con naturalidad: una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras. Di solo algo nuevo; no narres cada acción ni contestes por obligación. Puedes actuar en silencio.`,
+        `- Deja al menos ${MESSAGE_INTERVAL_MS / 1000} segundos entre tus mensajes. Si aparece "sayCooldown", son los segundos que faltan para volver a hablar: omite "say" mientras tanto. Los mensajes enviados durante esa pausa no se entregan ni se guardan para después; la acción sí se ejecuta.`,
         '- Lo que él te dice te llega en el campo "rivalMessages" de tu observación (el más nuevo al final).',
         `- El campo "conversation" de tu observación trae los últimos ${CONVERSATION_MAX} mensajes entre los dos, el más viejo primero; "from" dice quién lo mandó ("tú" o "rival").`,
-        "- Es texto libre: qué decir, cómo, en qué idioma y cuándo lo decides tú. El sistema lo entrega tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
+        "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
         '- Tu "reason" es privado: el otro agente no lo ve (el público sí, y también ve los mensajes).',
       ];
   }
@@ -299,7 +301,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
-    'Todas aceptan un argumento opcional "reason" con lo que piensas al decidir: texto libre, el público lo ve en vivo.',
+    `Todas aceptan un argumento opcional "reason": una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.`,
+    `Si respondes sin herramientas, usa también una sola frase de hasta ${RESPONSE_MAX_WORDS} palabras.`,
     "",
     ...kitSection(input.kit),
     "",
@@ -311,7 +314,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
     '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
     '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa las opciones de continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
-    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. reason es texto libre con lo que piensas al elegir esta acción.',
+    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Resume solo la decisión en reason, si aporta algo nuevo.',
     "",
     ...commsSection(input.comms),
     "",
