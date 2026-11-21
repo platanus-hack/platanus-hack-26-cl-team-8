@@ -43,7 +43,7 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende" },
     },
     final: { red: status("red"), blue: status("blue") },
-    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single" },
+    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
     series: null,
     result: { winner: "red", reason: "kill" },
   };
@@ -318,15 +318,15 @@ describe("MatchStore.update", () => {
 
 describe("parseSettings", () => {
   it("vuelve a los ajustes por defecto si el archivo está corrupto o trae basura", () => {
-    expect(parseSettings("{no")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
-    expect(parseSettings("{}")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
-    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
-    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single" });
+    expect(parseSettings("{no")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings("{}")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("guarda el límite de tiempo apagado; un archivo de antes lo trae encendido", () => {
-    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single" });
-    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
+    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("guarda la duración elegida; una fuera de rango vuelve a la del servidor", () => {
@@ -337,6 +337,6 @@ describe("parseSettings", () => {
 
   it("un registro de historial sin ajustes vale como sin comunicación", () => {
     const { settings: _omit, ...old } = record("viejo");
-    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
+    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 });

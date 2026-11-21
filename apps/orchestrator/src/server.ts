@@ -29,6 +29,7 @@ import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
+import { isSpeechId } from "./speech";
 import { isTranscriptId } from "./transcript";
 
 export type ServerDeps = {
@@ -66,6 +67,11 @@ export type ServerDeps = {
    * se puede guardar el LLM simulado: cualquier pelea con "vercel" fallaría al empezar.
    */
   vercelKeyConfigured: boolean;
+  /**
+   * Audio de las frases de los agentes (ver speech.ts). get espera la síntesis en curso y
+   * devuelve null si el id no existe o falló. Opcional: sin esto la ruta siempre da 404.
+   */
+  speech?: { get(speechId: string): Promise<Buffer | null> };
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
 };
@@ -119,6 +125,26 @@ function describeBodyError(issues: { path: (string | number)[]; code: string }[]
   if (first?.path[0] === "provider") return "Proveedor inválido: usa mock o vercel";
   if (first?.path[0] === "model") return "Modelo inválido: debe ser texto de hasta 100 caracteres";
   return "Cuerpo inválido: se espera un JSON { prompt, provider?, model?, kit? }";
+}
+
+/**
+ * Un solo rango "bytes=inicio-fin" (o "bytes=-n", los últimos n). null = sin Range o en una
+ * forma que no se atiende (se responde entero); "invalid" = fuera del archivo (HTTP 416).
+ */
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | "invalid" {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header?.trim() ?? "");
+  if (!match) return null;
+  const [, from = "", to = ""] = match;
+  if (from === "" && to === "") return null;
+  if (from === "") {
+    const suffix = Number(to);
+    if (suffix === 0) return "invalid";
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(from);
+  const end = to === "" ? size - 1 : Math.min(Number(to), size - 1);
+  if (start >= size || end < start) return "invalid";
+  return { start, end };
 }
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
@@ -221,7 +247,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null) y mode = single o rounds`,
+              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds y voice = true o false`,
             ),
           );
       }
@@ -231,6 +257,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (body.data.timer !== undefined) change.timer = body.data.timer;
       if (body.data.timerSeconds !== undefined) change.timerSeconds = body.data.timerSeconds;
       if (body.data.mode !== undefined) change.mode = body.data.mode;
+      if (body.data.voice !== undefined) change.voice = body.data.voice;
       const updated = await settings.update(change);
       deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
       return updated;
@@ -312,6 +339,27 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       return { ok: true };
     });
   }
+
+  // Audio de una frase: la web lo pide apenas llega el mensaje; si aún se genera, se espera.
+  app.get<{ Params: { id: string } }>(API_ROUTES.speech(":id"), async (req, reply) => {
+    const id = req.params.id;
+    if (!isSpeechId(id)) return reply.code(400).send(errorBody("Id de audio inválido"));
+    const audio = deps.speech ? await deps.speech.get(id) : null;
+    if (!audio) return reply.code(404).send(errorBody("No hay audio para esa frase"));
+    reply.header("Cache-Control", "public, max-age=3600, immutable");
+    reply.header("Accept-Ranges", "bytes");
+    // Safari pide el audio por partes (Range): se le responde solo la parte pedida.
+    const range = parseRange(req.headers.range, audio.length);
+    if (range === "invalid") {
+      reply.header("Content-Range", `bytes */${audio.length}`);
+      return reply.code(416).send(errorBody("Rango inválido"));
+    }
+    if (range) {
+      reply.header("Content-Range", `bytes ${range.start}-${range.end}/${audio.length}`);
+      return reply.code(206).type("audio/mpeg").send(audio.subarray(range.start, range.end + 1));
+    }
+    return reply.type("audio/mpeg").send(audio);
+  });
 
   app.get(API_ROUTES.defaults, async () => deps.defaults);
 

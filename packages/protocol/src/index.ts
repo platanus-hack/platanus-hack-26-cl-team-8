@@ -713,9 +713,28 @@ export const MatchSettingsSchema = z.object({
   timerSeconds: TimerSecondsSchema.nullable().catch(null).default(null),
   /** Una pelea o una serie por rondas (ver MATCH_MODES). */
   mode: MatchModeSchema.catch(DEFAULT_MODE).default(DEFAULT_MODE),
+  /**
+   * Voz: lo que un agente le dice al otro (modo "chat") además se oye, con una voz por
+   * lado. El audio lo genera el servidor (ElevenLabs) y lo reproduce la web. Solo tiene
+   * efecto si el servidor tiene la clave configurada (ver ServerDefaults.voice).
+   */
+  voice: z.boolean().catch(false).default(false),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
-export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true, timerSeconds: null, mode: DEFAULT_MODE };
+export const DEFAULT_SETTINGS: MatchSettings = {
+  comms: DEFAULT_COMMS,
+  timer: true,
+  timerSeconds: null,
+  mode: DEFAULT_MODE,
+  voice: false,
+};
+
+export const VOICE_LABELS = {
+  on: "Lo que los agentes se dicen también se oye, con una voz distinta por lado.",
+  off: "Lo que los agentes se dicen solo se lee.",
+  /** El servidor no tiene clave de ElevenLabs: el interruptor no hace nada. */
+  unavailable: "Este servidor no tiene voz configurada.",
+} as const;
 
 export const TIMER_LABELS = {
   on: "Si se acaba el tiempo y nadie ha caído, gana quien tenga más vida.",
@@ -729,6 +748,7 @@ export const UpdateSettingsBodySchema = z
     timer: z.boolean().optional(),
     timerSeconds: TimerSecondsSchema.nullable().optional(),
     mode: MatchModeSchema.optional(),
+    voice: z.boolean().optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined));
 export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
@@ -939,8 +959,18 @@ export type FlaggedPrompt = z.infer<typeof FlaggedPromptSchema>;
 // ---------- Eventos en tiempo real (WS orquestador -> web) ----------
 
 const ThoughtEventSchema = z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() });
-/** Modo "chat": `side` le dijo `text` al rival. */
-const MessageEventSchema = z.object({ type: z.literal("message"), at: z.number(), side: SideSchema, text: z.string() });
+/**
+ * Modo "chat": `side` le dijo `text` al rival. Con la voz encendida trae `speechId`: el
+ * audio de esa frase se pide en API_ROUTES.speech(speechId). El evento sale de inmediato,
+ * sin esperar al audio; la ruta espera lo que falte.
+ */
+const MessageEventSchema = z.object({
+  type: z.literal("message"),
+  at: z.number(),
+  side: SideSchema,
+  text: z.string(),
+  speechId: z.string().optional(),
+});
 const ActionEventSchema = z.object({
   type: z.literal("action"),
   at: z.number(),
@@ -1103,7 +1133,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode? } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice? } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
@@ -1113,6 +1143,8 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/matches/:id/flags/:side body FlagBody { tags, note } -> FlaggedPrompt
 //                                       (marca o edita; 404 si esa pelea ya no está a la mano)
 //   DELETE /api/matches/:id/flags/:side -> { ok: true }   (quita la marca)
+//   GET  /api/speech/:id             -> audio/mpeg de una frase dicha por un agente (ver "message").
+//                                       Espera a que el audio esté listo; 404 si no existe o falló.
 //   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   WS   /api/ws                     -> stream de ArenaEvent en JSON (solo servidor -> cliente)
@@ -1128,6 +1160,7 @@ export const API_ROUTES = {
   matches: "/api/matches",
   transcript: (matchId: string) => `/api/matches/${matchId}/transcript`,
   flags: "/api/flags",
+  speech: (speechId: string) => `/api/speech/${speechId}`,
   flag: (matchId: string, side: Side) => `/api/matches/${matchId}/flags/${side}`,
   defaults: "/api/defaults",
   models: "/api/models",
@@ -1149,6 +1182,8 @@ export const ServerDefaultsSchema = z.object({
   }),
   /** Duración por defecto de una pelea con límite de tiempo, en segundos (MATCH_DURATION_SECONDS). */
   matchDurationSeconds: z.number().default(180),
+  /** Si el servidor puede dar voz a los agentes (tiene clave de ElevenLabs y una voz por lado). */
+  voice: z.object({ available: z.boolean() }).default({ available: false }),
 });
 export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 

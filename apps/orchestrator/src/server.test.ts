@@ -17,7 +17,7 @@ import {
 } from "@phack/protocol";
 import { FlagStore } from "./flags";
 import { Hub } from "./hub";
-import { applyModelPolicy, buildServer, type ModelPolicy } from "./server";
+import { applyModelPolicy, buildServer, parseRange, type ModelPolicy } from "./server";
 import { defaultPrompts } from "./store";
 
 /** Regla que aplica PUT /api/prompts/:side antes de guardar (la parte pura de la ruta). */
@@ -87,17 +87,19 @@ type ServerOptions = {
   history?: MatchRecord[];
   /** Prompts marcados; sin esto las rutas de marcas no existen. */
   flags?: FlagStore;
+  /** Audio de las frases; sin esto la ruta de audio siempre da 404. */
+  speech?: { get(speechId: string): Promise<Buffer | null> };
 };
 
 /** Ajustes guardados por PUT /api/settings; cada servidor de prueba parte de los de por defecto. */
-let settings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single" };
+let settings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false };
 
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
-  settings = { comms: "none", timer: true, timerSeconds: null, mode: "single" };
+  settings = { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false };
   app = await buildServer({
     hub: new Hub(),
     match: {
@@ -118,6 +120,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
+    ...(opts.speech ? { speech: opts.speech } : {}),
     settings: {
       get: () => ({ ...settings }),
       update: async (change) => {
@@ -135,20 +138,20 @@ describe("PUT /api/settings", () => {
 
   it("cambia solo lo que viene: apagar el límite de tiempo no toca la comunicación", async () => {
     const s = await server();
-    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single" });
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single" });
-    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
+    expect((await put(s, { comms: "chat" })).json()).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect((await put(s, { timer: false })).json()).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false });
+    expect((await put(s, { comms: "none", timer: true })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("acepta el modo de la partida y cambia solo eso", async () => {
     const s = await server();
-    expect((await put(s, { timer: false })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
-    expect((await put(s, { mode: "rounds" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "rounds" });
-    expect((await put(s, { mode: "single" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
+    expect((await put(s, { timer: false })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single", voice: false });
+    expect((await put(s, { mode: "rounds" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "rounds", voice: false });
+    expect((await put(s, { mode: "single" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single", voice: false });
     const bad = await put(s, { mode: "torneo" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toContain("mode = single o rounds");
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: false, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("guarda la duración elegida y la suelta con null", async () => {
@@ -168,13 +171,24 @@ describe("PUT /api/settings", () => {
     }
   });
 
+  it("acepta la voz y cambia solo eso", async () => {
+    const s = await server();
+    expect((await put(s, { comms: "chat" })).json()).toMatchObject({ comms: "chat", voice: false });
+    expect((await put(s, { voice: true })).json()).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: true });
+    expect((await put(s, { timer: false })).json()).toMatchObject({ timer: false, voice: true });
+    const bad = await put(s, { voice: "sí" });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toContain("voice = true o false");
+    expect((await put(s, { voice: false })).json()).toMatchObject({ comms: "chat", voice: false });
+  });
+
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
     const s = await server();
     for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }]) {
       const res = await put(s, payload);
       expect(res.statusCode).toBe(400);
     }
-    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single" });
+    expect((await s.inject({ method: "GET", url: "/api/settings" })).json()).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 });
 
@@ -274,7 +288,7 @@ function matchRecord(id: string): MatchRecord {
     durationMs: 4000,
     configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
     final: { red: agentStatus("red"), blue: agentStatus("blue") },
-    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single" },
+    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
     series: null,
     result: { winner: "blue", reason: "kill" },
   };
@@ -289,7 +303,7 @@ function liveState(id: string): MatchState {
     countdownEndsAt: null,
     agents: { red: agentStatus("red"), blue: agentStatus("blue") },
     configs: { red: { side: "red", prompt: "en vivo rojo" }, blue: { side: "blue", prompt: "en vivo azul" } },
-    settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
+    settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
     series: null,
     result: null,
   };
@@ -316,7 +330,7 @@ describe("rutas de prompts marcados", () => {
       note: "aguantó",
       config: { side: "blue", prompt: "en vivo azul" },
       rival: { side: "red", prompt: "en vivo rojo" },
-      settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single" },
+      settings: { comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
       outcome: null,
     });
     const list = await s.inject({ method: "GET", url: API_ROUTES.flags });
@@ -395,5 +409,61 @@ describe("rutas de prompts marcados", () => {
   it("sin el almacén de marcas las rutas no existen", async () => {
     const res = await (await server()).inject({ method: "GET", url: API_ROUTES.flags });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("GET /api/speech/:id", () => {
+  const SPEECH_ID = "3f0c2d4e-8a1b-4c5d-9e6f-a7b8c9d0e1f2";
+  const MP3 = Buffer.from("ID3-audio-de-prueba");
+  const speech = { get: async (id: string) => (id === SPEECH_ID ? MP3 : null) };
+
+  it("entrega el audio con su tipo y caché larga", async () => {
+    const s = await server({ speech });
+    const res = await s.inject({ method: "GET", url: API_ROUTES.speech(SPEECH_ID) });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toBe("audio/mpeg");
+    expect(res.headers["cache-control"]).toBe("public, max-age=3600, immutable");
+    expect(res.rawPayload.equals(MP3)).toBe(true);
+  });
+
+  it("atiende un rango de bytes (Safari)", async () => {
+    const s = await server({ speech });
+    const res = await s.inject({ method: "GET", url: API_ROUTES.speech(SPEECH_ID), headers: { range: "bytes=0-1" } });
+    expect(res.statusCode).toBe(206);
+    expect(res.headers["content-range"]).toBe(`bytes 0-1/${MP3.length}`);
+    expect(res.rawPayload.toString()).toBe("ID");
+    const out = await s.inject({ method: "GET", url: API_ROUTES.speech(SPEECH_ID), headers: { range: "bytes=999-" } });
+    expect(out.statusCode).toBe(416);
+  });
+
+  it("400 con un id mal formado y 404 si no hay audio", async () => {
+    const s = await server({ speech });
+    for (const id of ["no-es-un-id", "..%2F..%2Fsettings", SPEECH_ID.toUpperCase()]) {
+      const res = await s.inject({ method: "GET", url: API_ROUTES.speech(id) });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe("Id de audio inválido");
+    }
+    const missing = await s.inject({ method: "GET", url: API_ROUTES.speech(randomUUID()) });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error).toBe("No hay audio para esa frase");
+  });
+
+  it("sin servicio de voz siempre da 404", async () => {
+    const s = await server();
+    const res = await s.inject({ method: "GET", url: API_ROUTES.speech(SPEECH_ID) });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("parseRange", () => {
+  it("lee un rango simple y deja pasar lo que no atiende", () => {
+    expect(parseRange(undefined, 10)).toBeNull();
+    expect(parseRange("bytes=2-4", 10)).toEqual({ start: 2, end: 4 });
+    expect(parseRange("bytes=5-", 10)).toEqual({ start: 5, end: 9 });
+    expect(parseRange("bytes=-3", 10)).toEqual({ start: 7, end: 9 });
+    expect(parseRange("bytes=0-99", 10)).toEqual({ start: 0, end: 9 });
+    expect(parseRange("bytes=0-1,4-5", 10)).toBeNull();
+    expect(parseRange("bytes=10-", 10)).toBe("invalid");
+    expect(parseRange("bytes=4-2", 10)).toBe("invalid");
   });
 });

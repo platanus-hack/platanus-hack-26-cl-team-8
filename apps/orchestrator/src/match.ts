@@ -113,6 +113,16 @@ export type MatchDeps = {
   sleep?: SleepFn;
   /** Solo para los tests: reemplaza ROUNDS_REFILL_KIT. */
   roundsRefillKit?: boolean;
+  /**
+   * Voz de los mensajes (ver speech.ts). Opcional: sin esto, o sin clave, los mensajes solo
+   * se leen. request no espera ni lanza: devuelve el id del audio o null.
+   */
+  speech?: {
+    available(): boolean;
+    request(side: Side, text: string): string | null;
+    /** Despierta las voces antes de la pelea; opcional. */
+    warm?(): void;
+  };
 };
 
 /** Se lanza al intentar iniciar una pelea cuando ya hay una en curso (HTTP 409). */
@@ -304,6 +314,7 @@ export class MatchManager {
     const { rcon, env } = this.deps;
     try {
       this.log(ctx, "info", "Preparando la pelea…");
+      this.warmVoices(ctx);
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm(ctx, "red"), blue: this.makeLlm(ctx, "blue") };
       // Los kits personalizados se arman en paralelo (cada uno con el LLM de su lado).
@@ -716,6 +727,32 @@ export class MatchManager {
     return this.deps.createLlmClient({ provider, model, apiKeys: this.apiKeys() });
   }
 
+  /**
+   * Si en esta partida los agentes van a hablar en voz alta, despierta las voces mientras se
+   * prepara la arena: así la primera frase no llega tarde. No espera ni puede fallar la pelea.
+   */
+  private warmVoices(ctx: MatchContext): void {
+    const { voice, comms } = this.state.settings;
+    if (!voice || comms !== "chat") return;
+    try {
+      this.deps.speech?.warm?.();
+    } catch (err) {
+      this.log(ctx, "warn", `No se pudieron preparar las voces: ${errorMessage(err)}`);
+    }
+  }
+
+  /** Id del audio de un mensaje, o null si la voz está apagada, no hay servicio o falló. */
+  private requestSpeech(ctx: MatchContext, side: Side, message: string): string | null {
+    const speech = this.deps.speech;
+    if (!speech || !this.state.settings.voice) return null;
+    try {
+      return speech.available() ? speech.request(side, message) : null;
+    } catch (err) {
+      this.log(ctx, "warn", `No se pudo pedir la voz de un mensaje: ${errorMessage(err)}`);
+      return null;
+    }
+  }
+
   private apiKeys(): ApiKeys {
     return { vercel: this.deps.env.VERCEL_API_KEY || undefined };
   }
@@ -768,7 +805,9 @@ export class MatchManager {
         // igual (por punto de código), así que un mensaje nunca se corta dos veces. Sin
         // filtros por contenido ni por repetición; el luchador ya espacia los mensajes.
         const message = cutCodePoints(text, MAX_AGENT_MESSAGE_LENGTH);
-        this.emit(ctx, { type: "message", at: Date.now(), side, text: message });
+        // Con la voz encendida se pide el audio en el acto; el mensaje sale igual, sin esperarlo.
+        const speechId = this.requestSpeech(ctx, side, message);
+        this.emit(ctx, { type: "message", at: Date.now(), side, text: message, ...(speechId ? { speechId } : {}) });
         ctx.fighters[otherSide(side)]?.hear("message", message);
       },
       onAction: (tool, args, result) => {
