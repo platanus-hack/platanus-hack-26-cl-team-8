@@ -662,6 +662,18 @@ describe("MatchManager: kit personalizado", () => {
 });
 
 describe("MatchManager: transcripción", () => {
+  it("conserva el perfil de bytes junto con los tokens reales y valida su contrato", async () => {
+    const t = setup();
+    await startRunning(t);
+    const contextProfile = { totalBytes: 25_000, systemBytes: 9000, toolsBytes: 9000, observationBytes: 4000, historyBytes: 2500, historyMessages: 8, observationFields: { world: 2000 } };
+    t.ev("red").onDecision({ ...decision(700, { inputTokens: 7000, outputTokens: 40 }), contextProfile });
+    const entry = t.entries.find(({ entry }) => entry.type === "decision")?.entry;
+    expect(entry).toMatchObject({ tokensIn: 7000, tokensOut: 40, contextProfile });
+    // Los lectores de transcripciones no deben eliminar el perfil al validar con zod.
+    const { parseTranscript } = await import("@phack/protocol");
+    expect(parseTranscript(`${JSON.stringify(entry)}\n`)[0]).toMatchObject({ contextProfile });
+    await t.manager.stop();
+  });
   it("empieza con start, anota la pelea en orden y termina con end", async () => {
     const t = setup({ comms: "chat" });
     await startRunning(t);

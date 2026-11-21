@@ -3,7 +3,54 @@ import { isBreakable } from "./items";
 import type { Vec3Like } from "./geometry";
 
 export type WorldCell = { name: string; solid: boolean };
-export type SpatialSnapshot = ReturnType<typeof scanWorld>;
+export type CellBox = [number, number, number, number, number, number];
+type LabeledBox = [...CellBox, number];
+export type SpatialRegion = [...CellBox, number, number];
+export type RawSpatialSnapshot = {
+  bounds: Bounds;
+  coverage: { center: Vec3Like; radius: number };
+  blocks: [number, number, number, string][];
+  unknown: [number, number, number][];
+  materials: Record<string, { solid: boolean; hazard: boolean }>;
+  breakable: [number, number, number][];
+};
+export type SpatialSnapshot = ReturnType<typeof packWorld>;
+
+/** Cajas exactas, sin llenar huecos ni mezclar materiales o permisos. Extremos inclusivos. */
+function packCells(cells: [number, number, number, number][]): LabeledBox[] {
+  const grid = new Map(cells.map(([x, y, z, value]) => [`${x},${y},${z}`, value]));
+  const boxes: LabeledBox[] = [];
+  const same = (x: number, y: number, z: number, value: number) => grid.get(`${x},${y},${z}`) === value;
+  for (const [x, y, z, value] of [...cells].sort((a, b) => a[1] - b[1] || a[2] - b[2] || a[0] - b[0])) {
+    if (!same(x, y, z, value)) continue;
+    let x1 = x, y1 = y, z1 = z;
+    while (same(x1 + 1, y, z, value)) x1++;
+    const rowMatches = (atY: number, atZ: number) => {
+      for (let atX = x; atX <= x1; atX++) if (!same(atX, atY, atZ, value)) return false;
+      return true;
+    };
+    while (rowMatches(y, z1 + 1)) z1++;
+    const layerMatches = (atY: number) => {
+      for (let atZ = z; atZ <= z1; atZ++) if (!rowMatches(atY, atZ)) return false;
+      return true;
+    };
+    while (layerMatches(y1 + 1)) y1++;
+    boxes.push([x, y, z, x1, y1, z1, value]);
+    for (let atY = y; atY <= y1; atY++) for (let atZ = z; atZ <= z1; atZ++) for (let atX = x; atX <= x1; atX++) grid.delete(`${atX},${atY},${atZ}`);
+  }
+  return boxes;
+}
+
+/** Misma geometría y radio, con paleta de materiales y regiones homogéneas. */
+export function packWorld(raw: RawSpatialSnapshot) {
+  const palette = Object.entries(raw.materials).map(([name, info]) => ({ name, ...info }));
+  const indices = new Map(palette.map((material, index) => [material.name, index]));
+  const editable = new Set(raw.breakable.map((p) => p.join(",")));
+  const cells: [number, number, number, number][] = raw.blocks.map(([x, y, z, name]) => [x, y, z, (indices.get(name) ?? 0) * 2 + Number(editable.has(`${x},${y},${z}`))]);
+  const regions = packCells(cells).map(([x, y, z, x1, y1, z1, value]): SpatialRegion => [x, y, z, x1, y1, z1, Math.floor(value / 2), value % 2]);
+  const unknown = packCells(raw.unknown.map(([x, y, z]) => [x, y, z, 0])).map(([x, y, z, x1, y1, z1]): CellBox => [x, y, z, x1, y1, z1]);
+  return { format: "cuboids-v1" as const, bounds: raw.bounds, coverage: { center: raw.coverage.center, radius: raw.coverage.radius }, palette, regions, unknown };
+}
 
 /** Snapshot íntegro del volumen, incluidos piso, paredes y techo. El aire conocido es implícito. */
 export function scanWorld(bounds: Bounds, read: (position: Vec3Like) => WorldCell | null, canModify: (position: Vec3Like) => boolean, coverage: { center: Vec3Like; radius: number }) {
@@ -29,7 +76,7 @@ export function scanWorld(bounds: Bounds, read: (position: Vec3Like) => WorldCel
       }
     }
   }
-  return { bounds, coverage: { ...coverage, shape: "horizontal cylinder; toda la altura de bounds" }, encoding: "blocks=[x,y,z,material]; unknown=[x,y,z]; solo las demás celdas DENTRO del radio y bounds son aire conocido; fuera de cobertura no se ha observado", blocks, unknown, materials, breakable };
+  return packWorld({ bounds, coverage, blocks, unknown, materials, breakable });
 }
 
 /** Línea de visión hasta el objetivo; desconocido no se considera transparente. */

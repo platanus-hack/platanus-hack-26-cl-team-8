@@ -466,6 +466,7 @@ export class MatchManager {
       entry.tokensIn = count(d.usage.inputTokens);
       entry.tokensOut = count(d.usage.outputTokens);
     }
+    if (d.contextProfile) entry.contextProfile = d.contextProfile;
     if (typeof d.observation === "object" && d.observation !== null) entry.observation = { ...d.observation };
     if (typeof d.response === "object" && d.response !== null) {
       const toolCalls = Array.isArray(d.response.toolCalls) ? d.response.toolCalls : [];

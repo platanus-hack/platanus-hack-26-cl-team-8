@@ -917,6 +917,16 @@ export const TranscriptEntrySchema = z.discriminatedUnion("type", [
     ms: z.number(),
     tokensIn: z.number().optional(),
     tokensOut: z.number().optional(),
+    /** Bytes del contexto, separados de los tokens reales informados por el proveedor. */
+    contextProfile: z.object({
+      totalBytes: z.number().nonnegative(),
+      systemBytes: z.number().nonnegative(),
+      toolsBytes: z.number().nonnegative(),
+      historyBytes: z.number().nonnegative(),
+      observationBytes: z.number().nonnegative(),
+      historyMessages: z.number().int().nonnegative(),
+      observationFields: z.record(z.number().nonnegative()),
+    }).optional(),
     /** La observación que recibió el LLM, tal cual. */
     observation: z.record(z.unknown()).optional(),
     /**

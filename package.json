@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "scripts": {
+    "profile:context": "pnpm --filter @phack/orchestrator exec tsx ../../scripts/profile-context.ts",
     "dev": "pnpm --parallel --filter @phack/orchestrator --filter @phack/web run dev",
     "local:setup": "bash scripts/local/setup.sh",
     "local": "bash scripts/local/dev.sh",

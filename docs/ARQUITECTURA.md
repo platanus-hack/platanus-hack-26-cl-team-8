@@ -224,7 +224,9 @@ Regla general: **todo lo que cruza entre procesos se define primero en `packages
 
 Cada decisión recibe un snapshot nuevo del entorno dentro de un cilindro horizontal centrado en el agente, con toda la altura útil de la arena. `AGENT_OBSERVATION_RADIUS=16` configura su radio en bloques (admite 8–64); se pasa tanto en desarrollo local como en Docker. El contexto general de la arena y los límites modificables (`buildBounds`) se conservan independientemente del radio.
 
-`world.blocks` contiene tuplas `[x,y,z,material]` en coordenadas absolutas; `world.unknown` distingue chunks no recibidos de aire. Solo las celdas dentro de `world.bounds` **y** el radio indicado en `world.coverage` que no figuran en esas listas son aire conocido. Fuera de esa cobertura no se afirma nada del terreno. `materials` aporta colisión y peligros; `breakable` enumera celdas modificables. Es información de bloques recibida por el cliente, incluso detrás de obstáculos dentro del radio; no una imagen desde sus ojos. `nearbyEntities` incluye agentes, proyectiles y objetos tirados dentro del mismo radio. La posición del rival que recibe el cliente sigue disponible por separado en `opponentState`, que distingue ubicación conocida de línea libre de bloques sólidos (`lineOfSight`/`opponentVisible`).
+`world.format="cuboids-v1"` describe el mismo volumen sin enumerar por separado miles de bloques iguales. `palette` identifica materiales, colisión y peligros; cada entrada de `regions` es `[x0,y0,z0,x1,y1,z1,indiceMaterial,modificable]`, una caja de celdas con extremos inclusivos. `modificable=1` permite romper esa región, `0` protege la arena. Los permisos distintos nunca se fusionan, aunque el material sea el mismo. `unknown` usa cajas `[x0,y0,z0,x1,y1,z1]` de celdas no recibidas. La compresión conserva cada bloque y hueco dentro del radio; no reconstruye piso ni celdas desconocidas a partir de suposiciones.
+
+Solo las celdas dentro de `world.bounds` **y** el radio de `world.coverage` que no figuran en `regions` ni `unknown` son aire conocido. Fuera de cobertura no se afirma nada del terreno. Es información de bloques recibida por el cliente, incluso detrás de obstáculos dentro del radio; no una imagen desde sus ojos. `nearbyEntities` incluye agentes, proyectiles y objetos tirados dentro del mismo radio. La posición del rival sigue disponible por separado en `opponentState`, que distingue ubicación conocida de línea libre de bloques sólidos (`lineOfSight`/`opponentVisible`).
 
 `resources` describe el inventario vivo por casilla, con cantidades, encantamientos, desgaste, usos que implementan las herramientas y restricciones de inventario/vida/comida/recarga. El alcance y el terreno se validan al actuar: un uso disponible no garantiza que se pueda ejecutar desde la posición actual. `equipment` y `effects` agregan equipo puesto y efectos activos. El prompt pide reconsiderar los recursos y posibles combinaciones en cada decisión, sin fijar un objetivo distinto de las instrucciones del usuario ni pedir una narración de su deliberación.
 
@@ -237,3 +239,32 @@ Ejemplo de llamada (las coordenadas deben elegirse usando la observación actual
 ```
 
 Las transcripciones existentes guardan la observación completa, las llamadas y sus resultados: permiten revisar qué información recibió cada modelo y si reconsideró su equipo. El mock genera un plano explícito de demostración; no evalúa creatividad ni comprensión espacial de un LLM real. Las llamadas admiten hasta 60 s para no cortar respuestas con planos grandes; las acciones físicas continúan entre decisiones.
+
+### Profiling del contexto
+
+Cada decisión nueva guarda `contextProfile` en la transcripción: bytes UTF-8 del contexto normalizado, separados en prompt de sistema, definiciones de herramientas, observación actual, historial y campos de la observación. `tokensIn` y `tokensOut` siguen siendo los valores reales del proveedor: los bytes no se presentan como tokens ni como dólares. Los lectores siguen aceptando transcripciones anteriores sin ese perfil.
+
+El modelo recibe la observación actual completa en el formato compacto. En el historial se guardan resúmenes de vida, posición, recursos restantes, acción y resultado, además del progreso de construcción y mensajes recientes; se omiten mapas, manuales de objetos y listas de bloques pendientes ya repetidas. El historial se limita a 12 mensajes y 6000 bytes, eliminando turnos completos para conservar las parejas de llamadas y resultados de herramientas. Un turno con un plano enorme puede salir entero del historial; el plano vigente y su progreso permanecen en la observación actual y en el ejecutor.
+
+Para analizar una transcripción descargada de `GET /api/matches/:id/transcript`, sin llamar al LLM:
+
+```bash
+pnpm profile:context /ruta/absoluta/pelea.jsonl
+pnpm profile:context /ruta/absoluta/pelea.jsonl --json
+pnpm profile:context /ruta/absoluta/pelea-antigua.jsonl --assert-reduction=0.80
+```
+
+El script reporta los tokens históricos medidos y reproduce por separado la compresión del mapa, el resumen del historial y ambos cambios. Mide bytes del contexto normalizado, no el payload HTTP del SDK. Las transcripciones antiguas no guardaban los IDs ni todos los resultados exactos de cada request: el replay usa los mismos placeholders en sus cuatro variantes y conserva el prompt original para aislar las dos optimizaciones. En transcripciones nuevas, `measured.recordedContextBytes` muestra el perfil registrado por el agente. El ahorro facturado requiere comparar también el uso que informe el proveedor después del despliegue.
+
+Muestra real analizada el 21 de noviembre de 2026: 22 decisiones, 1.587.691 tokens de entrada (media 72.168, p90 92.794, máximo 107.493) y 3788 de salida. En la última observación, el mapa era el 90% de sus bytes y contenía 1832 bloques de piso, paredes y techo.
+
+| Replay sobre las mismas 22 decisiones | Media de contexto por llamada | p90 |
+|---|---:|---:|
+| Formato anterior | 176.661 bytes | 227.485 bytes |
+| Solo compresión del mapa | 41.087 bytes | 49.227 bytes |
+| Solo resumen del historial | 60.453 bytes | 72.805 bytes |
+| Ambos cambios | 26.842 bytes | 29.069 bytes |
+
+La reducción media del replay es 84,8%. Conserva el radio de 16 bloques, las coordenadas, el inventario actual y la libertad de construcción. Estos resultados son offline: no se gastaron llamadas adicionales ni se atribuyen tokens futuros al proveedor.
+
+La comprobación adicional sobre cuatro partidas (102 decisiones) suma 7.712.080 tokens de entrada históricos y 19.154 de salida. El replay ponderado por llamadas pasa de 184.756 a 27.578 bytes por llamada: 85,1% menos contexto. Por partida, la reducción va de 79,7% a 85,6%; la muestra más corta tiene ocho decisiones y todavía no acumulaba todo el historial.
