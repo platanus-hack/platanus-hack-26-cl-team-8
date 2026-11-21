@@ -17,9 +17,6 @@ import {
   isWaterBucket,
 } from "./items";
 import {
-  BUILD_COOLDOWN_MS,
-  BUILD_MIN_DISTANCE,
-  BOX_BLOCKS,
   DIG_MAX_SECONDS,
   kitToolNames,
   THROW_MAX_DISTANCE,
@@ -27,8 +24,6 @@ import {
   LAVA_MIN_DISTANCE,
   PEARL_COOLDOWN_MS,
   PEARL_MIN_HEALTH,
-  TOWER_HEIGHT,
-  WALL_BLOCKS,
   type ToolName,
 } from "./tools";
 
@@ -82,9 +77,9 @@ function toolLine(tool: ToolName, kit: Kit): string {
     case "pearl":
       return '- pearl: lanzar una perla de ender y aparecer donde cae; con target "rival" caes junto al rival y con target "away" lejos de él.';
     case "build":
-      return '- build: con shape "wall", levantar un muro de bloques entre tú y el rival; con shape "tower", subirte a una torre de bloques; con shape "box", encerrarte en una caja de bloques con techo; con shape "block", poner una columna de 2 bloques a tu lado. Te deja quieto 1 a 4 segundos.';
+      return '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.';
     case "dig":
-      return '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti.';
+      return '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.';
     case "shield":
       return "- shield: levantar el escudo hacia el rival para bloquear golpes y flechas de frente.";
     case "water":
@@ -119,7 +114,7 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
       return `- attack: tu arma por defecto es ${kitItemTitle(weapon)}; da un golpe cada ~${seconds} s.${slower}${choice}${guard}`;
     }
     case "move":
-      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival"). Sigue hasta tu próxima decisión.';
+      return '- move: "strafe" te hace difícil de acertar con flechas; "circle" sirve para buscarle la espalda o salir de una esquina; "keep" con "distance" (por ejemplo 8 para pelear con arco, 2 para cuerpo a cuerpo); "goto" con "place" ("center", "far_corner", "behind_rival") o "position": {x,y,z} para un destino libre. Sigue hasta tu próxima decisión.';
     case "drink":
     case "throw": {
       const kind = tool === "drink" ? "potion" : "splash_potion";
@@ -167,10 +162,10 @@ function mechanicsLine(tool: ToolName, kit: Kit): string | null {
     }
     case "build": {
       const blocks = find(isBuildBlock);
-      if (!blocks) return null;
+      if (!blocks) return "- build: no tienes bloques ahora; puedes usar los que recojas con dig para diseñar un plano libre.";
       const total = kit.items.filter((i) => isBuildBlock(i.item)).reduce((sum, i) => sum + i.count, 0);
       const amount = total > blocks.count ? `${blocks.label} (${total} en total)` : kitItemTitle(blocks);
-      return `- build: ${amount}; cada muro gasta hasta ${WALL_BLOCKS} y el rival puede rodearlo; solo se puede levantar con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena. Una torre gasta ${TOWER_HEIGHT} y te deja ${TOWER_HEIGHT} bloques más arriba: cuerpo a cuerpo el rival no te alcanza, pero con arco sí, y bajar te quita vida por la caída salvo que uses agua bajo tus pies (si tienes). Una caja gasta hasta ${BOX_BLOCKS}: dentro nada te toca, pero el rival puede romperla con dig y tú también tienes que romper un bloque para salir o atacar. Entre una construcción y otra hay ${BUILD_COOLDOWN_MS / 1000} segundos de recarga: mientras dura, la observación trae "buildCooldown" con los segundos que faltan.`;
+      return `- build: ${amount}; define blocks como una lista ordenada de celdas {x,y,z,material}. La geometría la decides tú: puedes combinar materiales, construir apoyos, escaleras, plataformas, pasillos o huecos para mirar. Cada bloque nuevo consume uno del material elegido. Tu cuerpo se acerca para colocarlos respetando alcance y línea de visión. No hay formas fijas ni recarga artificial; la colocación lleva tiempo físico y continúa entre decisiones. Otra herramienta pausa el plano y build sin blocks lo retoma; blocks nuevos lo reemplazan. Consulta construction para conocer progreso y obstáculos. No puedes poner bloques donde hay agentes, fuera de buildBounds o sobre una celda ocupada. Ordena primero los apoyos; si algo falla, corrige el plano o usa dig/move con position.`;
     }
     case "dig": {
       const tools = kit.items.filter((i) => isPickaxe(i.item) || isShears(i.item) || isAxe(i.item));
@@ -227,11 +222,11 @@ function capabilitiesSection(kit: Kit): string[] {
   const tools = kitToolNames(kit);
   const lines = [
     "CAPACIDADES",
-    "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2. Además de acercarte (approach) y alejarte (retreat), con move puedes esquivar de lado, rodear al rival, mantener una distancia o ir a un lugar.",
+    "- Te mueves solo con las herramientas: tu cuerpo busca el camino, rodea obstáculos y sube escalones de 1 bloque, pero no salta huecos ni trepa muros de 2. Además de acercarte (approach) y alejarte (retreat), con move puedes esquivar de lado, rodear al rival, mantener una distancia o ir a un lugar o a coordenadas absolutas con style=goto y position.",
     '- Puedes romper bloques que alguien colocó (dig). El piso, los muros de vidrio y el techo invisible de la arena no se rompen. Lo que rompes cae y lo recoges al pasar encima.',
   ];
   if (tools.includes("build")) {
-    lines.push('- Puedes colocar bloques (build): un muro, una torre para subir o una caja para encerrarte.');
+    lines.push('- Puedes colocar bloques (build) con geometría libre. Diseña tú qué construir y dónde; los materiales del inventario y la física determinan qué se puede ejecutar.');
   } else {
     lines.push("- No tienes bloques para colocar (salvo los que recojas rompiendo).");
   }
@@ -295,7 +290,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
     "- Responde SIEMPRE llamando exactamente a UNA herramienta. Si llamas varias, solo se ejecuta la primera.",
-    "- Repetir la misma herramienta continúa la acción en curso; elegir otra la interrumpe (por ejemplo, cortar 'eat' a medias hace que no comas nada).",
+    "- Repetir la misma herramienta continúa la acción en curso (build con blocks distintos reemplaza el plano); elegir otra la interrumpe (por ejemplo, cortar 'eat' a medias hace que no comas nada).",
     "",
     "HERRAMIENTAS",
     ...kitToolNames(input.kit).map((tool) => toolLine(tool, input.kit)),
@@ -304,6 +299,14 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     ...kitSection(input.kit),
     "",
     ...capabilitiesSection(input.kit),
+    "",
+    "PERCEPCIÓN Y RECURSOS",
+    '- world contiene todos los bloques dentro de un radio horizontal considerable alrededor de ti, en toda la altura útil: coverage indica centro y radio; bounds delimita el volumen. blocks usa [x,y,z,material]. Las coordenadas son absolutas, X/Z horizontales e Y altura. Solo las celdas dentro del radio Y bounds que no figuran en blocks ni unknown son aire conocido. Fuera de cobertura no has observado el terreno: nunca lo supongas vacío.',
+    '- buildBounds da los límites generales para construir o romper; el piso, las paredes y el techo están protegidos. Puedes consultar world.breakable para conocer los bloques modificables observados.',
+    '- opponentState distingue ubicación recibida del servidor de línea de visión real (lineOfSight); opponentVisible indica línea de visión. Conocer la ubicación no significa que puedas disparar a través de un bloque. nearbyEntities muestra entidades dentro de tu radio, incluidos proyectiles y objetos tirados.',
+    '- resources describe tu inventario ACTUAL por casilla: cantidades, encantamientos, desgaste, usos soportados, argumentos y restricciones. equipment describe lo que llevas puesto; effects contiene efectos activos. TU KIT es el equipo inicial; inventory y resources dicen qué conservas ahora. No asumas que un recurso gastado sigue disponible.',
+    '- En CADA decisión reconsidera qué puedes hacer con TODOS los recursos que aún tienes, incluidos los que no has usado. Evalúa si conviene continuar lo actual, usar otro objeto o combinar varios mediante acciones sucesivas, según tus instrucciones y el terreno. Los usos descritos son posibilidades, no una estrategia obligatoria: inventa combinaciones dentro de las herramientas disponibles.',
+    '- Comprueba si la acción anterior produjo el resultado esperado y si el rival o el terreno cambiaron. Puedes conservar el plan si todavía sirve; cámbialo cuando la nueva información lo justifique. Expresa en reason solo la decisión y su motivo breve; no necesitas narrar tu deliberación.',
     "",
     ...commsSection(input.comms),
     "",

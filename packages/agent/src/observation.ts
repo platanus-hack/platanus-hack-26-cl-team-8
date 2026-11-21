@@ -1,7 +1,22 @@
 import type { ConversationLine } from "./comms";
 import { distance3, distanceToWall, round1, type Vec3Like } from "./geometry";
+import type { Bounds, ConstructionPlan } from "./construction";
+import type { describeResources, ResourceItem } from "./resources";
+import type { SpatialSnapshot } from "./spatial";
 
-export type ObservationInput = {
+type SpatialContext = {
+  world?: SpatialSnapshot;
+  buildBounds?: Bounds;
+  resources?: ReturnType<typeof describeResources>;
+  equipment?: Record<string, ResourceItem | null>;
+  motion?: { velocity: Vec3Like; yaw: number; pitch: number; onGround: boolean };
+  effects?: { id: number; name: string; amplifier: number; durationTicks: number }[];
+  opponentState?: { position: Vec3Like; velocity: Vec3Like; yaw: number; pitch: number; lineOfSight: boolean; equipment: ({ name: string; count: number } | null)[] } | null;
+  construction?: ReturnType<ConstructionPlan["snapshot"]> | null;
+  nearbyEntities?: { id: number; name: string; type: string; position: Vec3Like; velocity: Vec3Like; item?: { name: string; count: number } }[];
+};
+
+export type ObservationInput = SpatialContext & {
   /** Epoch ms actual. */
   now: number;
   /** Epoch ms en que partió el bucle de decisiones. */
@@ -22,8 +37,6 @@ export type ObservationInput = {
   lastActionResult: string;
   /** Epoch ms desde el que se puede lanzar otra perla (ausente o pasado = ya se puede). */
   pearlReadyAt?: number;
-  /** Epoch ms desde el que se puede construir otro muro (ausente o pasado = ya se puede). */
-  buildReadyAt?: number;
   /** Lo que se ve de los bloques alrededor (ver Observation). */
   terrain?: { height: number; blocksBetween: number; enclosed: boolean };
   /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
@@ -38,7 +51,7 @@ export type ObservationInput = {
  * mensaje "user". Los campos distance / health / opponentHealth son contrato
  * (el LLM de prueba "mock" depende de ellos).
  */
-export type Observation = {
+export type Observation = SpatialContext & {
   secondsElapsed: number;
   health: number;
   food: number;
@@ -55,8 +68,6 @@ export type Observation = {
   lastActionResult: string;
   /** Segundos que faltan para poder lanzar otra perla. Solo aparece mientras hay recarga. */
   pearlCooldown?: number;
-  /** Segundos que faltan para poder construir otro muro. Solo aparece mientras hay recarga. */
-  buildCooldown?: number;
   /** Altura de tus pies sobre el piso de la arena. Solo aparece si estás arriba de algo. */
   height?: number;
   /** Bloques colocados en la línea recta entre tú y el rival. Solo aparece si hay alguno. */
@@ -100,13 +111,12 @@ export function summarizeInventory(items: { name: string; count: number }[]): Re
 export function buildObservation(input: ObservationInput): Observation {
   const { self, opponent, arena } = input;
   const pearlCooldown = cooldownSeconds(input.pearlReadyAt, input.now);
-  const buildCooldown = cooldownSeconds(input.buildReadyAt, input.now);
   const observation: Observation = {
     secondsElapsed: Math.max(0, Math.round((input.now - input.startedAt) / 1000)),
     health: round1(self.health),
     food: round1(self.food),
     position: roundVec(self.position),
-    opponentVisible: opponent !== null,
+    opponentVisible: opponent !== null && (input.opponentState?.lineOfSight ?? true),
     distance: opponent ? round1(distance3(self.position, opponent.position)) : null,
     opponentHealth: opponent && opponent.health !== null ? round1(opponent.health) : null,
     opponentRelative: opponent
@@ -122,10 +132,12 @@ export function buildObservation(input: ObservationInput): Observation {
     currentAction: input.currentAction,
     lastActionResult: input.lastActionResult,
   };
+  for (const key of ["world", "buildBounds", "resources", "equipment", "motion", "effects", "opponentState", "construction", "nearbyEntities"] as const) {
+    if (input[key] !== undefined) Object.assign(observation, { [key]: input[key] });
+  }
   // Las recargas solo se mandan mientras corren: la observación se repite varias veces en
   // el historial y conviene que sea corta.
   if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
-  if (buildCooldown > 0) observation.buildCooldown = buildCooldown;
   // Lo del terreno, igual: solo cuando dice algo (casi siempre estás en el piso, sin bloques cerca).
   const terrain = input.terrain;
   if (terrain) {

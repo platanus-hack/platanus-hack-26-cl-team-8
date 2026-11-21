@@ -83,6 +83,7 @@ function setup(opts: SetupOptions = {}) {
     MATCH_DURATION_SECONDS: 600,
     MATCH_MAX_SECONDS: opts.maxSeconds ?? 1800,
     AGENT_TICK_MS: 1500,
+    AGENT_OBSERVATION_RADIUS: 16,
   };
   const events: Partial<Record<Side, FighterEvents>> = {};
   const fighters: Partial<Record<Side, FighterOptions>> = {};

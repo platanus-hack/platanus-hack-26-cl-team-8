@@ -32,3 +32,13 @@ describe("loadEnvKeys", () => {
     expect(() => loadEnvKeys(["MC_PORT"], { MC_PORT: "no-es-numero" })).toThrow(/MC_PORT/);
   });
 });
+
+describe("radio de observación", () => {
+  it("usa 16 por defecto y admite configurarlo entre 8 y 64 bloques", () => {
+    expect(loadEnv({}).AGENT_OBSERVATION_RADIUS).toBe(16);
+    expect(loadEnv({ AGENT_OBSERVATION_RADIUS: "24" }).AGENT_OBSERVATION_RADIUS).toBe(24);
+    for (const value of ["0", "7", "65", "16.5", "NaN"]) {
+      expect(() => loadEnv({ AGENT_OBSERVATION_RADIUS: value })).toThrow(/AGENT_OBSERVATION_RADIUS/);
+    }
+  });
+});

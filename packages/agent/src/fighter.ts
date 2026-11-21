@@ -4,7 +4,7 @@ import { ARENA } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
 import { CommsInbox, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
-import { clampToArena, distance3, distanceXZ, retreatTarget, round1, wallCells, type Vec3Like } from "./geometry";
+import { clampToArena, distance3, distanceXZ, retreatTarget, round1, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
 import {
   ALWAYS_EDIBLE,
@@ -15,7 +15,6 @@ import {
   isAxe,
   isBow,
   isBreakable,
-  isBuildBlock,
   isDrinkPotion,
   isLavaBucket,
   isPearl,
@@ -25,12 +24,12 @@ import {
   isWaterBucket,
 } from "./items";
 import { keepDistanceTarget, orbitTarget, placeTarget, strafeTarget, type MovePlace } from "./tactics";
+import { ConstructionPlan, inside, parseBlueprint, type PlannedBlock } from "./construction";
+import { lineOfSight, scanWorld } from "./spatial";
+import { describeResources, type ResourceItem } from "./resources";
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
 import {
-  BOX_BLOCKS,
-  BUILD_COOLDOWN_MS,
-  BUILD_MIN_DISTANCE,
   DIG_MAX_BLOCKS,
   DIG_MAX_SECONDS,
   eatRefusal,
@@ -45,10 +44,7 @@ import {
   refusalText,
   shootRefusal,
   THROW_MAX_DISTANCE,
-  TOWER_HEIGHT,
   WATER_BETWEEN_MIN_DISTANCE,
-  type BlockSide,
-  type BuildShape,
   type DigTarget,
   type MoveStyle,
   type ThrowAt,
@@ -88,7 +84,7 @@ type GoalKind = "none" | "follow" | "point" | "center";
 type HeldState = "held" | "pending" | "missing";
 
 const CONNECT_TIMEOUT_MS = 30_000;
-const LLM_TIMEOUT_MS = 20_000;
+const LLM_TIMEOUT_MS = 60_000;
 const BODY_TICK_MS = 100;
 const MELEE_REACH = 3.2;
 const FOLLOW_RANGE = 2;
@@ -140,28 +136,19 @@ const PEARL_AWAY_STEP = 12;
 /** Tras aterrizar, la primera baja de vida dentro de este plazo es el golpe de la caída. */
 const SELF_DAMAGE_WINDOW_MS = 600;
 
-/** Tiempo máximo colocando bloques de un muro. */
-const BUILD_TIMEOUT_MS = 2500;
-/** Espera máxima por cada bloque (mineflayer espera hasta 5 s si el servidor no responde). */
-const BUILD_PLACE_TIMEOUT_MS = 700;
-/** Con el centro de una celda a menos de esto de un luchador (en X y en Z), el bloque no cabe. */
+const BUILD_PLACE_TIMEOUT_MS = 1500;
 const BUILD_CLEARANCE = 0.8;
-/** Margen para decir que los pies están a la altura del piso de la arena. */
-const FLOOR_TOLERANCE = 0.1;
-/**
- * Un salto o un empujón no levantan los pies más que esto sobre el piso. Más arriba (o
- * parado a otra altura) el luchador está encima de un bloque, y desde ahí no se construye.
- */
-const BUILD_MAX_AIRBORNE = 1.3;
-
 const AIR_BLOCKS = new Set(["air", "cave_air", "void_air"]);
-/**
- * Altura máxima de los pies sobre el piso: la tapa invisible está un bloque sobre los muros
- * y el jugador mide 1.8, así que más arriba no cabe.
- */
-const MAX_FEET_HEIGHT = ARENA.wallHeight - 2;
-/** Cuánto se espera a que el salto suba lo suficiente, o a volver a pisar, al levantar una torre. */
-const TOWER_STEP_TIMEOUT_MS = 900;
+const BUILD_REACH = 4.5;
+const BUILD_STEP_TIMEOUT_MS = 10_000;
+const BUILD_BOUNDS = {
+  min: { x: ARENA.center.x - ARENA.radius, y: FLOOR_Y, z: ARENA.center.z - ARENA.radius },
+  max: { x: ARENA.center.x + ARENA.radius, y: ARENA.center.y + ARENA.wallHeight, z: ARENA.center.z + ARENA.radius },
+};
+const WORLD_BOUNDS = {
+  min: { x: BUILD_BOUNDS.min.x - 1, y: ARENA.center.y, z: BUILD_BOUNDS.min.z - 1 },
+  max: { x: BUILD_BOUNDS.max.x + 1, y: BUILD_BOUNDS.max.y + 1, z: BUILD_BOUNDS.max.z + 1 },
+};
 /** Alcance para vaciar un cubo (el servidor no deja más de ~5 bloques desde los ojos). */
 const POUR_REACH = 4.6;
 /** Cuánto se espera a que el servidor vacíe el cubo antes de dar el intento por fallido. */
@@ -172,8 +159,6 @@ const WATER_BETWEEN_STEP = 2;
 const DIG_REACH = 4.5;
 /** Plazo total de una llamada a dig. */
 const DIG_TIMEOUT_MS = 12_000;
-/** Cuánto se espera a quedar al centro del bloque antes de encerrarse. */
-const CENTER_TIMEOUT_MS = 700;
 /** Paso con que se recorre la recta hacia el rival buscando bloques en medio. */
 const LINE_STEP = 0.25;
 /** Las cuatro direcciones horizontales. */
@@ -338,7 +323,7 @@ class MineflayerFighter implements Fighter {
    * ("attack" o "eat"): cuenta cómo se llegó ahí. Se borra al cambiar de acción.
    */
   private pearlNote = "";
-  /** Momento en que partió la acción de un solo uso en curso (perla o muro). */
+  /** Momento en que partió la acción de un solo uso en curso (perla o construcción). */
   private oneShotStartedAt = 0;
   /** Ticks de física de mineflayer vistos hasta ahora (cada uno envía posición y mirada al servidor). */
   private physicsTicks = 0;
@@ -359,15 +344,16 @@ class MineflayerFighter implements Fighter {
   /** Hasta cuándo una baja de vida se atribuye a la caída de la perla y no al rival. */
   private selfDamageUntil = 0;
 
-  // Muro: la colocación corre en una cadena asíncrona aparte del tick del cuerpo.
+  // Construcción y usos de ítems: una sola operación asíncrona del cuerpo a la vez.
   private buildBusy = false;
   /** Sube cada vez que se sale de un modo; una cadena de otra generación se detiene sola. */
   private buildGeneration = 0;
   /** Número de la última cadena lanzada: solo ella suelta `buildBusy` al terminar. */
   private buildChain = 0;
-  private buildReadyAt = 0;
-  /** Qué levanta "build" en curso. */
-  private buildShape: BuildShape = "wall";
+  private construction: ConstructionPlan | null = null;
+  private buildCellKey = "";
+  private buildNavigationKey = "";
+  private buildStepStartedAt = 0;
   // Movimiento táctico ("move").
   private moveStyle: MoveStyle = "strafe";
   private keepDistance = 8;
@@ -382,7 +368,8 @@ class MineflayerFighter implements Fighter {
   private eatFood: string | null = null;
   private potionChoice: string | null = null;
   private throwAt: ThrowAt = "rival";
-  private blockSide: BlockSide = "front";
+  private movePosition: Vec3Like | null = null;
+  private digPosition: Vec3Like | null = null;
   /** Qué rompe el "dig" en curso. */
   private digTarget: DigTarget = "between";
   /** true mientras bot.dig está rompiendo un bloque (leaveMode lo corta). */
@@ -928,12 +915,164 @@ class MineflayerFighter implements Fighter {
       currentAction: this.mode,
       lastActionResult: this.lastResult,
       pearlReadyAt: this.pearlReadyAt,
-      buildReadyAt: this.buildReadyAt,
       terrain: this.terrain(bot, opponent),
+      world: scanWorld(WORLD_BOUNDS, (p) => this.readWorldCell(bot, p), (p) => inside(p, BUILD_BOUNDS), {
+        center: bot.entity.position, radius: this.opts.observationRadius ?? 16,
+      }),
+      buildBounds: BUILD_BOUNDS,
+      resources: describeResources(this.resourceItems(bot), {
+        health: bot.health, food: bot.food, absorption: readAbsorption(bot.entity),
+        pearlCooldown: Math.max(0, (this.pearlReadyAt - Date.now()) / 1000), tools: this.toolNames,
+      }),
+      equipment: this.equipment(bot),
+      motion: { velocity: bot.entity.velocity, yaw: bot.entity.yaw, pitch: bot.entity.pitch, onGround: bot.entity.onGround },
+      effects: Object.values(bot.entity.effects ?? {}).map((effect) => ({
+        id: effect.id, name: bot.registry.effects[effect.id]?.name ?? String(effect.id), amplifier: effect.amplifier, durationTicks: effect.duration,
+      })),
+      opponentState: opponent ? {
+        position: opponent.position, velocity: this.opponentVelocity, yaw: opponent.yaw, pitch: opponent.pitch,
+        lineOfSight: lineOfSight(bot.entity.position.offset(0, EYE_HEIGHT, 0), opponent.position.offset(0, EYE_HEIGHT, 0), (p) => this.readWorldCell(bot, p)),
+        equipment: opponent.equipment.map((item) => item ? { name: item.name, count: item.count } : null),
+      } : null,
+      construction: this.construction?.snapshot() ?? null,
+      nearbyEntities: Object.values(bot.entities).filter((entity) => entity.id !== bot.entity.id && distanceXZ(entity.position, bot.entity.position) <= (this.opts.observationRadius ?? 16)).map((entity) => {
+        const item = entity.name === "item" ? entity.getDroppedItem() : null;
+        return { id: entity.id, name: entity.username ?? entity.name ?? "unknown", type: entity.type, position: entity.position, velocity: entity.velocity, ...(item ? { item: { name: item.name, count: item.count } } : {}) };
+      }),
+
       rivalThoughts: heard.rivalThoughts,
       rivalMessages: heard.rivalMessages,
       // La conversación solo existe en modo "chat".
       conversation: this.opts.comms === "chat" ? heard.conversation : [],
+    });
+  }
+
+  private readWorldCell(bot: Bot, position: Vec3Like) {
+    const block = bot.blockAt(this.vec(bot, position.x, position.y, position.z));
+    return block ? { name: block.name, solid: block.boundingBox === "block" } : null;
+  }
+
+  private resourceItem(item: InventoryItem): ResourceItem {
+    const potion = potionOf(item);
+    return {
+      name: potion ? `${item.name}:${potion}` : item.name,
+      count: item.count, slot: item.slot,
+      ...(item.maxDurability > 0 ? { durabilityUsed: item.durabilityUsed, maxDurability: item.maxDurability } : {}),
+      enchantments: item.enchants.map((enchantment) => ({ name: enchantment.name, level: enchantment.lvl })),
+    };
+  }
+
+  private resourceItems(bot: Bot): ResourceItem[] {
+    const items = bot.inventory.items();
+    const offhand = bot.inventory.slots[OFFHAND_SLOT];
+    if (offhand && !items.some((item) => item.slot === OFFHAND_SLOT)) items.push(offhand);
+    return items.map((item) => this.resourceItem(item));
+  }
+
+  private equipment(bot: Bot) {
+    return Object.fromEntries(([ ["head", 5], ["chest", 6], ["legs", 7], ["feet", 8], ["offhand", OFFHAND_SLOT] ] as const).map(([name, slot]) => {
+      const item = bot.inventory.slots[slot];
+      return [name, item ? this.resourceItem(item) : null];
+    }));
+  }
+
+  private startConstruction(bot: Bot, args: ParsedToolArgs): string {
+    let plan = this.construction;
+    if (args.blocks !== undefined) {
+      const blocks = parseBlueprint(args.blocks, BUILD_BOUNDS);
+      if (typeof blocks === "string") return refusalText(blocks, this.mode);
+      if (!plan || JSON.stringify(plan.blocks) !== JSON.stringify(blocks)) plan = new ConstructionPlan(blocks);
+    }
+    if (!plan) return refusalText("no hay un plano pendiente: envía blocks con coordenadas y materiales", this.mode);
+    if (plan.snapshot().status === "complete") return refusalText("ese plano ya está completo; envía un plano nuevo para construir o reparar", this.mode);
+    if (this.mode !== "build" || this.construction !== plan) {
+      this.leaveMode(bot);
+      this.construction = plan;
+      this.mode = "build";
+      this.modeUntil = null;
+      this.buildCellKey = "";
+      this.buildNavigationKey = "";
+    }
+    plan.resume();
+    const progress = plan.snapshot();
+    this.lastResult = `construcción libre: ${progress.completed}/${progress.total} bloques; consulta construction para ver el plano y sus obstáculos`;
+    return this.lastResult;
+  }
+
+  private constructionSupport(bot: Bot, cell: PlannedBlock, reachable: boolean) {
+    const eye = bot.entity.position.offset(0, EYE_HEIGHT, 0);
+    for (const [dx, dy, dz] of [[0, -1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]) {
+      const block = bot.blockAt(this.vec(bot, cell.x + dx!, cell.y + dy!, cell.z + dz!));
+      if (!block || block.boundingBox !== "block") continue;
+      const face = this.vec(bot, -dx!, -dy!, -dz!);
+      const aim = block.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5);
+      if (reachable) {
+        const delta = aim.minus(eye);
+        if (delta.norm() > BUILD_REACH) continue;
+        if (!lineOfSight(eye, aim, (p) => this.readWorldCell(bot, p))) continue;
+      }
+      return { block, face, aim };
+    }
+    return null;
+  }
+
+  private prepareConstruction(bot: Bot, cell: PlannedBlock): { status: "ready" | "moving" | "blocked"; reason?: string } {
+    const key = `${cell.x},${cell.y},${cell.z}`;
+    if (this.buildCellKey !== key) {
+      this.buildCellKey = key;
+      this.buildStepStartedAt = Date.now();
+    }
+    if (Date.now() - this.buildStepStartedAt > BUILD_STEP_TIMEOUT_MS) return { status: "blocked", reason: "no pude llegar o equipar el material en 10 s; cambia el plano o muévete" };
+    if (!this.constructionSupport(bot, cell, false)) return { status: "blocked", reason: "falta un bloque vecino de apoyo; ponlo antes en el plano" };
+    if (!this.constructionSupport(bot, cell, true)) {
+      if (this.buildNavigationKey !== key) {
+        // El .d.ts de pathfinder exige faces/facing, pero su implementación los hace opcionales.
+        const options = { range: BUILD_REACH, LOS: true } as ConstructorParameters<typeof goals.GoalPlaceBlock>[2];
+        bot.pathfinder.setGoal(new goals.GoalPlaceBlock(this.vec(bot, cell.x, cell.y, cell.z), bot.world, options));
+        this.goalKind = "point";
+        this.followTarget = null;
+        this.buildNavigationKey = key;
+      }
+      return { status: "moving", reason: `buscando una posición con alcance y línea de visión para ${key}` };
+    }
+    this.clearGoal(bot);
+    this.buildNavigationKey = "";
+    const held = this.ensureHeld(bot, (name) => name === cell.material);
+    if (held !== "held") return { status: held === "missing" ? "blocked" : "moving", reason: `equipando ${cell.material}` };
+    return { status: "ready" };
+  }
+
+  private tickConstruction(bot: Bot): void {
+    const plan = this.construction;
+    if (!plan || this.buildBusy) return;
+    const generation = this.buildGeneration;
+    const active = () => this.buildActive(generation) && this.mode === "build" && this.construction === plan;
+    void plan.step({
+      read: (p) => bot.blockAt(this.vec(bot, p.x, p.y, p.z))?.name ?? null,
+      occupied: (p) => this.cellOccupied(bot, p),
+      count: (material) => this.countItems(bot, (name) => name === material),
+      prepare: (cell) => this.prepareConstruction(bot, cell),
+      place: async (cell) => {
+        const support = this.constructionSupport(bot, cell, true);
+        if (!support) throw new Error("el apoyo dejó de estar al alcance");
+        const chain = ++this.buildChain;
+        this.buildBusy = true;
+        try {
+          await bot.lookAt(support.aim, true);
+          if (!active()) return;
+          // Timeout no significa éxito: ConstructionPlan verifica el bloque en el mundo.
+          await Promise.race([bot.placeBlock(support.block, support.face), delay(BUILD_PLACE_TIMEOUT_MS)]);
+        } finally {
+          if (chain === this.buildChain) this.buildBusy = false;
+        }
+      },
+    }, active).then(() => {
+      if (!active()) return;
+      const progress = plan.snapshot();
+      this.lastResult = `construcción: ${progress.completed}/${progress.total}${progress.reason ? `; ${progress.reason}` : ""}`;
+      if (progress.status === "blocked" || progress.status === "complete") this.enterWait(bot, `${progress.status === "complete" ? "plano completo" : "plano bloqueado"}: ${this.lastResult}`);
+    }).catch((error: unknown) => {
+      if (active()) this.enterWait(bot, `error al construir: ${errorText(error)}`);
     });
   }
 
@@ -951,7 +1090,12 @@ class MineflayerFighter implements Fighter {
     if (!this.toolNames.includes(name)) return `tu kit no tiene esa herramienta; usa: ${available}`;
 
     const now = Date.now();
-    if (name === this.mode) {
+    if ((name === "move" || name === "dig") && args.positionInvalid) return refusalText("position debe contener x, y, z numéricos finitos", this.mode);
+    if (name === "move" && args.position && args.style !== "goto") return refusalText("usa style=goto para moverte a position", this.mode);
+    if (name === "move" && args.position && !inside(args.position, { min: BUILD_BOUNDS.min, max: { ...BUILD_BOUNDS.max, y: BUILD_BOUNDS.max.y - 1 } })) return refusalText("destino fuera de la arena o sin altura para tu cuerpo", this.mode);
+    if (name === "build") return this.startConstruction(bot, args);
+    const sameDig = name !== "dig" || (args.digTarget === this.digTarget && JSON.stringify(args.position) === JSON.stringify(this.digPosition));
+    if (name === this.mode && sameDig) {
       // Repetir la herramienta continúa la acción en curso (no reinicia cargas ni comidas),
       // pero sí toma los argumentos nuevos que cambian cómo se hace.
       if (name === "attack") {
@@ -963,6 +1107,7 @@ class MineflayerFighter implements Fighter {
         this.moveStyle = args.style;
         this.keepDistance = args.distance;
         this.movePlace = args.place;
+        this.movePosition = args.position;
         this.lastRetreatPlanAt = 0;
       }
       const text = `continúas con "${name}": ${this.lastResult}`;
@@ -1064,28 +1209,8 @@ class MineflayerFighter implements Fighter {
           args.target === "away" ? "preparando la perla para alejarte del rival" : "preparando la perla para caer junto al rival";
         break;
       }
-      case "build": {
-        const refusal =
-          args.shape === "tower"
-            ? this.towerRefusal(bot, now)
-            : args.shape === "box"
-              ? this.boxRefusal(bot, now)
-              : args.shape === "block"
-                ? this.blockRefusal(bot, opponent, now)
-                : this.buildRefusal(bot, opponent, now);
-        if (refusal) return refusalText(refusal, this.mode);
-        result =
-          args.shape === "tower"
-            ? "preparando los bloques para la torre"
-            : args.shape === "box"
-              ? "preparando los bloques para encerrarte"
-              : args.shape === "block"
-                ? "preparando un par de bloques a tu lado"
-                : "preparando los bloques para el muro";
-        break;
-      }
       case "dig": {
-        const targets = this.digCandidates(bot, opponent, args.digTarget);
+        const targets = this.digCandidates(bot, opponent, args.digTarget, args.position);
         if (typeof targets === "string") return refusalText(targets, this.mode);
         result = `rompiendo ${targets[0]?.name.replaceAll("_", " ") ?? "bloques"}`;
         break;
@@ -1121,10 +1246,10 @@ class MineflayerFighter implements Fighter {
     this.lastRetreatPlanAt = 0;
     this.oneShotStartedAt = now;
     this.pearlTarget = args.target;
-    this.buildShape = args.shape;
     this.waterPlace = args.where;
     this.digTarget = args.digTarget;
-    this.blockSide = args.side;
+    this.digPosition = args.position;
+    this.movePosition = args.position;
     this.moveStyle = args.style;
     this.keepDistance = args.distance;
     this.movePlace = args.place;
@@ -1155,36 +1280,6 @@ class MineflayerFighter implements Fighter {
     return null;
   }
 
-  /** Por qué no se puede construir ahora, o null si se puede. */
-  private buildRefusal(bot: Bot, opponent: Entity | null, now: number): string | null {
-    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
-    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
-    if (!opponent) return "no ves al rival: no hay dónde poner el muro";
-    // El muro va 3 bloques por delante: con el rival más cerca quedaría encima de las
-    // celdas o del lado propio, y los bloques se gastarían sin cubrir nada.
-    const dist = round1(distance3(bot.entity.position, opponent.position));
-    if (dist < BUILD_MIN_DISTANCE) {
-      return `el rival está a ${dist} bloques: muy cerca para levantar un muro (mínimo ${BUILD_MIN_DISTANCE})`;
-    }
-    // Encima de un bloque (un muro anterior) no hay piso delante donde apoyar el muro. En
-    // el aire por un salto o un empujón sí se acepta: tickBuild espera a que caiga.
-    const height = bot.entity.position.y - FLOOR_Y;
-    if (!this.onArenaFloor(bot) && (bot.entity.onGround || height > BUILD_MAX_AIRBORNE)) {
-      return "no puedes construir desde arriba de un bloque: baja al piso de la arena";
-    }
-    return null;
-  }
-
-  /** Por qué no se puede levantar una torre ahora, o null si se puede. */
-  private towerRefusal(bot: Bot, now: number): string | null {
-    const blocks = this.countItems(bot, isBuildBlock);
-    if (blocks === 0) return "no te quedan bloques";
-    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
-    if (!bot.entity.onGround) return "no puedes levantar una torre en el aire: espera a pisar";
-    if (bot.entity.position.y - FLOOR_Y + 1 > MAX_FEET_HEIGHT) return "ya estás tan alto como deja el techo de la arena";
-    return null;
-  }
-
   /** Por qué no se puede vaciar el agua ahí, o null si se puede. */
   private waterRefusal(bot: Bot, opponent: Entity | null, where: WaterPlace): string | null {
     if (this.countItems(bot, isWaterBucket) === 0) return "no te quedan cubos de agua";
@@ -1207,24 +1302,21 @@ class MineflayerFighter implements Fighter {
     return null;
   }
 
-  /** Por qué no se puede encerrar ahora, o null si se puede. */
-  private boxRefusal(bot: Bot, now: number): string | null {
-    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
-    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
-    if (!bot.entity.onGround) return "no puedes encerrarte en el aire: espera a pisar";
-    // El techo va 2 bloques sobre los pies y la tapa de la arena no deja poner nada más arriba.
-    if (bot.entity.position.y - FLOOR_Y + 2 > MAX_FEET_HEIGHT + 1) return "estás muy alto: el techo de la caja no cabe bajo el de la arena";
-    return null;
-  }
-
   /**
    * Bloques que rompería "dig" (el primero es el siguiente), o por qué no hay ninguno.
    * "between": los que cortan la recta hasta el rival, a la altura de los pies o de la
    * cabeza. "nearest": el más cercano. Siempre dentro del alcance y nunca de la arena.
    */
-  private digCandidates(bot: Bot, opponent: Entity | null, target: DigTarget): Block[] | string {
+  private digCandidates(bot: Bot, opponent: Entity | null, target: DigTarget, position: Vec3Like | null = null): Block[] | string {
     const eye = bot.entity.position.offset(0, EYE_HEIGHT, 0);
     const reachable = (block: Block): boolean => distance3(eye, block.position.offset(0.5, 0.5, 0.5)) <= DIG_REACH;
+    if (position) {
+      if (![position.x, position.y, position.z].every(Number.isSafeInteger) || !inside(position, BUILD_BOUNDS)) return "bloque fuera del volumen modificable o coordenadas no enteras";
+      const block = bot.blockAt(this.vec(bot, position.x, position.y, position.z));
+      if (!block || !isBreakable(block.name)) return "ese bloque no se puede romper";
+      if (!reachable(block)) return "bloque fuera de alcance: usa move con position para acercarte";
+      return [block];
+    }
     if (target === "nearest") {
       const near = this.breakableAround(bot, Math.ceil(DIG_REACH)).filter(reachable);
       if (near.length === 0) return "no hay ningún bloque colocado a tu alcance (el piso y los muros de la arena no se rompen)";
@@ -1256,7 +1348,7 @@ class MineflayerFighter implements Fighter {
         const y = Math.floor(from.y + (to.y - from.y) * k + lift);
         const z = Math.floor(from.z + (to.z - from.z) * k);
         const key = `${x},${y},${z}`;
-        if (seen.has(key) || y < FLOOR_Y) continue;
+        if (seen.has(key) || !inside({ x, y, z }, BUILD_BOUNDS)) continue;
         seen.add(key);
         const block = bot.blockAt(this.vec(bot, x, y, z));
         if (block && isBreakable(block.name)) found.push({ block, at: t });
@@ -1276,7 +1368,7 @@ class MineflayerFighter implements Fighter {
           const y = Math.floor(base.y) + dy;
           if (y < FLOOR_Y) continue;
           const block = bot.blockAt(this.vec(bot, Math.floor(base.x) + dx, y, Math.floor(base.z) + dz));
-          if (!block || !isBreakable(block.name)) continue;
+          if (!block || !inside(block.position, BUILD_BOUNDS) || !isBreakable(block.name)) continue;
           found.push({ block, dist: distance3(eye, block.position.offset(0.5, 0.5, 0.5)) });
         }
       }
@@ -1304,13 +1396,7 @@ class MineflayerFighter implements Fighter {
    * escudo. Las pociones van con su tipo ("potion:healing"), que es lo que elige el modelo.
    */
   private inventoryWithOffhand(bot: Bot): { name: string; count: number }[] {
-    const all = [...bot.inventory.items()];
-    const offhand = bot.inventory.slots[OFFHAND_SLOT];
-    if (offhand) all.push(offhand);
-    return all.map((item) => {
-      const potion = isDrinkPotion(item.name) || isSplashPotion(item.name) ? potionOf(item) : null;
-      return { name: potion ? `${item.name}:${potion}` : item.name, count: item.count };
-    });
+    return this.resourceItems(bot).map(({ name, count }) => ({ name, count }));
   }
 
   /** Tipos de las pociones del inventario que calzan con `match` (bebibles o arrojadizas), sin repetir. */
@@ -1324,24 +1410,10 @@ class MineflayerFighter implements Fighter {
     return [...types];
   }
 
-  /** Por qué no se puede poner un bloque suelto ahora, o null si se puede. */
-  private blockRefusal(bot: Bot, opponent: Entity | null, now: number): string | null {
-    if (this.countItems(bot, isBuildBlock) === 0) return "no te quedan bloques";
-    if (now < this.buildReadyAt) return `todavía no puedes construir: faltan ${secondsLeft(this.buildReadyAt, now)} s`;
-    if (!opponent) return "no ves al rival: no hay respecto de quién elegir el lado";
-    if (!bot.entity.onGround) return "no puedes poner bloques en el aire: espera a pisar";
-    return null;
-  }
-
   /** ¿Tiene un escudo, en la mano secundaria o en el inventario? */
   private hasShield(bot: Bot): boolean {
     if (bot.inventory.slots[OFFHAND_SLOT]?.name === "shield") return true;
     return bot.inventory.items().some((item) => isShield(item.name));
-  }
-
-  /** ¿Está parado sobre el piso de la arena (no en el aire ni encima de un bloque)? */
-  private onArenaFloor(bot: Bot): boolean {
-    return bot.entity.onGround && Math.abs(bot.entity.position.y - FLOOR_Y) <= FLOOR_TOLERANCE;
   }
 
   private enterWait(bot: Bot, result: string): string {
@@ -1352,8 +1424,9 @@ class MineflayerFighter implements Fighter {
     return result;
   }
 
-  /** Limpia lo que el modo actual dejó a medias (uso de ítem, ruta del pathfinder, muro a medio poner). */
+  /** Limpia lo que el modo actual dejó a medias (uso de ítem, ruta del pathfinder, construcción a medio poner). */
   private leaveMode(bot: Bot): void {
+    this.construction?.pause();
     if (this.using) {
       this.using = false;
       try {
@@ -1377,10 +1450,11 @@ class MineflayerFighter implements Fighter {
 
   /** Vuelve a "wait" sin tocar al bot (para muerte / reaparición). */
   private resetBody(result: string): void {
+    this.construction = null;
     this.mode = "wait";
     this.modeUntil = null;
     this.using = false;
-    // La cadena del muro se corta sola al cambiar la generación; la marca se suelta ya,
+    // La operación pendiente se corta sola al cambiar la generación; la marca se suelta ya,
     // para que "build" no quede bloqueada si esa cadena nunca llega a terminar.
     this.buildGeneration++;
     this.buildBusy = false;
@@ -1445,10 +1519,7 @@ class MineflayerFighter implements Fighter {
         this.tickPearl(bot, opponent, now);
         break;
       case "build":
-        if (this.buildShape === "tower") this.tickTower(bot, now);
-        else if (this.buildShape === "box") this.tickBox(bot, now);
-        else if (this.buildShape === "block") this.tickBlock(bot, opponent, now);
-        else this.tickBuild(bot, opponent, now);
+        this.tickConstruction(bot);
         break;
       case "dig":
         this.tickDig(bot, now);
@@ -1589,7 +1660,7 @@ class MineflayerFighter implements Fighter {
         break;
       }
       case "goto":
-        target = placeTarget(this.movePlace, self, rival, arena);
+        target = this.movePosition ?? placeTarget(this.movePlace, self, rival, arena);
         this.lastResult =
           distanceXZ(self, target) <= 1.5
             ? "llegaste al lugar"
@@ -1886,147 +1957,6 @@ class MineflayerFighter implements Fighter {
   }
 
   /**
-   * Muro, de un solo uso: equipa los bloques, se queda quieto y lanza la cadena que los
-   * coloca. La cadena es asíncrona (cada bloque espera la respuesta del servidor), así
-   * que corre aparte y este tick solo la prepara.
-   */
-  private tickBuild(bot: Bot, opponent: Entity | null, now: number): void {
-    if (this.buildBusy) return;
-    const held = this.ensureHeld(bot, isBuildBlock);
-    if (held === "missing") {
-      this.enterWait(bot, "no te quedan bloques");
-      return;
-    }
-    this.clearGoal(bot);
-    bot.clearControlStates();
-    const timedOut = now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS;
-    if (held === "pending") {
-      if (timedOut) this.enterWait(bot, "no pudiste equipar los bloques");
-      return;
-    }
-    if (!opponent) {
-      this.enterWait(bot, "no ves al rival: no hay dónde poner el muro");
-      return;
-    }
-    // El muro se apoya en el piso que hay delante de los pies: en el aire (un salto, un
-    // empujón) las celdas saldrían un bloque más arriba, sin nada debajo. Se espera a caer.
-    if (!this.onArenaFloor(bot)) {
-      if (timedOut) this.enterWait(bot, "no pudiste construir: no estás parado en el piso de la arena");
-      return;
-    }
-
-    const generation = ++this.buildGeneration;
-    const chain = ++this.buildChain;
-    this.buildBusy = true;
-    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
-    this.lastResult = "colocando los bloques del muro";
-    this.placeWall(bot, wallCells(bot.entity.position, opponent.position), generation, now + BUILD_TIMEOUT_MS)
-      .then((tried) => {
-        // Si otra acción (o la muerte) cortó la construcción, no hay nada que informar.
-        if (!this.buildActive(generation)) return;
-        // Se cuenta mirando el mundo y no las respuestas de placeBlock: un bloque puede
-        // quedar puesto aunque su confirmación haya llegado después del plazo de espera.
-        const placed = tried.filter((cell) => isBuildBlock(bot.blockAt(cell)?.name ?? "")).length;
-        const left = this.countItems(bot, isBuildBlock);
-        this.enterWait(
-          bot,
-          placed > 0
-            ? `muro de ${placed} bloques entre tú y el rival; te quedan ${left} bloques`
-            : "no pudiste colocar ningún bloque (no hay espacio o el rival está encima)",
-        );
-      })
-      .catch((err: unknown) => {
-        this.log("warn", `Error al construir el muro: ${errorText(err)}`);
-        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar el muro");
-      })
-      .finally(() => {
-        // Pase lo que pase la marca se suelta, o "build" quedaría muerta el resto de la
-        // pelea. Solo la suelta la última cadena lanzada: una vieja que termina tarde
-        // (resetBody ya la dio por cortada) no debe liberar a la que corre ahora.
-        if (chain === this.buildChain) this.buildBusy = false;
-      });
-  }
-
-  /**
-   * Torre, de un solo uso: salta y pone un bloque bajo los pies, TOWER_HEIGHT veces (o
-   * menos si el techo no deja). Corre en la misma cadena asíncrona que el muro.
-   */
-  private tickTower(bot: Bot, now: number): void {
-    if (this.buildBusy) return;
-    const held = this.ensureHeld(bot, isBuildBlock);
-    if (held === "missing") {
-      this.enterWait(bot, "no te quedan bloques");
-      return;
-    }
-    this.clearGoal(bot);
-    bot.clearControlStates();
-    const timedOut = now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS;
-    if (held === "pending" || !bot.entity.onGround) {
-      if (timedOut) this.enterWait(bot, held === "pending" ? "no pudiste equipar los bloques" : "no pudiste construir: no estás pisando nada");
-      return;
-    }
-
-    const height = Math.round(bot.entity.position.y - FLOOR_Y);
-    const steps = Math.min(TOWER_HEIGHT, MAX_FEET_HEIGHT - height);
-    const generation = ++this.buildGeneration;
-    const chain = ++this.buildChain;
-    this.buildBusy = true;
-    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
-    this.lastResult = "subiendo la torre";
-    this.raiseTower(bot, steps, generation)
-      .then((placed) => {
-        if (!this.buildActive(generation)) return;
-        const up = round1(bot.entity.position.y - FLOOR_Y);
-        const left = this.countItems(bot, isBuildBlock);
-        this.enterWait(
-          bot,
-          placed > 0
-            ? `torre de ${placed} bloques: estás a ${up} bloques del piso; te quedan ${left} bloques`
-            : "no pudiste subir: no se colocó ningún bloque",
-        );
-      })
-      .catch((err: unknown) => {
-        this.log("warn", `Error al levantar la torre: ${errorText(err)}`);
-        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar la torre");
-      })
-      .finally(() => {
-        bot.setControlState("jump", false);
-        if (chain === this.buildChain) this.buildBusy = false;
-      });
-  }
-
-  /** Salta y pone un bloque bajo los pies `steps` veces; devuelve cuántos quedaron puestos. */
-  private async raiseTower(bot: Bot, steps: number, generation: number): Promise<number> {
-    const up = this.vec(bot, 0, 1, 0);
-    let placed = 0;
-    for (let i = 0; i < steps; i += 1) {
-      if (!this.buildActive(generation)) break;
-      const held = bot.heldItem;
-      if (!held || !isBuildBlock(held.name)) break;
-      const feet = bot.entity.position;
-      const support = bot.blockAt(this.vec(bot, Math.floor(feet.x), Math.floor(feet.y) - 1, Math.floor(feet.z)));
-      if (!support || support.boundingBox !== "block") break;
-      try {
-        await bot.lookAt(support.position.offset(0.5, 1, 0.5), true);
-      } catch {
-        break;
-      }
-      const startY = bot.entity.position.y;
-      bot.setControlState("jump", true);
-      const rose = await waitUntil(() => bot.entity.position.y >= startY + 1.05, TOWER_STEP_TIMEOUT_MS);
-      bot.setControlState("jump", false);
-      if (!rose || !this.buildActive(generation)) break;
-      const placing = bot.placeBlock(support, up).catch(() => undefined);
-      await Promise.race([placing, delay(BUILD_PLACE_TIMEOUT_MS)]);
-      await waitUntil(() => bot.entity.onGround, TOWER_STEP_TIMEOUT_MS);
-      // Si el bloque no quedó, el salto vuelve a caer a la misma altura.
-      if (bot.entity.position.y < startY + 0.9) break;
-      placed += 1;
-    }
-    return placed;
-  }
-
-  /**
    * Escudo: en la mano secundaria (si está en el inventario, se pasa ahí), levantado y
    * mirando al rival hasta la próxima decisión. leaveMode lo baja.
    */
@@ -2172,201 +2102,6 @@ class MineflayerFighter implements Fighter {
   }
 
   /**
-   * Intenta colocar las celdas en orden y devuelve las que estaban libres y se intentaron.
-   * No dice cuáles quedaron puestas: eso se lee después en el mundo.
-   */
-  private async placeWall(bot: Bot, cells: Vec3Like[], generation: number, deadline: number): Promise<Vec3[]> {
-    const up = this.vec(bot, 0, 1, 0);
-    const tried: Vec3[] = [];
-    for (const cell of cells) {
-      if (!this.buildActive(generation) || Date.now() >= deadline) break;
-      const held = bot.heldItem;
-      if (!held || !isBuildBlock(held.name)) break;
-
-      const position = this.vec(bot, cell.x, cell.y, cell.z);
-      const current = bot.blockAt(position);
-      if (!current || !AIR_BLOCKS.has(current.name)) continue;
-      if (this.cellOccupied(bot, cell)) continue;
-      // El bloque se apoya en el de abajo (el piso para la fila baja, el muro para la alta)
-      // o, si abajo no hay nada (el techo de la caja), en uno de al lado.
-      const support = this.supportFor(bot, position, up);
-      if (!support) continue;
-
-      try {
-        // Mirada forzada: placeBlock gira la cabeza de a poco si no está ya apuntando.
-        await bot.lookAt(support.aim, true);
-      } catch {
-        continue;
-      }
-      if (!this.buildActive(generation)) break;
-      tried.push(position);
-      // Un rechazo del servidor (celda ocupada) no corta el muro: se sigue con la siguiente.
-      // Tampoco se espera más que el plazo: mineflayer aguarda hasta 5 s por la respuesta.
-      const placing = bot.placeBlock(support.block, support.face).catch(() => undefined);
-      await Promise.race([placing, delay(BUILD_PLACE_TIMEOUT_MS)]);
-    }
-    return tried;
-  }
-
-  /**
-   * Bloque sólido en el que apoyar uno nuevo en `cell`, la cara que toca y el punto al que
-   * mirar: primero el de abajo; si no hay, uno de los cuatro de al lado.
-   */
-  private supportFor(bot: Bot, cell: Vec3, up: Vec3): { block: Block; face: Vec3; aim: Vec3 } | null {
-    const below = bot.blockAt(cell.offset(0, -1, 0));
-    if (below && below.boundingBox === "block") return { block: below, face: up, aim: below.position.offset(0.5, 1, 0.5) };
-    for (const [dx, dz] of SIDES_XZ) {
-      const side = bot.blockAt(cell.offset(dx, 0, dz));
-      if (!side || side.boundingBox !== "block") continue;
-      // La cara del vecino que mira hacia la celda.
-      const face = this.vec(bot, -dx, 0, -dz);
-      return { block: side, face, aim: side.position.offset(0.5 - dx * 0.5, 0.5, 0.5 - dz * 0.5) };
-    }
-    return null;
-  }
-
-  /**
-   * Bloque suelto, de un solo uso: una columna de 2 en la celda de al lado, del lado
-   * elegido respecto del rival (al frente, atrás, a la izquierda o a la derecha).
-   */
-  private tickBlock(bot: Bot, opponent: Entity | null, now: number): void {
-    if (this.buildBusy) return;
-    const held = this.ensureHeld(bot, isBuildBlock);
-    if (held === "missing") {
-      this.enterWait(bot, "no te quedan bloques");
-      return;
-    }
-    this.clearGoal(bot);
-    bot.clearControlStates();
-    if (held === "pending") {
-      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) this.enterWait(bot, "no pudiste equipar los bloques");
-      return;
-    }
-    if (!opponent) {
-      this.enterWait(bot, "no ves al rival: no hay respecto de quién elegir el lado");
-      return;
-    }
-    const p = bot.entity.position;
-    // Dirección hacia el rival redondeada al eje dominante: la celda vecina de ese lado.
-    const dx = opponent.position.x - p.x;
-    const dz = opponent.position.z - p.z;
-    const toward: [number, number] = Math.abs(dx) >= Math.abs(dz) ? [Math.sign(dx) || 1, 0] : [0, Math.sign(dz) || 1];
-    const [fx, fz] = toward;
-    const offsets: Record<BlockSide, [number, number]> = {
-      front: [fx, fz],
-      behind: [-fx, -fz],
-      left: [-fz, fx],
-      right: [fz, -fx],
-    };
-    const [ox, oz] = offsets[this.blockSide];
-    const x = Math.floor(p.x) + ox;
-    const y = Math.floor(p.y);
-    const z = Math.floor(p.z) + oz;
-    const generation = ++this.buildGeneration;
-    const chain = ++this.buildChain;
-    this.buildBusy = true;
-    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
-    this.lastResult = "poniendo bloques a tu lado";
-    this.placeWall(bot, [{ x, y, z }, { x, y: y + 1, z }], generation, now + BUILD_TIMEOUT_MS)
-      .then((tried) => {
-        if (!this.buildActive(generation)) return;
-        const placed = tried.filter((cell) => isBuildBlock(bot.blockAt(cell)?.name ?? "")).length;
-        const sideText = { front: "entre tú y el rival", behind: "a tu espalda", left: "a tu izquierda", right: "a tu derecha" }[this.blockSide];
-        this.enterWait(
-          bot,
-          placed > 0
-            ? `pusiste ${placed} bloques ${sideText}; te quedan ${this.countItems(bot, isBuildBlock)} bloques`
-            : `no pudiste poner bloques ${sideText} (ocupado o sin espacio)`,
-        );
-      })
-      .catch((err: unknown) => {
-        this.log("warn", `Error al poner bloques: ${errorText(err)}`);
-        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste poner los bloques");
-      })
-      .finally(() => {
-        if (chain === this.buildChain) this.buildBusy = false;
-      });
-  }
-
-  /**
-   * Caja, de un solo uso: queda al centro de su bloque y se rodea de bloques (4 lados de
-   * 2 de alto), con un apoyo arriba y el techo. Misma cadena asíncrona que el muro.
-   */
-  private tickBox(bot: Bot, now: number): void {
-    if (this.buildBusy) return;
-    const held = this.ensureHeld(bot, isBuildBlock);
-    if (held === "missing") {
-      this.enterWait(bot, "no te quedan bloques");
-      return;
-    }
-    this.clearGoal(bot);
-    bot.clearControlStates();
-    if (held === "pending" || !bot.entity.onGround) {
-      if (now - this.oneShotStartedAt >= EQUIP_TIMEOUT_MS) {
-        this.enterWait(bot, held === "pending" ? "no pudiste equipar los bloques" : "no pudiste encerrarte: no estás pisando nada");
-      }
-      return;
-    }
-
-    const generation = ++this.buildGeneration;
-    const chain = ++this.buildChain;
-    this.buildBusy = true;
-    this.buildReadyAt = now + BUILD_COOLDOWN_MS;
-    this.lastResult = "encerrándote con bloques";
-    (async () => {
-      await this.centerOnBlock(bot, generation);
-      const p = bot.entity.position;
-      const fx = Math.floor(p.x);
-      const fy = Math.floor(p.y);
-      const fz = Math.floor(p.z);
-      const cells: Vec3Like[] = [];
-      for (const lift of [0, 1]) for (const [dx, dz] of SIDES_XZ) cells.push({ x: fx + dx, y: fy + lift, z: fz + dz });
-      // El techo no tiene nada abajo (es la cabeza): se apoya en un bloque puesto encima del lado +x.
-      cells.push({ x: fx + 1, y: fy + 2, z: fz }, { x: fx, y: fy + 2, z: fz });
-      return this.placeWall(bot, cells.slice(0, BOX_BLOCKS), generation, Date.now() + BUILD_TIMEOUT_MS * 2);
-    })()
-      .then((tried) => {
-        if (!this.buildActive(generation)) return;
-        const placed = tried.filter((cell) => isBuildBlock(bot.blockAt(cell)?.name ?? "")).length;
-        const left = this.countItems(bot, isBuildBlock);
-        const closed = this.terrain(bot, null).enclosed;
-        const roof = bot.blockAt(bot.entity.position.offset(0, 2, 0));
-        const covered = roof !== null && roof.boundingBox === "block";
-        this.enterWait(
-          bot,
-          placed === 0
-            ? "no pudiste colocar ningún bloque alrededor"
-            : `${closed && covered ? "quedaste encerrado" : closed ? "quedaste rodeado de bloques, pero sin techo" : "quedó algún hueco en la caja"} (${placed} bloques); te quedan ${left} bloques`,
-        );
-      })
-      .catch((err: unknown) => {
-        this.log("warn", `Error al encerrarse: ${errorText(err)}`);
-        if (this.buildActive(generation)) this.enterWait(bot, "no pudiste terminar de encerrarte");
-      })
-      .finally(() => {
-        bot.clearControlStates();
-        if (chain === this.buildChain) this.buildBusy = false;
-      });
-  }
-
-  /** Camina lo justo para quedar al centro del bloque que pisa (así los bloques de al lado no lo tocan). */
-  private async centerOnBlock(bot: Bot, generation: number): Promise<void> {
-    const p = bot.entity.position;
-    const target = this.vec(bot, Math.floor(p.x) + 0.5, p.y + EYE_HEIGHT, Math.floor(p.z) + 0.5);
-    const off = (): number => Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z);
-    if (off() < 0.2) return;
-    try {
-      await bot.lookAt(target, true);
-    } catch {
-      return;
-    }
-    if (!this.buildActive(generation)) return;
-    bot.setControlState("forward", true);
-    await waitUntil(() => off() < 0.2 || !this.buildActive(generation), CENTER_TIMEOUT_MS);
-    bot.setControlState("forward", false);
-  }
-
-  /**
    * Romper bloques, de un solo uso: "between" rompe uno tras otro los que cortan la recta
    * hasta el rival (hasta DIG_MAX_BLOCKS); "nearest", solo el más cercano. Cada bloque se
    * rompe con la mejor herramienta del inventario.
@@ -2379,13 +2114,13 @@ class MineflayerFighter implements Fighter {
     const chain = ++this.buildChain;
     this.buildBusy = true;
     const deadline = now + DIG_TIMEOUT_MS;
-    const limit = this.digTarget === "between" ? DIG_MAX_BLOCKS : 1;
+    const limit = this.digPosition ? 1 : this.digTarget === "between" ? DIG_MAX_BLOCKS : 1;
     this.lastResult = "rompiendo bloques";
     (async () => {
       const broken: string[] = [];
       let stop = "";
       while (broken.length < limit && Date.now() < deadline && this.buildActive(generation)) {
-        const targets = this.digCandidates(bot, this.opponent(bot), this.digTarget);
+        const targets = this.digCandidates(bot, this.opponent(bot), this.digTarget, this.digPosition);
         if (typeof targets === "string") {
           if (broken.length === 0) stop = targets;
           break;
@@ -2451,7 +2186,7 @@ class MineflayerFighter implements Fighter {
       this.digging = false;
     }
     const after = bot.blockAt(block.position);
-    if (after && isBreakable(after.name)) {
+    if (!after || !AIR_BLOCKS.has(after.name)) {
       try {
         bot.stopDigging();
       } catch {

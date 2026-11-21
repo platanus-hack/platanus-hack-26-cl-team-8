@@ -123,6 +123,7 @@ export type MockObservation = {
   inventory: Record<string, number>;
   /** Herramienta que el cuerpo está ejecutando (null si no viene). */
   currentAction: string | null;
+  constructionStatus?: string;
   /** Modo "chat": mensajes del rival desde la decisión anterior ([] si no viene). */
   rivalMessages: string[];
 };
@@ -168,6 +169,7 @@ export function readObservation(messages: ChatMessage[]): MockObservation {
     absorption: Math.max(0, num(obj.absorption) ?? 0),
     inventory: readInventory(obj.inventory),
     currentAction: typeof obj.currentAction === "string" ? obj.currentAction : null,
+    ...(isRecord(obj.construction) && typeof obj.construction.status === "string" ? { constructionStatus: obj.construction.status } : {}),
     rivalMessages: Array.isArray(obj.rivalMessages)
       ? obj.rivalMessages.filter((m): m is string => typeof m === "string" && m.trim() !== "")
       : [],
@@ -247,11 +249,12 @@ function kitDecision(obs: MockObservation): MockDecision | null {
   // Con la vida al límite manda la política base: alejarse o comer.
   if (health <= LOW_HEALTH && losing) return null;
 
-  if (obs.buildCooldown > 0 && health < BUILD_HEALTH && canEat && distance > MELEE_RANGE) {
+  if ((obs.buildCooldown > 0 || obs.constructionStatus === "complete") && health < BUILD_HEALTH && canEat && distance > MELEE_RANGE) {
     return { preferences: ["eat"], reason: `vida ${health} y muro recién puesto: como detrás` };
   }
   if (
     count("oak_planks") > 0 &&
+    !obs.constructionStatus &&
     obs.buildCooldown === 0 &&
     health < BUILD_HEALTH &&
     distance >= BUILD_MIN_DISTANCE &&
@@ -359,6 +362,26 @@ export function buildArgs(tool: ToolDef): Record<string, unknown> {
   return args;
 }
 
+/** Plano explícito del luchador simulado; las formas no forman parte de la herramienta. */
+function mockBlueprint(messages: ChatMessage[]): Record<string, unknown> {
+  const latest = [...messages].reverse().find((message) => message.role === "user");
+  const observation = extractJsonObject(latest?.content ?? "") ?? {};
+  if (observation.currentAction === "build") return {};
+  const position = isRecord(observation.position) ? observation.position : {};
+  const relative = isRecord(observation.opponentRelative) ? observation.opponentRelative : {};
+  const x = num(position.x), y = num(position.y), z = num(position.z);
+  const dx = num(relative.x), dz = num(relative.z);
+  if (x === null || y === null || z === null || dx === null || dz === null) return {};
+  const alongX = Math.abs(dx) >= Math.abs(dz);
+  const fx = alongX ? Math.sign(dx) || 1 : 0;
+  const fz = alongX ? 0 : Math.sign(dz) || 1;
+  const blocks = [];
+  for (let lift = 0; lift < 2; lift++) for (let side = -1; side <= 1; side++) {
+    blocks.push({ x: Math.floor(x) + fx * 3 - fz * side, y: Math.floor(y) + lift, z: Math.floor(z) + fz * 3 + fx * side, material: "oak_planks" });
+  }
+  return { blocks };
+}
+
 export function createMockClient(model = "mock-scripted"): LlmClient {
   // El agente recorta el historial (12 mensajes), así que contar mensajes "assistant" se
   // estanca a los pocos turnos. Este contador por cliente sigue creciendo toda la pelea.
@@ -388,6 +411,7 @@ export function createMockClient(model = "mock-scripted"): LlmClient {
       // `tool.name` salió de `order`, así que es uno de los nombres conocidos.
       const name = tool.name as MockToolName;
       const args: Record<string, unknown> = { ...buildArgs(tool), ...decision.args?.[name] };
+      if (name === "build") Object.assign(args, mockBlueprint(req.messages));
       if (hasSayProperty(tool)) {
         const say = mockSay(obs, name, turn);
         if (say !== null) args.say = say;

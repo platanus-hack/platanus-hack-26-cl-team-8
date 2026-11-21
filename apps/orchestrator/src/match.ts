@@ -58,6 +58,7 @@ export type MatchEnv = Pick<
   | "MATCH_DURATION_SECONDS"
   | "MATCH_MAX_SECONDS"
   | "AGENT_TICK_MS"
+  | "AGENT_OBSERVATION_RADIUS"
 >;
 
 export type MatchDeps = {
@@ -287,6 +288,7 @@ export class MatchManager {
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,
+          observationRadius: env.AGENT_OBSERVATION_RADIUS,
           events: this.makeEvents(ctx, side),
         });
       }

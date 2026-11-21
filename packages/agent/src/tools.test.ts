@@ -28,23 +28,15 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     expect(isToolName("tower")).toBe(false);
   });
 
-  it("pearl exige elegir dónde caer y build elige entre muro, torre y caja", () => {
+  it("pearl exige destino y build permite planos arbitrarios sin formas fijas", () => {
     const pearl = TOOL_DEFS.find((def) => def.name === "pearl");
     expect(pearl?.parameters["required"]).toEqual(["target"]);
-    const properties = pearl?.parameters["properties"] as Record<string, { enum?: string[] }>;
-    expect(properties["target"]?.enum).toEqual(["rival", "away"]);
-
     const build = TOOL_DEFS.find((def) => def.name === "build");
-    const buildProps = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
-    expect(Object.keys(buildProps)).toEqual(["reason", "shape", "side"]);
-    expect(buildProps["shape"]?.enum).toEqual(["wall", "tower", "box", "block"]);
-    expect(build?.parameters["required"]).toEqual([]);
-    expect(build?.description).toContain("muro de 3 de ancho y 2 de alto");
-    expect(build?.description).toContain("gasta hasta 6 bloques");
-    expect(build?.description).toContain("3 bloques más arriba");
-    expect(build?.description).toContain("Recarga de 4 segundos");
-    expect(build?.description).toContain("rival a 4.5 bloques o más");
-    expect(pearl?.description).toContain("Recarga de 5 segundos");
+    const props = build?.parameters["properties"] as Record<string, unknown>;
+    expect(props).toHaveProperty("blocks");
+    expect(props).not.toHaveProperty("shape");
+    expect(props).not.toHaveProperty("side");
+    expect(build?.parameters["required"]).toEqual([]); // {} continúa un plano existente.
   });
 
   it("eat avisa que los corazones amarillos de la manzana dorada no se acumulan", () => {
@@ -102,11 +94,11 @@ describe("kitToolNames", () => {
   const base = ["approach", "attack", "retreat", "move"];
 
   it("ofrece a cada kit solo lo que sus ítems permiten", () => {
-    expect(kitToolNames(KITS.classic)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
-    expect(kitToolNames(KITS.archer)).toEqual([...base, "shoot", "eat", "dig", "wait"]);
-    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "dig", "shield", "wait"]);
-    expect(kitToolNames(KITS.berserker)).toEqual([...base, "eat", "dig", "wait"]);
-    expect(kitToolNames(KITS.ender)).toEqual([...base, "eat", "pearl", "dig", "wait"]);
+    expect(kitToolNames(KITS.classic)).toEqual([...base, "shoot", "eat", "build", "dig", "wait"]);
+    expect(kitToolNames(KITS.archer)).toEqual([...base, "shoot", "eat", "build", "dig", "wait"]);
+    expect(kitToolNames(KITS.tank)).toEqual([...base, "eat", "build", "dig", "shield", "wait"]);
+    expect(kitToolNames(KITS.berserker)).toEqual([...base, "eat", "build", "dig", "wait"]);
+    expect(kitToolNames(KITS.ender)).toEqual([...base, "eat", "pearl", "build", "dig", "wait"]);
     expect(kitToolNames(KITS.builder)).toEqual([...base, "shoot", "eat", "build", "dig", "wait"]);
   });
 
@@ -119,7 +111,7 @@ describe("kitToolNames", () => {
 
   it("un kit sin ítems igual puede moverse, pegar, romper bloques a mano y esperar", () => {
     const empty: Kit = { ...KITS.classic, items: [] };
-    expect(kitToolNames(empty)).toEqual([...base, "dig", "wait"]);
+    expect(kitToolNames(empty)).toEqual([...base, "build", "dig", "wait"]);
   });
 
   it("respeta el orden de TOOL_NAMES", () => {
@@ -137,10 +129,10 @@ describe("kitToolDefs", () => {
     }
   });
 
-  it("el kit clásico no ve la perla ni el muro", () => {
+  it("el kit clásico puede construir con material recuperado pero no usar perlas", () => {
     const names = kitToolDefs(KITS.classic).map((def) => def.name);
     expect(names).not.toContain("pearl");
-    expect(names).not.toContain("build");
+    expect(names).toContain("build");
   });
 });
 
@@ -208,14 +200,16 @@ describe("escudo, agua y lava", () => {
     }
   });
 
-  it("parseToolArgs: shape y where con sus valores por defecto", () => {
-    expect(parseToolArgs({}).shape).toBe("wall");
-    expect(parseToolArgs({ shape: "TOWER " }).shape).toBe("tower");
-    expect(parseToolArgs({ shape: "castillo" }).shape).toBe("wall");
-    expect(parseToolArgs({}).where).toBe("between");
+  it("parseToolArgs conserva el plano y valida coordenadas libres sin inventarlas", () => {
+    const blocks = [{ x: 1, y: 65, z: 2, material: "oak_planks" }];
+    expect(parseToolArgs({ blocks }).blocks).toBe(blocks);
+    expect(parseToolArgs({ position: { x: 2, y: 65, z: 3 } }).position).toEqual({ x: 2, y: 65, z: 3 });
+    expect(parseToolArgs({ position: { x: "2", y: 65, z: 3 } }).positionInvalid).toBe(true);
+    expect(parseToolArgs({ position: null }).positionInvalid).toBe(true);
+    expect(parseToolArgs({}).positionInvalid).toBe(false);
     expect(parseToolArgs({ where: "feet" }).where).toBe("feet");
-    expect(parseToolArgs({ where: 3 }).where).toBe("between");
   });
+
 });
 
 describe("dig", () => {
@@ -227,11 +221,10 @@ describe("dig", () => {
     expect(dig?.description).toContain("nunca el piso, los muros de vidrio ni el techo");
   });
 
-  it("parseToolArgs: digTarget y shape box", () => {
+  it("parseToolArgs: digTarget", () => {
     expect(parseToolArgs({}).digTarget).toBe("between");
     expect(parseToolArgs({ target: "nearest" }).digTarget).toBe("nearest");
     expect(parseToolArgs({ target: "away" }).digTarget).toBe("between");
-    expect(parseToolArgs({ shape: "box" }).shape).toBe("box");
   });
 });
 
@@ -250,7 +243,7 @@ describe("move, pociones y elecciones", () => {
 
   it("parseToolArgs: estilos, distancia, lugar, arma, comida, poción y escudo", () => {
     const def = parseToolArgs({});
-    expect(def).toMatchObject({ style: "strafe", distance: 8, place: "center", weapon: null, guard: false, food: null, potion: null, at: "rival", side: "front" });
+    expect(def).toMatchObject({ style: "strafe", distance: 8, place: "center", weapon: null, guard: false, food: null, potion: null, at: "rival" });
     expect(parseToolArgs({ style: "keep", distance: 50 }).distance).toBe(16);
     expect(parseToolArgs({ style: "keep", distance: "3" }).distance).toBe(3);
     expect(parseToolArgs({ style: "volar" }).style).toBe("strafe");
@@ -261,13 +254,14 @@ describe("move, pociones y elecciones", () => {
     expect(parseToolArgs({ potion: "splash_potion:harming" }).potion).toBe("harming");
     expect(parseToolArgs({ guard: true }).guard).toBe(true);
     expect(parseToolArgs({ guard: "true" }).guard).toBe(true);
-    expect(parseToolArgs({ at: "self", side: "left" })).toMatchObject({ at: "self", side: "left" });
+    expect(parseToolArgs({ at: "self" })).toMatchObject({ at: "self" });
   });
 
-  it("build ofrece el bloque suelto con su lado", () => {
-    const build = TOOL_DEFS.find((def) => def.name === "build");
-    const props = build?.parameters["properties"] as Record<string, { enum?: string[] }>;
-    expect(props["side"]?.enum).toEqual(["front", "behind", "left", "right"]);
+  it("move y dig comparten coordenadas absolutas con el mapa", () => {
+    for (const name of ["move", "dig"]) {
+      const tool = TOOL_DEFS.find((def) => def.name === name);
+      expect(tool?.parameters["properties"]).toHaveProperty("position");
+    }
   });
 });
 

@@ -108,7 +108,7 @@ Todos usan la misma convención de barra: `hotbar.0` el arma cuerpo a cuerpo, `h
 
 - **Contrato.** `AgentConfig.kit` es opcional y tolerante: si falta (registros viejos) o trae un id desconocido, `kitOf(config)` devuelve `DEFAULT_KIT`. Así el historial ya guardado sigue validando.
 - **Entrega (`apps/orchestrator`).** Al preparar a cada peleador, después de limpiar su inventario y sus efectos, el orquestador manda un `item replace entity <bot> <slot> with minecraft:<item>` por objeto y un `effect give <bot> minecraft:<efecto> infinite` por efecto. Como cada objeto va a un slot fijo, la barra del juego es la misma que muestra la web. Un slot o un objeto mal escrito no hace fallar el comando por RCON (el servidor solo responde con un texto de error), así que `prepareFighter` revisa cada respuesta: si no es la de un comando que funcionó ("Replaced a slot…", "Applied effect…"), emite un `log` de nivel `warn` con el comando y la respuesta, y la pelea sigue.
-- **Herramientas (`packages/agent`).** `kitToolNames(kit)` deduce las herramientas de los objetos del kit, y solo esas se le ofrecen al LLM. Si el LLM llama a una que su kit no tiene, recibe un resultado que le dice cuáles puede usar y sigue con lo que estaba haciendo. Lo mismo pasa con una herramienta que en ese momento no se puede usar (comer con la barra de comida llena, disparar sin flechas, una perla en recarga): el resultado dice por qué y el agente no cambia de modo. El prompt de sistema lleva una sección con el contenido del kit y cómo funciona cada herramienta.
+- **Herramientas (`packages/agent`).** `kitToolNames(kit)` deduce las herramientas de los objetos del kit, y esas se le ofrecen al LLM; `build` está disponible para todos, porque `dig` permite recoger materiales de construcciones existentes. Si el LLM llama a una que su kit no tiene, recibe un resultado que le dice cuáles puede usar y sigue con lo que estaba haciendo. Lo mismo pasa con una herramienta que en ese momento no se puede usar (comer con la barra de comida llena, disparar sin flechas, una perla en recarga): el resultado dice por qué y el agente no cambia de modo. El prompt de sistema lleva una sección con el contenido del kit y cómo funciona cada herramienta.
 
 | Herramienta | Kits | Qué hace |
 |---|---|---|
@@ -118,13 +118,15 @@ Todos usan la misma convención de barra: `hotbar.0` el arma cuerpo a cuerpo, `h
 | `shoot` | Los que traen arco y flechas: `classic`, `archer`, `builder` | Se detiene, apunta, carga cerca de 1 segundo y dispara. |
 | `eat` | Todos | Come un filete (solo si la barra de comida no está llena) o una manzana dorada (siempre). Tarda cerca de 2 segundos. |
 | `pearl` | `ender` | Lanza una perla de ender y se teletransporta donde cae. `target: "rival"` (por defecto) cae junto al rival y pasa a atacar; `target: "away"` cae lejos, al otro lado de la arena, y ahí come si le falta comida y tiene con qué (si no, queda en espera). Recarga de 5 segundos. |
-| `build` | `builder` | Levanta un muro de 3 de ancho y 2 de alto entre el agente y el rival, con hasta 6 bloques. Tarda 1 a 2 segundos, deja al agente en espera y tiene una recarga de 4 segundos. |
+| `build` | Todos; necesita bloques en el inventario actual | Ejecuta un plano libre `blocks: [{x,y,z,material}, ...]` (hasta 512 celdas ordenadas). El cuerpo busca dónde colocarse y confirma cada bloque en el mundo. Sin `blocks`, retoma el plano; con uno nuevo, lo reemplaza. Otra acción lo pausa. Sin formas fijas ni recarga artificial. |
+| `move` | Todos | Incluye `style: "goto", position: {x,y,z}` para destinos libres además de los movimientos tácticos. |
+| `dig` | Todos | Permite `position: {x,y,z}` para elegir un bloque concreto a su alcance, además de `between` y `nearest`. |
 | `wait` | Todos | Se queda quieto mirando al rival. |
 
 Lo que estas dos herramientas nuevas cambian fuera del agente:
 
 - **Daño propio.** Caer con una perla quita vida. `FighterEvents.onDamageTaken(amount, health, bySelf)` avisa con `bySelf = true` cuando el daño viene de la perla del propio agente; el orquestador emite igual el evento `damage`, pero no lo suma al `damageDealt` del rival.
-- **Observación.** Mientras dura la recarga, la observación del agente incluye `pearlCooldown` o `buildCooldown` (segundos que faltan).
+- **Observación.** Mientras dura la recarga, la observación del agente incluye `pearlCooldown` (segundos que faltan). Construir no tiene recarga artificial.
 - **Arena.** Al construir la arena se pone una tapa de bloques `barrier` (invisibles) justo sobre el borde de los muros, para que una perla no saque a nadie. No es opcional: el mundo es plano y la arena flota unos 125 bloques sobre el suelo, así que quien saliera caería al vacío. Al terminar la pelea se borran los tablones que hayan quedado dentro.
 
 Para agregar un kit: sumar su id a `KIT_IDS` y su entrada a `KITS`. Los comandos RCON, la lista de herramientas y el panel de la web salen de ahí. Solo hay que tocar más código si trae un objeto sin ícono en la web o una mecánica que ninguna herramienta cubre.
@@ -217,3 +219,21 @@ Hoy existe un solo escenario: duelo 1 contra 1 en una arena circular cerrada. Un
 7. **Verificación.** Agregar a `scripts/smoke.sh` una pelea en modo mock por cada escenario.
 
 Regla general: **todo lo que cruza entre procesos se define primero en `packages/protocol`**, con un valor por defecto que mantenga compatibles los datos antiguos. Más de dos agentes (equipos, todos contra todos) es un cambio mayor: `Side` y los objetos `{ red, blue }` están en todo el contrato, y habría que pasarlos a listas.
+
+### Contexto espacial y recursos del agente
+
+Cada decisión recibe un snapshot nuevo del entorno dentro de un cilindro horizontal centrado en el agente, con toda la altura útil de la arena. `AGENT_OBSERVATION_RADIUS=16` configura su radio en bloques (admite 8–64); se pasa tanto en desarrollo local como en Docker. El contexto general de la arena y los límites modificables (`buildBounds`) se conservan independientemente del radio.
+
+`world.blocks` contiene tuplas `[x,y,z,material]` en coordenadas absolutas; `world.unknown` distingue chunks no recibidos de aire. Solo las celdas dentro de `world.bounds` **y** el radio indicado en `world.coverage` que no figuran en esas listas son aire conocido. Fuera de esa cobertura no se afirma nada del terreno. `materials` aporta colisión y peligros; `breakable` enumera celdas modificables. Es información de bloques recibida por el cliente, incluso detrás de obstáculos dentro del radio; no una imagen desde sus ojos. `nearbyEntities` incluye agentes, proyectiles y objetos tirados dentro del mismo radio. La posición del rival que recibe el cliente sigue disponible por separado en `opponentState`, que distingue ubicación conocida de línea libre de bloques sólidos (`lineOfSight`/`opponentVisible`).
+
+`resources` describe el inventario vivo por casilla, con cantidades, encantamientos, desgaste, usos que implementan las herramientas y restricciones de inventario/vida/comida/recarga. El alcance y el terreno se validan al actuar: un uso disponible no garantiza que se pueda ejecutar desde la posición actual. `equipment` y `effects` agregan equipo puesto y efectos activos. El prompt pide reconsiderar los recursos y posibles combinaciones en cada decisión, sin fijar un objetivo distinto de las instrucciones del usuario ni pedir una narración de su deliberación.
+
+`construction` informa estado (`active`, `paused`, `blocked`, `complete`), avance, motivo del bloqueo y celdas pendientes. El modelo elige geometría, materiales y orden de apoyos. El ejecutor se acerca para colocar, pero no inventa apoyos ni coloca dentro de un agente; puede necesitar que el modelo revise el plano, camine a otra posición o construya primero una escalera. Un obstáculo detiene el plano y permite reintentarlo con `build {}`. Reenviar exactamente el mismo plano conserva su avance; para reparar uno ya completo se envía un plano con las celdas a reparar. Se conservan los bloques que alcanzaron a colocarse al interrumpir. La lectura del mundo confirma cada colocación; los rechazos no se cuentan como éxito.
+
+Ejemplo de llamada (las coordenadas deben elegirse usando la observación actual):
+
+```json
+{"blocks":[{"x":0,"y":65,"z":2,"material":"oak_planks"},{"x":0,"y":66,"z":2,"material":"red_wool"}],"reason":"Combino materiales para cubrir este lado y conservar una salida."}
+```
+
+Las transcripciones existentes guardan la observación completa, las llamadas y sus resultados: permiten revisar qué información recibió cada modelo y si reconsideró su equipo. El mock genera un plano explícito de demostración; no evalúa creatividad ni comprensión espacial de un LLM real. Las llamadas admiten hasta 60 s para no cortar respuestas con planos grandes; las acciones físicas continúan entre decisiones.
