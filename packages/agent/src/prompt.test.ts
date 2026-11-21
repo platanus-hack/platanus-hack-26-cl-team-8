@@ -113,9 +113,11 @@ describe("buildSystemPrompt", () => {
     expect(chat).toContain("normalmente basta una frase corta");
     expect(chat).toContain("Puedes actuar en silencio");
     expect(chat).toContain("no por haber llegado otro turno");
-    expect(chat).toContain("no que debas hacerlo");
-    expect(chat).toContain("tiempo para leer al otro");
-    expect(chat).toContain('"sayCooldown"');
+    expect(chat).toContain(
+      "- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.",
+    );
+    expect(chat).not.toContain("sayCooldown");
+    expect(chat).not.toContain("no se entregan");
   });
 
   it("en modo chat describe la mecánica sin aconsejar qué decir ni si creerle", () => {

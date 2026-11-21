@@ -40,8 +40,6 @@ export type ObservationInput = SpatialContext & {
   queuedActions?: string[];
   /** Epoch ms desde el que se puede lanzar otra perla (ausente o pasado = ya se puede). */
   pearlReadyAt?: number;
-  /** Modo chat: epoch ms desde el que se puede enviar otro mensaje. */
-  sayReadyAt?: number;
   /** Lo que se ve de los bloques alrededor (ver Observation). */
   terrain?: { height: number; blocksBetween: number; enclosed: boolean };
   /** Lo que llegó del rival desde la decisión anterior (modos "thoughts" y "chat"). */
@@ -80,8 +78,6 @@ export type Observation = SpatialContext & {
   queuedActions?: string[];
   /** Segundos que faltan para poder lanzar otra perla. Solo aparece mientras hay recarga. */
   pearlCooldown?: number;
-  /** Segundos para volver a hablar, redondeados hacia arriba; solo durante la pausa. */
-  sayCooldown?: number;
   /** Altura de tus pies sobre el piso de la arena. Solo aparece si estás arriba de algo. */
   height?: number;
   /** Bloques colocados en la línea recta entre tú y el rival. Solo aparece si hay alguno. */
@@ -153,8 +149,6 @@ export function buildObservation(input: ObservationInput): Observation {
   // el historial y conviene que sea corta.
   if (input.queuedActions && input.queuedActions.length > 0) observation.queuedActions = [...input.queuedActions];
   if (pearlCooldown > 0) observation.pearlCooldown = pearlCooldown;
-  const sayCooldown = Math.max(0, Math.ceil(((input.sayReadyAt ?? input.now) - input.now) / 1000));
-  if (sayCooldown > 0) observation.sayCooldown = sayCooldown;
   // Lo del terreno, igual: solo cuando dice algo (casi siempre estás en el piso, sin bloques cerca).
   const terrain = input.terrain;
   if (terrain) {

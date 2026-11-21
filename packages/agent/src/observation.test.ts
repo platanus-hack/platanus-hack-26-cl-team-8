@@ -83,13 +83,6 @@ describe("buildObservation", () => {
     expect("buildCooldown" in onlyPearl).toBe(false);
   });
 
-  it("informa la pausa del chat solo mientras no se puede hablar", () => {
-    expect(buildObservation(base)).not.toHaveProperty("sayCooldown");
-    expect(buildObservation({ ...base, sayReadyAt: base.now + 4000 }).sayCooldown).toBe(4);
-    expect(buildObservation({ ...base, sayReadyAt: base.now + 1 }).sayCooldown).toBeGreaterThan(0);
-    expect(buildObservation({ ...base, sayReadyAt: base.now })).not.toHaveProperty("sayCooldown");
-  });
-
   it("cuenta las perlas y los bloques en el inventario", () => {
     const obs = buildObservation({
       ...base,

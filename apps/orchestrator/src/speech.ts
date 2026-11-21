@@ -110,6 +110,8 @@ type Line = {
   failed: boolean;
   /** Solo si no se pudo guardar en disco: el audio queda en memoria. */
   memory: Buffer | null;
+  /** Tamaño del audio en bytes, cuando ya está (para calcular cuánto dura). */
+  bytes: number | null;
 };
 
 type Synthesis = { audio: Buffer | null; saved: boolean };
@@ -122,6 +124,16 @@ type Deadline = { at: number };
 
 /** Resultado de una solicitud a ElevenLabs. */
 type Attempt = { audio: Buffer } | { retry: true } | { audio: null };
+
+/**
+ * Kbps de un formato "mp3_<frecuencia>_<kbps>" de ElevenLabs (bitrate constante); null si el
+ * formato es otro y no se puede saber la duración por el tamaño.
+ */
+export function mp3Kbps(outputFormat: string): number | null {
+  const match = /^mp3_\d+_(\d+)$/.exec(outputFormat.trim());
+  const kbps = match ? Number(match[1]) : Number.NaN;
+  return Number.isFinite(kbps) && kbps > 0 ? kbps : null;
+}
 
 export function clampSpeed(speed: number): number {
   if (!Number.isFinite(speed)) return 1;
@@ -259,6 +271,7 @@ export class SpeechService {
       pending: null,
       failed: false,
       memory: null,
+      bytes: null,
     };
     const pending = this.synthesize(key, line.file, side, voice, spoken);
     line.pending = pending;
@@ -266,6 +279,7 @@ export class SpeechService {
       line.pending = null;
       line.failed = result.audio === null;
       line.memory = result.audio && !result.saved ? result.audio : null;
+      line.bytes = result.audio ? result.audio.length : null;
     });
     this.lines.set(id, line);
     this.forgetOldIds();
@@ -287,6 +301,20 @@ export class SpeechService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Cuánto dura de verdad el audio de esa frase, en ms; espera a que esté listo (con el mismo
+   * tope que get). Los mp3 de ElevenLabs son de bitrate constante: ms = bytes × 8 / kbps.
+   * null si falló, si el id no existe o si el formato no es "mp3_<frecuencia>_<kbps>".
+   */
+  async durationMs(speechId: string): Promise<number | null> {
+    const kbps = mp3Kbps(this.deps.config.outputFormat);
+    const line = this.lines.get(speechId);
+    if (kbps === null || !line) return null;
+    if (line.pending) await this.waitFor(line.pending);
+    if (line.failed || line.bytes === null) return null;
+    return Math.round((line.bytes * 8) / kbps);
   }
 
   /** Lee los créditos de la cuenta. Un fallo no apaga la voz: solo se registra. */
