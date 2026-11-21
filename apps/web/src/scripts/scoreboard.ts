@@ -71,7 +71,7 @@ function setHealth(side: SideElements, health: number): void {
   side.hpFill.style.width = `${(clamped / MAX_HEALTH) * 100}%`;
   side.hp.setAttribute("aria-valuenow", String(Math.round(clamped)));
   side.hp.dataset.level = clamped <= 6 ? "low" : clamped <= 12 ? "mid" : "high";
-  setText(side.hpValue, `${formatNumber(clamped)} / ${MAX_HEALTH}`);
+  setText(side.hpValue, formatNumber(clamped));
 }
 
 function renderAgent(side: SideElements, agent: AgentStatus): void {

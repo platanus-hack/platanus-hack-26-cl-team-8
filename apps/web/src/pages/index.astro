@@ -1,4 +1,7 @@
 ---
+// Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
+import "@fontsource-variable/instrument-sans";
+import "@fontsource/silkscreen/400.css";
 import "../styles/global.css";
 
 // Los ids generados aquí (fighter-red, prompt-blue, ...) son el contrato con
@@ -14,6 +17,7 @@ const providers = [
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "openrouter", label: "OpenRouter" },
+  { value: "gateway", label: "Vercel AI Gateway" },
 ] as const;
 ---
 
@@ -23,8 +27,8 @@ const providers = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0a0b10" />
-    <title>Arena de Prompts</title>
+    <meta name="theme-color" content="#101113" />
+    <title>Arena de prompts</title>
     <meta
       name="description"
       content="Dos agentes de IA pelean en una arena de Minecraft, cada uno guiado por un prompt. Mira la pelea en vivo, edita los prompts y descubre cuál gana."
@@ -32,139 +36,128 @@ const providers = [
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body data-phase="unknown" data-conn="connecting">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
-        <div>
-          <h1 class="brand__title">Arena de Prompts</h1>
-          <p class="brand__tagline">¿Qué pasaría si el prompt A pelea contra el prompt B?</p>
+    <!-- La transmisión ocupa toda la pantalla; el marcador y los pensamientos van encima. -->
+    <section class="stage" aria-label="Pelea en vivo">
+      <div class="player" id="player" data-signal="off">
+        <video id="arena-video" class="player__video" muted autoplay playsinline></video>
+        <div class="player__nosignal">
+          <strong>Sin señal</strong>
+          <p id="no-signal-detail">Esperando la transmisión de la arena. Reintentando…</p>
         </div>
       </div>
-      <div class="conn" id="conn" data-state="connecting" role="status">
-        <span class="conn__dot" aria-hidden="true"></span>
-        <span id="conn-text">Conectando…</span>
-      </div>
-    </header>
 
-    <main class="layout">
-      <section class="stage" aria-label="Pelea en vivo">
-        <div class="player" id="player" data-signal="off">
-          <video id="arena-video" class="player__video" muted autoplay playsinline></video>
-          <span class="player__live" aria-hidden="true">En vivo</span>
-          <div class="player__nosignal">
-            <strong>Sin señal</strong>
-            <p id="no-signal-detail">Esperando la transmisión de la arena. Reintentando…</p>
-          </div>
+      <header class="top">
+        <div class="brand">
+          <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
+          <h1 class="brand__title">Arena de prompts</h1>
         </div>
-
-        <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
-          <strong class="winner__title" id="winner-title"></strong>
-          <span class="winner__detail" id="winner-detail"></span>
+        <span class="live" aria-hidden="true">En vivo</span>
+        <div class="conn" id="conn" data-state="connecting" role="status">
+          <span class="conn__dot" aria-hidden="true"></span>
+          <span class="conn__text" id="conn-text">Conectando…</span>
         </div>
+      </header>
 
-        <div class="board">
-          <div class="center">
-            <span class="center__phase" id="phase">Conectando…</span>
-            <div class="center__clock" id="clock" aria-label="Tiempo restante">--:--</div>
-            <div class="center__buttons">
-              <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
-              <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
+      <!-- Marcador: una barra de vida por lado y el reloj al centro. -->
+      <div class="hud">
+        {
+          sides.map((side) => (
+            <div class={`hud__side hud__side--${side.id}`} id={`fighter-${side.id}`} data-side={side.id}>
+              <div class="hud__row">
+                <h2 class="hud__name">{side.label}</h2>
+                <span class="hud__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
+                <span class="hud__hp" id={`hp-value-${side.id}`}>–</span>
+              </div>
+              <div
+                class="hp"
+                id={`hp-${side.id}`}
+                role="meter"
+                aria-label={`Vida de ${side.label}`}
+                aria-valuemin="0"
+                aria-valuemax="20"
+                aria-valuenow="0"
+                data-level="high"
+              >
+                <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
+              </div>
+              <span class="sr-only" id={`bot-${side.id}`}>{side.bot}</span>
             </div>
-          </div>
-
-          {
-            sides.map((side) => (
-              <article class={`fighter fighter--${side.id}`} id={`fighter-${side.id}`} data-side={side.id}>
-                <header class="fighter__head">
-                  <h2 class="fighter__name">{side.label}</h2>
-                  <span class="fighter__bot" id={`bot-${side.id}`}>{side.bot}</span>
-                  <span class="fighter__state" id={`fighter-state-${side.id}`} data-state="off">Desconectado</span>
-                </header>
-
-                <div
-                  class="hp"
-                  id={`hp-${side.id}`}
-                  role="meter"
-                  aria-label={`Vida de ${side.label}`}
-                  aria-valuemin="0"
-                  aria-valuemax="20"
-                  aria-valuenow="0"
-                  data-level="high"
-                >
-                  <div class="hp__fill" id={`hp-fill-${side.id}`}></div>
-                  <span class="hp__value" id={`hp-value-${side.id}`}>– / 20</span>
-                </div>
-
-                <dl class="stats">
-                  <div class="stats__item">
-                    <dt>Comida</dt>
-                    <dd id={`food-${side.id}`}>–</dd>
-                  </div>
-                  <div class="stats__item">
-                    <dt>Daño hecho</dt>
-                    <dd id={`damage-${side.id}`}>–</dd>
-                  </div>
-                  <div class="stats__item">
-                    <dt>Decisiones</dt>
-                    <dd id={`decisions-${side.id}`}>–</dd>
-                  </div>
-                </dl>
-
-                <div class="mind">
-                  <span class="mind__label">Último pensamiento</span>
-                  <p class="mind__text" id={`thought-${side.id}`}>—</p>
-                </div>
-                <div class="mind">
-                  <span class="mind__label">Última acción</span>
-                  <p class="mind__text mind__text--mono" id={`action-${side.id}`}>—</p>
-                </div>
-              </article>
-            ))
-          }
+          ))
+        }
+        <div class="hud__clock">
+          <div class="clock" id="clock" aria-label="Tiempo restante">--:--</div>
+          <span class="phase" id="phase">Conectando…</span>
         </div>
-      </section>
+      </div>
 
-      <aside class="panel feed" aria-label="Eventos en vivo">
-        <header class="panel__head">
-          <h2 class="panel__title">Eventos en vivo</h2>
+      <div class="winner" id="winner-banner" data-winner="none" role="status" hidden>
+        <strong class="winner__title" id="winner-title"></strong>
+        <span class="winner__detail" id="winner-detail"></span>
+      </div>
+
+      <!-- Qué piensa cada agente ahora mismo, como subtítulos, y el botón de la pelea al centro. -->
+      <div class="minds">
+        {
+          sides.map((side) => (
+            <article class={`mind mind--${side.id}`} data-side={side.id} aria-label={`Agente ${side.label}`}>
+              <span class="sr-only">Último pensamiento</span>
+              <p class="mind__thought" id={`thought-${side.id}`}>—</p>
+              <span class="sr-only">Última acción</span>
+              <p class="mind__action" id={`action-${side.id}`}>—</p>
+              <dl class="stats">
+                <div>
+                  <dt>Comida</dt>
+                  <dd id={`food-${side.id}`}>–</dd>
+                </div>
+                <div>
+                  <dt>Daño hecho</dt>
+                  <dd id={`damage-${side.id}`}>–</dd>
+                </div>
+                <div>
+                  <dt>Decisiones</dt>
+                  <dd id={`decisions-${side.id}`}>–</dd>
+                </div>
+              </dl>
+            </article>
+          ))
+        }
+        <div class="controls">
+          <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
+          <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
+        </div>
+      </div>
+    </section>
+
+    <main class="page">
+      <div class="workbench">
+        <section class="prompts" aria-labelledby="prompts-title">
+        <header class="section__head">
+          <h2 class="section__title" id="prompts-title">Prompts</h2>
+          <p class="section__hint">
+            Escribe cómo debe pelear cada agente. Cualquiera puede editarlos; valen desde la próxima pelea.
+          </p>
         </header>
-        <ol class="feed__list" id="feed-list" aria-live="off">
-          <li class="feed__empty">Aquí aparecerán los pensamientos, acciones y golpes de cada agente.</li>
-        </ol>
-        <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último ↓</button>
-      </aside>
 
-      <section class="panel editors" aria-label="Prompts de los agentes">
-        <header class="panel__head">
-          <h2 class="panel__title">Prompts</h2>
-          <p class="panel__hint">Escribe cómo debe pelear cada agente.</p>
-        </header>
-
-        <p class="notice">
-          <strong>Experimental.</strong> No hay cuentas ni permisos: cualquiera puede editar ambos prompts y todos ven
-          la misma pelea. Los cambios se aplican a la <strong>próxima</strong> pelea, no a la que está en curso.
-        </p>
-
-        <div class="editors__grid">
+        <div class="editors">
           {
             sides.map((side) => (
-              <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} autocomplete="off" novalidate>
+              <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} data-side={side.id} autocomplete="off" novalidate>
                 <div class="editor__head">
                   <label class="editor__title" for={`prompt-${side.id}`}>Prompt {side.label}</label>
                   <span class="editor__count" id={`count-${side.id}`}>0 / 4000</span>
                 </div>
 
-                <textarea class="editor__text" id={`prompt-${side.id}`} rows="8" spellcheck="false"></textarea>
+                <textarea class="editor__text" id={`prompt-${side.id}`} rows="7" spellcheck="false"></textarea>
 
                 <div class="editor__options">
                   <label class="field">
-                    <span class="field__label">Proveedor (opcional)</span>
+                    <span class="field__label">Proveedor</span>
                     <select id={`provider-${side.id}`}>
                       {providers.map((provider) => <option value={provider.value}>{provider.label}</option>)}
                     </select>
                   </label>
                   <label class="field">
-                    <span class="field__label">Modelo (opcional)</span>
+                    <span class="field__label">Modelo</span>
                     <input
                       id={`model-${side.id}`}
                       type="text"
@@ -174,16 +167,14 @@ const providers = [
                       spellcheck="false"
                     />
                   </label>
+                  <button type="submit" class="btn btn--save" id={`save-${side.id}`}>Guardar</button>
                 </div>
+
+                <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
 
                 <div class="editor__conflict" id={`conflict-${side.id}`} hidden>
                   <span>Alguien más cambió este prompt mientras escribías.</span>
                   <button type="button" class="btn btn--small" id={`reload-${side.id}`}>Cargar su versión</button>
-                </div>
-
-                <div class="editor__foot">
-                  <span class="editor__status" id={`save-status-${side.id}`} role="status"></span>
-                  <button type="submit" class="btn btn--side" id={`save-${side.id}`}>Guardar</button>
                 </div>
               </form>
             ))
@@ -191,10 +182,19 @@ const providers = [
         </div>
       </section>
 
-      <section class="panel history" aria-label="Historial de peleas">
-        <header class="panel__head">
-          <h2 class="panel__title">Historial</h2>
-          <p class="panel__hint" id="tally-summary">Cargando resultados…</p>
+        <aside class="feed" aria-label="Eventos en vivo">
+          <h2 class="feed__title">Eventos</h2>
+          <ol class="feed__list" id="feed-list" aria-live="off">
+            <li class="feed__empty">Aquí aparecerán los pensamientos, acciones y golpes de cada agente.</li>
+          </ol>
+          <button type="button" class="feed__jump" id="feed-jump" hidden>Ver lo último</button>
+        </aside>
+      </div>
+
+      <section class="section" aria-labelledby="history-title">
+        <header class="section__head">
+          <h2 class="section__title" id="history-title">Historial</h2>
+          <p class="section__hint" id="tally-summary">Cargando resultados…</p>
         </header>
 
         <div class="tally">
@@ -205,7 +205,7 @@ const providers = [
             </div>
             <div class="tally__cell tally__cell--none">
               <strong id="tally-none">0</strong>
-              <span>empates / sin ganador</span>
+              <span>sin ganador</span>
             </div>
             <div class="tally__cell tally__cell--blue">
               <strong id="tally-blue">0</strong>
@@ -239,7 +239,7 @@ const providers = [
     </main>
 
     <footer class="footer">
-      <p>Hecho para la Platanus Hackathon 2026 · categoría Simulaciones · Minecraft + agentes LLM</p>
+      <p>Hecho para la Platanus Hackathon 2026, track Simulaciones. Minecraft y agentes LLM.</p>
     </footer>
 
     <div class="toasts" id="toasts" aria-live="assertive"></div>

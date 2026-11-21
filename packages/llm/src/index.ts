@@ -13,18 +13,21 @@ export type { MockToolName } from "./mock";
 /**
  * Modelo por defecto de cada proveedor (se usa si `model` viene vacío).
  * openai / openrouter: verificados en la documentación pública en nov. 2026.
+ * gateway: id del catálogo de Vercel AI Gateway ("creador/modelo"), verificado el 2026-11-21.
  */
 export const DEFAULT_MODELS: Record<Provider, string> = {
   mock: "mock-scripted",
   openai: "gpt-6-luna",
   openrouter: "openai/gpt-6-luna",
   anthropic: "claude-haiku-5-5",
+  gateway: "anthropic/claude-haiku-5.5",
 };
 
 const KEY_ENV_NAMES = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  gateway: "AI_GATEWAY_API_KEY",
 } as const;
 
 function requireKey(provider: keyof typeof KEY_ENV_NAMES, apiKeys: ApiKeys): string {
@@ -57,6 +60,14 @@ export function createLlmClient(opts: { provider: Provider; model?: string; apiK
         apiKey: requireKey("openrouter", opts.apiKeys),
         model,
         extraHeaders: { "x-title": "Arena de prompts" },
+      });
+    case "gateway":
+      // Vercel AI Gateway habla el formato "chat completions" de OpenAI.
+      return createOpenAiCompatibleClient({
+        provider: "gateway",
+        baseUrl: "https://ai-gateway.vercel.sh/v1",
+        apiKey: requireKey("gateway", opts.apiKeys),
+        model,
       });
     case "anthropic":
       return createAnthropicClient({ apiKey: requireKey("anthropic", opts.apiKeys), model });

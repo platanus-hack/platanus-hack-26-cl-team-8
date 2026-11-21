@@ -1,4 +1,4 @@
-import { wsUrl } from "./config";
+import { MOCK, wsUrl } from "./config";
 
 export type SocketStatus = "connecting" | "open" | "closed";
 
@@ -23,6 +23,12 @@ function createSocket(): WebSocket | null {
  * backoff exponencial. Nunca se rinde: la página puede quedar abierta horas.
  */
 export function connectSocket(handlers: SocketHandlers): void {
+  if (MOCK) {
+    // Modo maqueta: los eventos salen de mock.ts, sin websocket.
+    void import("./mock").then((mock) => mock.connectMockSocket(handlers));
+    return;
+  }
+
   let attempt = 0;
   let timer: number | undefined;
 

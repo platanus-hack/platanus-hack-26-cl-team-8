@@ -7,3 +7,10 @@ dist/
 *.log
 data/
 .DS_Store
+# Entorno local sin Docker (scripts/local): jar y mundo de Minecraft, datos, logs.
+.local/
+# Wrangler
+.wrangler/
+.dev.vars
+# Capturas y logs de Playwright MCP
+.playwright-mcp/

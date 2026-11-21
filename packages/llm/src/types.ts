@@ -20,4 +20,4 @@ export interface LlmClient {
   complete(req: LlmRequest): Promise<LlmResponse>;
 }
 
-export type ApiKeys = { openai?: string; anthropic?: string; openrouter?: string };
+export type ApiKeys = { openai?: string; anthropic?: string; openrouter?: string; gateway?: string };

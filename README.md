@@ -120,17 +120,44 @@ docker compose down                        # detener todo (los volúmenes se con
 
 Para entrar a mirar con un cliente real de Minecraft (Java 1.20.4): el puerto 25565 solo se publica en el loopback del servidor, así que hay que abrir un túnel SSH (`ssh -L 25565:127.0.0.1:25565 usuario@servidor`) y conectarse a `localhost`.
 
+## Correr en local sin Docker (macOS)
+
+Para desarrollar en un Mac sin Docker, cada servicio del compose corre como proceso nativo. Sirve como entorno de desarrollo y de respaldo; el despliegue "de verdad" sigue siendo el compose en el servidor.
+
+```bash
+pnpm local:setup        # una vez: Java 21, mediamtx, ffmpeg, cloudflared, Node 22, pnpm install, .env
+pnpm local              # minecraft + mediamtx + orchestrator + camera + web
+```
+
+Después abre `http://localhost:4321` (`astro dev`, que hace de proxy hacia `/api` y `/live` igual que Caddy).
+
+```bash
+pnpm local --skip=camera            # todo menos la cámara
+pnpm local minecraft mediamtx       # solo los servicios nombrados
+pnpm local --tunnel                 # + el túnel de Cloudflare (ver "Web en Cloudflare")
+```
+
+- **Modo maqueta para diseñar la web sin backend:** `pnpm local web` y abrir `http://localhost:4321/?mock`. La página se llena con datos estáticos (pelea en curso, eventos, prompts, historial) y un video de relleno, sin orquestador, Minecraft ni transmisión. Variantes: `?mock=idle`, `?mock=preparing`, `?mock=finished`, y `&signal=off` para ver el reproductor en "Sin señal". Los botones "Iniciar pelea" y "Detener" cambian de fase localmente. Los datos están en `apps/web/src/scripts/mock.ts`; solo existe en `astro dev` (o compilando con `PUBLIC_MOCK=1`).
+- **Node 22, no 20 ni 24.** mineflayer exige Node >= 22 y `gl` (headless-gl, el render de la cámara) solo publica binarios precompilados hasta Node 22: con Node 24 intenta compilar y falla. `scripts/local/*.sh` buscan un Node 22 de nvm o de Homebrew y lo ponen primero en el `PATH`; si corres `pnpm install` a mano, hazlo con Node 22 activo (`nvm use`).
+- **Todo escucha solo en `127.0.0.1`**: el servidor de Minecraft está en modo offline y la API no tiene autenticación, así que nada queda expuesto a la red local.
+- El servidor de Minecraft (jar de Paper, mundo, `server.properties` generado) vive en `.local/minecraft/`, y el historial del orquestador en `.local/data/`. Ambas carpetas están fuera de git. Para empezar de cero, borra `.local/`.
+- Las variables salen de `.env`, igual que en Docker. Los hosts internos (`MC_HOST`, `RCON_HOST`, `RTMP_URL`…) los fija `scripts/local/dev.mjs` apuntando a `127.0.0.1`.
+- Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero por Tailscale), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
+
 ## Configurar el proveedor de LLM
 
 En `.env`:
 
 ```bash
-LLM_PROVIDER=anthropic        # mock | openai | anthropic | openrouter
+LLM_PROVIDER=gateway          # mock | openai | anthropic | openrouter | gateway
 LLM_MODEL=                    # vacío = modelo por defecto del proveedor (ver packages/llm)
-ANTHROPIC_API_KEY=...         # solo la clave del proveedor que uses
+AI_GATEWAY_API_KEY=...        # solo la clave del proveedor que uses
+ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 OPENROUTER_API_KEY=
 ```
+
+`gateway` es **Vercel AI Gateway**: una sola clave para modelos de cualquier laboratorio. Los modelos se nombran `creador/modelo` (por defecto `anthropic/claude-haiku-5.5`; por ejemplo `openai/gpt-6-luna`), así que desde la web se puede enfrentar un modelo contra otro cambiando solo el campo "modelo" de cada agente.
 
 Luego `docker compose up -d` (recrea los contenedores cuyo entorno cambió).
 
@@ -138,7 +165,38 @@ Luego `docker compose up -d` (recrea los contenedores cuyo entorno cambió).
 - Cada agente decide cada `AGENT_TICK_MS` milisegundos (1500 por defecto), y una pelea dura como máximo `MATCH_DURATION_SECONDS` (180). Una pelea completa son del orden de 2 × 180 / 1,5 = **240 llamadas al LLM**. El sitio no tiene autenticación: cualquiera con el link puede iniciar peleas, así que ponle un límite de gasto a la clave.
 - La lista completa de variables está en [.env.example](.env.example) y su fuente de verdad en `libs/env/src/index.ts`.
 
-## Cloudflare Tunnel
+## Web en Cloudflare (Worker + túnel privado)
+
+La web también se puede publicar como un **Worker de Cloudflare** (`apps/web/wrangler.jsonc`), sin exponer el servidor a internet:
+
+```
+navegador --> Worker "phack2026-web" (Cloudflare)
+                |  /        assets estáticos (apps/web/dist)
+                |  /api/*   --+
+                |  /live/*  --+--> Workers VPC --> túnel "phack2026-local" --> cloudflared
+                                                                                  |
+                                                         127.0.0.1:8787 (orquestador)
+                                                         127.0.0.1:8888 (HLS de MediaMTX)
+```
+
+`apps/web/worker/index.ts` cumple el rol de Caddy: sirve el sitio y hace de proxy de `/api/*` y `/live/*`. El orquestador y MediaMTX se alcanzan por [Workers VPC](https://developers.cloudflare.com/workers-vpc/): el túnel **no tiene hostname público** ni reglas de ingress, solo el Worker puede llegar a esos puertos.
+
+```bash
+pnpm deploy:web                     # astro build + wrangler deploy (usa el login de `wrangler login`)
+pnpm local --tunnel                 # en la máquina de la arena: stack + cloudflared
+```
+
+Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wrangler.jsonc`):
+
+| Recurso | Nombre | Apunta a |
+|---|---|---|
+| Túnel | `phack2026-local` | la máquina donde corra `cloudflared` |
+| VPC service | `phack2026-api` | `http://127.0.0.1:8787` |
+| VPC service | `phack2026-live` | `http://127.0.0.1:8888` |
+
+`127.0.0.1` se resuelve en la máquina que corre `cloudflared`, así que el túnel debe correr donde estén el orquestador y MediaMTX, con esos puertos alcanzables en loopback. Requiere `cloudflared` >= 2025.7.0 con transporte QUIC (UDP 7844 de salida).
+
+## Cloudflare Tunnel (alternativa: hostname público hacia Caddy)
 
 1. En el panel de Cloudflare: **Zero Trust → Networks → Tunnels → Create a tunnel**, tipo **Cloudflared**.
 2. Copia el **token** del túnel (el valor largo que aparece después de `--token` en el comando de instalación) y pégalo en `.env`:

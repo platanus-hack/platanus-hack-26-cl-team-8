@@ -55,8 +55,8 @@ async function main(): Promise<void> {
   hub.start();
 
   const app = await buildServer({ hub, match, prompts, history });
-  await app.listen({ host: "0.0.0.0", port: env.ORCHESTRATOR_PORT });
-  log("info", `API escuchando en el puerto ${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
+  await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
+  log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 
   // ---------- Apagado ordenado ----------
 

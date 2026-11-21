@@ -6,6 +6,15 @@ export const API_BASE: string = (import.meta.env.PUBLIC_API_BASE ?? "").trim().r
 /** Playlist HLS de la transmisión de la arena. */
 export const HLS_URL: string = (import.meta.env.PUBLIC_HLS_URL ?? "").trim() || "/live/arena/index.m3u8";
 
+/**
+ * Modo maqueta (datos estáticos, sin backend): ver mock.ts. Se activa con `?mock` en
+ * la URL. Solo existe en desarrollo (`astro dev`) o si el sitio se compiló con
+ * PUBLIC_MOCK=1; en el sitio real el parámetro se ignora.
+ */
+export const MOCK: boolean =
+  (import.meta.env.DEV || import.meta.env.PUBLIC_MOCK === "1") &&
+  new URLSearchParams(window.location.search).has("mock");
+
 export function apiUrl(path: string): string {
   return API_BASE + path;
 }

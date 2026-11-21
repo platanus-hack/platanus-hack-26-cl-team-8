@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
+    "local:setup": "bash scripts/local/setup.sh",
+    "local": "bash scripts/local/dev.sh",
+    "deploy:web": "pnpm --filter @phack/web run deploy",
     "dev:web": "pnpm --filter @phack/web dev",
     "dev:orchestrator": "pnpm --filter @phack/orchestrator dev",
     "dev:camera": "pnpm --filter @phack/camera dev",

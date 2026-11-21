@@ -29,7 +29,8 @@ export type Side = z.infer<typeof SideSchema>;
 
 export const AGENT_USERNAMES: Record<Side, string> = { red: "AgenteRojo", blue: "AgenteAzul" };
 
-export const ProviderSchema = z.enum(["mock", "openai", "anthropic", "openrouter"]);
+/** "gateway" = Vercel AI Gateway (un solo endpoint y una sola clave para todos los modelos). */
+export const ProviderSchema = z.enum(["mock", "openai", "anthropic", "openrouter", "gateway"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 export const MAX_PROMPT_LENGTH = 4000;

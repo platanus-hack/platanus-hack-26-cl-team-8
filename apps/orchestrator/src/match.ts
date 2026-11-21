@@ -31,6 +31,7 @@ export type MatchEnv = Pick<
   | "OPENAI_API_KEY"
   | "ANTHROPIC_API_KEY"
   | "OPENROUTER_API_KEY"
+  | "AI_GATEWAY_API_KEY"
   | "MC_HOST"
   | "MC_PORT"
   | "MC_VERSION"
@@ -273,6 +274,7 @@ export class MatchManager {
       openai: env.OPENAI_API_KEY || undefined,
       anthropic: env.ANTHROPIC_API_KEY || undefined,
       openrouter: env.OPENROUTER_API_KEY || undefined,
+      gateway: env.AI_GATEWAY_API_KEY || undefined,
     };
     return this.deps.createLlmClient({ provider, model, apiKeys });
   }
