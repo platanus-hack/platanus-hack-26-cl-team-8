@@ -14,7 +14,7 @@ import {
   randomChunkBattleSeed,
   type ChunkBattleLayout,
 } from "./chunkbattle";
-import { floorBounds, platanusBuildCommands } from "./platanus";
+import { floorBounds, platanusBuildCommands, surroundBounds } from "./platanus";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
 import type { Kit, KitItem } from "@phack/protocol";
@@ -139,6 +139,16 @@ export function worldRuleCommands(target: ArenaTarget = activeArena()): string[]
 export function forceloadCommand(target: ArenaTarget = activeArena()): string {
   const arena = arenaOf(target);
   const pad = 8;
+  if (arena.kind === "built") {
+    // La plataforma con la franja que se limpia a su alrededor, y las cámaras con su margen.
+    const s = surroundBounds(arena);
+    const cams = [arena.camera, arena.cameraWide];
+    const minX = Math.min(s.minX, ...cams.map((c) => c.x - pad));
+    const maxX = Math.max(s.maxX, ...cams.map((c) => c.x + pad));
+    const minZ = Math.min(s.minZ, ...cams.map((c) => c.z - pad));
+    const maxZ = Math.max(s.maxZ, ...cams.map((c) => c.z + pad));
+    return `forceload add ${minX} ${minZ} ${maxX} ${maxZ}`;
+  }
   const b = arenaBounds(arena);
   const minX = Math.min(b.minX, arena.camera.x, arena.cameraWide.x) - pad;
   const maxX = Math.max(b.maxX, arena.camera.x, arena.cameraWide.x) + pad;

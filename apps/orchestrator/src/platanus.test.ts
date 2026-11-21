@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { ARENAS, FLOOR_LOGO_PALETTE, FLOOR_LOGO_ROWS, type BuiltArena } from "@phack/protocol";
 import { buildArena, forceloadCommand, teleportCommand } from "./arena";
-import { CLEAR_ABOVE_WALLS, FLOOR_BLOCK, SPAWN_MARKS, WALL_BLOCK, floorBounds, logoRuns, platanusBuildCommands } from "./platanus";
+import {
+  CLEAR_ABOVE_WALLS,
+  FLOOR_BLOCK,
+  SPAWN_MARKS,
+  WALL_BLOCK,
+  floorBounds,
+  logoRuns,
+  platanusBuildCommands,
+  surroundBounds,
+} from "./platanus";
 
 /** Límite de bloques de un /fill en 1.20.4. */
 const MAX_FILL_VOLUME = 32_768;
@@ -81,6 +90,30 @@ describe("Arena Platanus", () => {
         const inside = x >= minX && x <= maxX && z >= minZ && z <= maxZ;
         expect(blockAt(world, x, Y, z) !== "minecraft:air", `${x},${z}`).toBe(inside);
       }
+  });
+
+  it("borra los restos de la arena grande anterior: alrededor de la plataforma no queda nada", () => {
+    // La arena de 57×45: piso negro y muros de vidrio de 5 bloques en x = ±28, z = ±22.
+    const old = [
+      `fill -28 ${Y} -22 28 ${Y} 22 minecraft:black_concrete`,
+      `fill -28 ${Y + 1} -22 28 ${Y + 5} -22 minecraft:glass`,
+      `fill -28 ${Y + 1} 22 28 ${Y + 5} 22 minecraft:glass`,
+      `fill -28 ${Y + 1} -22 -28 ${Y + 5} 22 minecraft:glass`,
+      `fill 28 ${Y + 1} -22 28 ${Y + 5} 22 minecraft:glass`,
+    ];
+    const after = simulate([...old, ...commands]);
+    for (const [key, block] of after) {
+      const [x, , z] = key.split(",").map(Number) as [number, number, number];
+      expect(x >= minX && x <= maxX && z >= minZ && z <= maxZ, `${key} ${block}`).toBe(true);
+      expect(block).not.toContain("glass");
+    }
+    // Lo construido es idéntico con o sin restos previos.
+    expect([...after].sort()).toEqual([...world].sort());
+    const out = surroundBounds(ARENA);
+    expect(out.minX).toBeLessThanOrEqual(-28);
+    expect(out.maxX).toBeGreaterThanOrEqual(28);
+    expect(out.minZ).toBeLessThanOrEqual(-22);
+    expect(out.maxZ).toBeGreaterThanOrEqual(22);
   });
 
   it("no tiene nada a la vista sobre el piso: solo pared y techo de barrera, sin huecos", () => {
