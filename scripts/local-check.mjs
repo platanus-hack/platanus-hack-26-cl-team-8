@@ -40,7 +40,7 @@ function portFree(port) {
   });
 }
 
-console.log("\nArena de prompts: revisión para desarrollo local\n");
+console.log("\nPrompt Arena: revisión para desarrollo local\n");
 
 // ---------- Node ----------
 const nodeMajor = Number(process.versions.node.split(".")[0]);

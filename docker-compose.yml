@@ -1,4 +1,4 @@
-# Arena de prompts — stack completo en un solo servidor.
+# Prompt Arena — stack completo en un solo servidor.
 #
 #   docker compose up -d --build                    # todo menos el túnel
 #   docker compose --profile tunnel up -d --build   # + Cloudflare Tunnel
@@ -55,7 +55,7 @@ services:
       # Heap de la JVM. El límite del contenedor (mem_limit) deja margen para el resto de la JVM.
       MEMORY: ${MC_MEMORY:-2G}
       TZ: ${TZ:-America/Santiago}
-      MOTD: "Arena de prompts - Platanus Hackathon 2026"
+      MOTD: "Prompt Arena - Platanus Hackathon 2026"
       # Los bots entran con nombre de usuario plano, sin cuenta de Mojang.
       ONLINE_MODE: "FALSE"
       ENABLE_RCON: "true"
