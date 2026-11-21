@@ -1,118 +1,112 @@
-import { BENCH_PRESETS, COMMS_LABELS, SCENARIOS, SUITE_ALL, findPreset, type PresetsResponse, type SuiteStatus } from "@phack/protocol";
-import { describeError, fetchPresets, runPreset, stopPresets } from "./api";
+import {
+  BENCH_PRESETS,
+  COMMS_LABELS,
+  SCENARIOS,
+  SIDES,
+  findPreset,
+  kitOf,
+  presetSettings,
+  type BenchPreset,
+  type MatchSettings,
+  type PromptsResponse,
+} from "@phack/protocol";
+import { describeError, runPreset } from "./api";
 import { byId, el, setText } from "./dom";
 import { showToast } from "./toast";
 
 /**
- * Selector de pre-ajustes: cargar una configuración guardada (escenario, rondas, chat,
- * reglas, prompts y kits) o ejecutarla. "Todos" corre la batería completa, una partida
- * tras otra. Lo usan la página principal y el tablero, con sus propios ids (`prefix`).
+ * Selector de pre-ajustes. Elegir uno lo carga en el acto (ajustes, prompts y kits); el
+ * selector muestra el pre-ajuste que coincide con lo guardado y, si se cambia cualquier
+ * cosa que el pre-ajuste fija, vuelve solo a "Personalizado". No guarda estado propio:
+ * lo deduce de los ajustes y prompts que llegan del servidor.
  */
 
-function describe(id: string): string {
-  if (id === SUITE_ALL) {
-    return `Corre los ${BENCH_PRESETS.length} pre-ajustes uno tras otro, cada uno cuando termina el anterior. Usa los modelos elegidos en cada lado.`;
+let select: HTMLSelectElement | null = null;
+let description: HTMLElement | null = null;
+let settings: MatchSettings | null = null;
+let prompts: PromptsResponse | null = null;
+let loading = false;
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** ¿Lo guardado es exactamente este pre-ajuste? (Los modelos y el juez no cuentan.) */
+export function matchesPreset(preset: BenchPreset, s: MatchSettings, p: PromptsResponse): boolean {
+  const fixed = presetSettings(preset) as Record<string, unknown>;
+  const current = s as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(fixed)) {
+    if (!same(current[key], value)) return false;
   }
-  const preset = findPreset(id);
-  if (!preset) return "";
+  for (const side of SIDES) {
+    if (p[side].prompt.trim() !== preset.prompts[side].prompt.trim()) return false;
+    if (kitOf(p[side]).id !== preset.prompts[side].kit) return false;
+  }
+  if (preset.mirrorModel && ((p.red.provider ?? "") !== (p.blue.provider ?? "") || (p.red.model ?? "") !== (p.blue.model ?? ""))) {
+    return false;
+  }
+  return true;
+}
+
+function describe(preset: BenchPreset | undefined): string {
+  if (!preset) return "Tu propia configuración. Elige un pre-ajuste para cargar uno de los casos de medición.";
   const s = preset.settings;
   const rounds = s.rounds ?? 1;
   const parts = [
     s.scenario ? SCENARIOS[s.scenario].name : "Duelo",
     `${rounds} ${rounds === 1 ? "ronda" : "rondas"}`,
     s.comms ? COMMS_LABELS[s.comms].name.toLowerCase() : "",
-    s.timerSeconds ? `${Math.round(s.timerSeconds / 60)} min por ronda` : "",
-    s.horizon === "unknown" ? "horizonte desconocido" : "",
     preset.mirrorModel ? "Azul con el modelo de Rojo" : "",
   ].filter(Boolean);
-  return `${preset.description} (${parts.join(" · ")}.) No cambia los modelos.`;
+  return `${preset.description} (${parts.join(" · ")}.) Cambiar cualquier cosa lo vuelve "Personalizado".`;
 }
 
-function suiteLine(suite: SuiteStatus): string {
-  if (suite.queue.length === 0) return "";
-  const current = findPreset(suite.queue[suite.index] ?? "")?.name ?? "";
-  if (suite.running) return `Batería en curso: ${suite.index + 1} de ${suite.queue.length} (${current}).`;
-  if (suite.stoppedReason) return `Batería ${suite.stoppedReason}, tras ${suite.done} ${suite.done === 1 ? "partida" : "partidas"}.`;
-  return `Batería completa: ${suite.done} ${suite.done === 1 ? "partida" : "partidas"}.`;
+function render(): void {
+  if (!select || !description || loading) return;
+  const current = settings && prompts ? BENCH_PRESETS.find((preset) => matchesPreset(preset, settings as MatchSettings, prompts as PromptsResponse)) : undefined;
+  const value = current?.id ?? "";
+  if (select.value !== value) select.value = value;
+  setText(description, describe(current));
 }
 
-export type PresetPicker = { refresh(): Promise<void> };
+/** Ajustes que llegan del servidor (los pasa benchsettings.ts). */
+export function notePresetSettings(next: MatchSettings): void {
+  settings = next;
+  render();
+}
 
-/**
- * Engancha el selector `${prefix}-preset` y sus botones `${prefix}-preset-load`,
- * `${prefix}-preset-run`, `${prefix}-preset-stop`, la descripción y el estado.
- * `onChange` se llama tras cargar o ejecutar (por ejemplo, para recargar el tablero).
- */
-export function initPresetPicker(prefix: string, onChange?: () => void): PresetPicker {
-  const select = byId<HTMLSelectElement>(`${prefix}-preset`);
-  const description = byId(`${prefix}-preset-description`);
-  const status = byId(`${prefix}-preset-status`);
-  const load = byId<HTMLButtonElement>(`${prefix}-preset-load`);
-  const run = byId<HTMLButtonElement>(`${prefix}-preset-run`);
-  const stop = byId<HTMLButtonElement>(`${prefix}-preset-stop`);
+/** Prompts guardados que llegan del servidor (los pasa prompts.ts). */
+export function notePresetPrompts(next: PromptsResponse): void {
+  prompts = next;
+  render();
+}
 
-  select.replaceChildren();
+export function initPresetPicker(): void {
+  select = byId<HTMLSelectElement>("preset");
+  description = byId("preset-description");
   for (const preset of BENCH_PRESETS) {
     const option = el("option", "", preset.name);
     option.value = preset.id;
     select.append(option);
   }
-  const all = el("option", "", `Todos (batería de ${BENCH_PRESETS.length})`);
-  all.value = SUITE_ALL;
-  select.append(all);
-
-  let poll: number | undefined;
-  const render = (data: PresetsResponse | null): void => {
-    setText(description, describe(select.value));
-    const running = data?.suite.running ?? false;
-    load.hidden = select.value === SUITE_ALL;
-    load.disabled = running;
-    run.disabled = running;
-    stop.hidden = !running;
-    const line = data ? suiteLine(data.suite) : "";
-    setText(status, line);
-    status.hidden = line === "";
-    window.clearInterval(poll);
-    // Mientras corre la batería se revisa cada tanto cómo va.
-    if (running) poll = window.setInterval(() => void refresh(), 4000);
-  };
-
-  const refresh = async (): Promise<void> => {
-    try {
-      render(await fetchPresets());
-    } catch {
-      render(null);
+  const picker = select;
+  picker.addEventListener("change", () => {
+    const preset = findPreset(picker.value);
+    // "Personalizado" no carga nada: deja lo que hay.
+    if (!preset) {
+      render();
+      return;
     }
-  };
-
-  const act = async (button: HTMLButtonElement, call: () => Promise<PresetsResponse>, done: string): Promise<void> => {
-    button.disabled = true;
-    try {
-      render(await call());
-      showToast(done, "ok");
-      onChange?.();
-    } catch (err) {
-      showToast(describeError(err));
-      void refresh();
-    } finally {
-      button.disabled = false;
-    }
-  };
-
-  select.addEventListener("change", () => render(null));
-  load.addEventListener("click", () => {
-    const name = findPreset(select.value)?.name ?? select.value;
-    void act(load, () => runPreset(select.value, false), `Pre-ajuste cargado: ${name}. Revisa los prompts y ajustes, y empieza cuando quieras.`);
+    loading = true;
+    picker.disabled = true;
+    runPreset(preset.id, false)
+      .then(() => showToast(`Pre-ajuste cargado: ${preset.name}.`, "ok"))
+      .catch((err) => showToast(`No se pudo cargar el pre-ajuste: ${describeError(err)}`))
+      .finally(() => {
+        loading = false;
+        picker.disabled = false;
+        render();
+      });
   });
-  run.addEventListener("click", () => {
-    const what = select.value === SUITE_ALL ? "Batería en marcha" : `Ejecutando: ${findPreset(select.value)?.name ?? select.value}`;
-    void act(run, () => runPreset(select.value, true), what);
-  });
-  stop.addEventListener("click", () => {
-    void act(stop, stopPresets, "Batería detenida: la partida en curso termina igual, pero no empieza otra.");
-  });
-
-  render(null);
-  void refresh();
-  return { refresh };
+  render();
 }
