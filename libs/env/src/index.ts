@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { loadDotEnv } from "./dotenv";
+
+export { applyDotEnv, findDotEnv, loadDotEnv, parseDotEnv } from "./dotenv";
 
 /**
  * Única fuente de verdad de las variables de entorno del lado servidor.
@@ -7,10 +10,10 @@ import { z } from "zod";
  */
 const EnvSchema = z.object({
   // Servidor de Minecraft
-  MC_HOST: z.string().default("localhost"),
+  MC_HOST: z.string().default("127.0.0.1"),
   MC_PORT: z.coerce.number().int().default(25565),
   MC_VERSION: z.string().default("1.20.4"),
-  RCON_HOST: z.string().default("localhost"),
+  RCON_HOST: z.string().default("127.0.0.1"),
   RCON_PORT: z.coerce.number().int().default(25575),
   RCON_PASSWORD: z.string().default("phack-rcon"),
 
@@ -37,8 +40,14 @@ const EnvSchema = z.object({
 
 export type Env = z.infer<typeof EnvSchema>;
 
-export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
-  const parsed = EnvSchema.safeParse(source);
+/**
+ * Sin argumentos: carga primero el `.env` de la raíz del repo (si existe) y luego lee
+ * `process.env`. Así `pnpm dev` fuera de Docker usa el mismo `.env` que docker-compose.
+ * Con `source` explícito no toca el disco (útil en tests).
+ */
+export function loadEnv(source?: Record<string, string | undefined>): Env {
+  if (source === undefined) loadDotEnv();
+  const parsed = EnvSchema.safeParse(source ?? process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Variables de entorno inválidas: ${issues}`);

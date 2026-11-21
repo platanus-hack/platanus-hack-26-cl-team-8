@@ -6,6 +6,15 @@
     "node": ">=20"
   },
   "scripts": {
+    "dev": "pnpm --parallel --filter @phack/orchestrator --filter @phack/web run dev",
+    "local:check": "node scripts/local-check.mjs",
+    "local:install": "pnpm install --filter \"!@phack/camera\"",
+    "local:infra": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d minecraft mediamtx",
+    "local:camera": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build camera",
+    "local:logs": "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f --tail=100",
+    "local:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
     "dev:web": "pnpm --filter @phack/web dev",
     "dev:orchestrator": "pnpm --filter @phack/orchestrator dev",
     "dev:camera": "pnpm --filter @phack/camera dev",
@@ -14,6 +23,7 @@
     "test": "pnpm -r --if-present test"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "wrangler": "^4.166.0"
   }
 }

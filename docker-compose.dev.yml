@@ -1,0 +1,30 @@
+# Arena de prompts — desarrollo local.
+#
+# Se usa ENCIMA de docker-compose.yml (no reemplaza nada, solo publica puertos en
+# el loopback de tu máquina). Docker corre la infraestructura pesada (Minecraft,
+# MediaMTX y, si quieres video, la cámara); el orquestador y la web corren en tu
+# máquina con recarga en caliente (`pnpm dev`).
+#
+#   pnpm local:infra     # minecraft + mediamtx
+#   pnpm local:camera    # opcional: video (construye la imagen de la cámara)
+#   pnpm dev             # orquestador (8787) + web (4321) en tu máquina
+#   pnpm local:down      # detiene los contenedores
+#
+# Equivale a:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d minecraft mediamtx
+#
+# Puertos que quedan en 127.0.0.1 (el 25565 ya lo publica docker-compose.yml):
+#   25565  Minecraft  -> los dos agentes, y tu cliente de Minecraft si quieres mirar
+#   25575  RCON       -> el orquestador arma la arena y controla la pelea
+#   8888   HLS        -> `astro dev` hace de proxy de /live hacia aquí
+#   1935   RTMP       -> para publicar una señal de prueba sin la cámara (ffmpeg / OBS)
+
+services:
+  minecraft:
+    ports:
+      - "127.0.0.1:25575:25575"
+
+  mediamtx:
+    ports:
+      - "127.0.0.1:1935:1935"
+      - "127.0.0.1:8888:8888"

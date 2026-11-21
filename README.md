@@ -85,16 +85,96 @@ Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios
 │   ├── mediamtx/mediamtx.yml  RTMP -> HLS
 │   └── minecraft/config/    Archivos que se copian al servidor de Minecraft (bukkit.yml)
 ├── scripts/
+│   ├── local-check.mjs      Revisión previa para desarrollo local (pnpm local:check)
 │   ├── deploy.sh            rsync + docker compose up en el servidor
 │   └── smoke.sh             Verificación post-despliegue (PASS/FAIL por eslabón)
 ├── docs/ARQUITECTURA.md
-├── docker-compose.yml
+├── docker-compose.yml       Stack completo (servidor)
+├── docker-compose.dev.yml   Puertos extra para desarrollo local
 └── .env.example
 ```
 
 Es un monorepo de pnpm workspaces. Los paquetes exportan TypeScript directamente y las apps de Node corren con `tsx`: no hay paso de build para el código de Node.
 
-## Inicio rápido
+## Desarrollo local
+
+Para programar en tu máquina. Docker corre lo pesado (Minecraft, MediaMTX y, si quieres video, la cámara); el orquestador y la web corren en tu máquina con recarga en caliente.
+
+Requisitos: **Node 22+**, **pnpm 10+** (`npm i -g pnpm@10`), **Docker con Compose v2** y unos 4 GB de RAM libres. Usa `pnpm`, no `npm`: el repo depende de `workspace:*`. En Windows funciona con Docker Desktop (los comandos de abajo son scripts de `pnpm` y Node, no de bash).
+
+```bash
+git clone https://github.com/storrealbac/phack2026.git
+cd phack2026
+
+pnpm local:check      # revisa Node, pnpm y Docker, y crea .env desde .env.example
+pnpm local:install    # instala dependencias (todo menos la cámara, que solo corre en Docker)
+pnpm local:infra      # levanta Minecraft + MediaMTX en Docker
+pnpm dev              # orquestador (8787) + web (4321), con recarga en caliente
+```
+
+Abre **http://localhost:4321** y aprieta "Iniciar pelea". Con el `.env` por defecto (`LLM_PROVIDER=mock`) no se necesita ninguna clave.
+
+El primer `pnpm local:infra` descarga Paper y genera el mundo: puede tardar un par de minutos. Mientras tanto el orquestador reintenta RCON solo; una pelea iniciada antes de que Minecraft esté listo termina con error. Mira el avance con `pnpm local:logs`.
+
+### Ver la pelea
+
+Hay tres formas, de la más simple a la más pesada:
+
+1. **Sin video.** El marcador, los pensamientos de cada agente y el feed de eventos funcionan sin la cámara. El reproductor muestra "sin señal".
+2. **Con un cliente de Minecraft.** Java Edition **1.20.4**, Multijugador → `localhost:25565`. Es la forma más fiel de ver el duelo y no depende de la cámara.
+3. **Con el video de la web.** `pnpm local:camera` construye y levanta la cámara en Docker. Es la pieza más frágil del proyecto (dependencias nativas de render); si la imagen no construye, sigue con las opciones 1 o 2 y revisa [apps/camera/README.md](apps/camera/README.md).
+
+Para probar el reproductor sin la cámara, publica una señal de prueba con ffmpeg:
+
+```bash
+ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 -c:v libx264 -preset veryfast \
+  -tune zerolatency -pix_fmt yuv420p -g 30 -f flv rtmp://localhost:1935/live/arena
+```
+
+### Comandos
+
+| Comando | Qué hace |
+|---|---|
+| `pnpm local:check` | Revisa requisitos y puertos, y crea `.env` si falta. |
+| `pnpm local:install` | `pnpm install` sin `@phack/camera` (evita compilar `gl` y `canvas` en tu máquina). |
+| `pnpm local:infra` | Minecraft + MediaMTX en Docker, con los puertos en `127.0.0.1`. |
+| `pnpm local:camera` | Construye y levanta la cámara en Docker (video). |
+| `pnpm dev` | Orquestador y web a la vez. También existen `pnpm dev:orchestrator` y `pnpm dev:web`. |
+| `pnpm local:logs` | Logs de los contenedores. |
+| `pnpm local:down` | Detiene los contenedores (el mundo se conserva). |
+| `pnpm typecheck` / `pnpm test` | Tipos y tests de todos los paquetes. |
+| `pnpm docker:up` / `pnpm docker:down` | El stack completo en Docker, igual que en el servidor: **http://localhost:8080**. Sin recarga en caliente. |
+
+### Cómo está conectado
+
+| Pieza | Dónde corre | Puerto en tu máquina |
+|---|---|---|
+| Web (`astro dev`) | tu máquina | `4321`. Su proxy de Vite manda `/api` a `8787` y `/live` a `8888`, igual que Caddy en producción. |
+| Orquestador + los dos agentes | tu máquina | `8787` |
+| Minecraft | Docker | `25565` (juego) y `25575` (RCON) |
+| MediaMTX | Docker | `8888` (HLS) y `1935` (RTMP) |
+| Cámara | Docker | ninguno: habla con Minecraft y MediaMTX por la red de compose |
+
+Los puertos de desarrollo los agrega [docker-compose.dev.yml](docker-compose.dev.yml), que se usa encima de `docker-compose.yml`. Todos quedan solo en `127.0.0.1`.
+
+Variables de entorno: el orquestador lee el `.env` de la raíz al arrancar (`libs/env`), el mismo archivo que usa Docker Compose. Una variable definida en tu terminal gana sobre el archivo, y una línea vacía (`LLM_MODEL=`) deja el valor por defecto. Fuera de Docker los hosts apuntan a `127.0.0.1` por defecto, así que no hay que tocar nada. Si cambias el `.env`, reinicia `pnpm dev`; si cambias `RCON_PASSWORD` o `MC_VERSION`, vuelve a correr `pnpm local:infra` para recrear Minecraft.
+
+El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado por git).
+
+### Si algo falla
+
+| Síntoma | Qué revisar |
+|---|---|
+| `pnpm local:install` no resuelve una versión | Las versiones se eligieron sin poder instalarlas. Corrige el rango en el `package.json` que indique el error. Cuando instale, **commitea el `pnpm-lock.yaml`**. |
+| El orquestador repite errores de RCON | Minecraft aún está arrancando (`pnpm local:logs`), o `RCON_PASSWORD` cambió después de crear el contenedor. |
+| "Connection throttled" al entrar el segundo agente | No se aplicó `infra/minecraft/config/bukkit.yml`. Revisa los logs de `minecraft`. |
+| La web carga pero dice "desconectado" | El orquestador no está corriendo o falló al arrancar: mira la salida de `pnpm dev`. |
+| Puerto ocupado (`8888` suele ser Jupyter) | `pnpm local:check` dice cuál. Cierra el otro programa o cambia el puerto en `docker-compose.dev.yml` (y `DEV_HLS_TARGET` para la web). |
+| Quieres partir de cero | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v` borra el mundo de Minecraft. |
+
+Este repo se escribió sin ejecutarlo: quien lo corra primero va a encontrar errores. El orden recomendado para ir arreglándolos está en [Estado: código generado sin ejecutar](#estado-código-generado-sin-ejecutar).
+
+## Inicio rápido (servidor, todo en Docker)
 
 Requisitos en el servidor: Docker con Compose v2, unos 6 GB de RAM libres, y salida a internet (el primer arranque descarga Paper y las imágenes).
 
