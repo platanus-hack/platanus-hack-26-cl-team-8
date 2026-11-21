@@ -116,7 +116,7 @@ describe("escenario activo", () => {
       expect(loadEnv({ ARENA_SCENARIO: id }).ARENA_SCENARIO).toBe(id);
       expect(ARENAS[id].id).toBe(id);
       // Los construidos comparten el mundo "arena"; la pizza tiene el suyo (= su id).
-      expect(ARENAS[id].level).toBe(isSelectableArenaScenario(id) ? ARENA_WORLD : id);
+      expect(ARENAS[id].level).toBe(ARENAS[id].kind === "template" ? id : ARENA_WORLD);
     }
     expect(() => loadEnv({ ARENA_SCENARIO: "lava" })).toThrow();
   });
@@ -393,13 +393,16 @@ function fakeRcon(placeResponse = (command: string) => `Loaded template "${comma
 }
 
 describe("mundo arena", () => {
-  it("los seleccionables comparten el mundo arena; la pizza tiene el suyo", () => {
-    expect([...SELECTABLE_ARENA_SCENARIOS]).toEqual(["platanus", "chunk-battle"]);
-    for (const id of ARENA_SCENARIOS) {
-      expect(ARENAS[id].kind === "template").toBe(!isSelectableArenaScenario(id));
-    }
+  it("solo Platanus se puede elegir; Chunk Battle sigue en el mundo arena y la pizza tiene el suyo", () => {
+    expect([...SELECTABLE_ARENA_SCENARIOS]).toEqual(["platanus"]);
+    expect(isSelectableArenaScenario("platanus")).toBe(true);
+    expect(isSelectableArenaScenario("chunk-battle")).toBe(false);
     expect(isSelectableArenaScenario("pizza-spleef-2")).toBe(false);
     expect(isSelectableArenaScenario("duel")).toBe(false);
+    // Chunk Battle queda guardado: se construye en el mismo mundo que Platanus.
+    expect(ARENAS["chunk-battle"].kind).not.toBe("template");
+    expect(ARENAS["chunk-battle"].level).toBe(ARENA_WORLD);
+    expect(ARENAS["pizza-spleef-2"].kind).toBe("template");
   });
 
   it("los escenarios construidos no se pisan en el mundo arena", () => {

@@ -1,18 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { ARENAS, type BuiltArena } from "@phack/protocol";
+import { ARENAS, FLOOR_LOGO_PALETTE, FLOOR_LOGO_ROWS, type BuiltArena } from "@phack/protocol";
 import { buildArena, forceloadCommand, teleportCommand } from "./arena";
-import {
-  CLEAR_ABOVE_WALLS,
-  FLOOR_BLOCK,
-  LOGO_BLOCKS,
-  MAX_FILL_VOLUME,
-  WALL_BLOCK,
-  floorBounds,
-  loadLogo,
-  logoRuns,
-  parseLogo,
-  platanusBuildCommands,
-} from "./platanus";
+import { CLEAR_ABOVE_WALLS, FLOOR_BLOCK, SPAWN_MARKS, WALL_BLOCK, floorBounds, logoRuns, platanusBuildCommands } from "./platanus";
+
+/** Límite de bloques de un /fill en 1.20.4. */
+const MAX_FILL_VOLUME = 32_768;
 
 const ARENA = ARENAS.platanus as BuiltArena;
 const Y = ARENA.center.y;
@@ -41,45 +33,37 @@ function simulate(commands: string[]): Map<string, string> {
 const blockAt = (world: Map<string, string>, x: number, y: number, z: number): string =>
   world.get(`${x},${y},${z}`) ?? "minecraft:air";
 
-describe("logo de Platanus", () => {
-  it("la grilla del repo es 41×41", () => {
-    const grid = loadLogo();
-    expect(grid).toHaveLength(41);
-    for (const row of grid) expect(row).toHaveLength(41);
-  });
-
-  it("rechaza grillas mal formadas", () => {
-    expect(() => parseLogo("YY\nYY")).toThrow();
-    expect(() => parseLogo("Y.Y\nYXY\nY.Y")).toThrow("carácter inválido");
-    expect(() => parseLogo("Y.Y\nYY\nY.Y")).toThrow("columnas");
-  });
-
-  it("agrupa tramos contiguos por fila", () => {
-    expect(logoRuns(["YYC", ".CC", "..."], { x: 10, z: 0 })).toEqual([
-      { z: -1, fromX: 9, toX: 10, block: LOGO_BLOCKS.Y },
-      { z: -1, fromX: 11, toX: 11, block: LOGO_BLOCKS.C },
-      { z: 0, fromX: 10, toX: 11, block: LOGO_BLOCKS.C },
+describe("logo del piso", () => {
+  it("agrupa tramos contiguos por fila y deja el piso donde no hay letra con bloque", () => {
+    expect(logoRuns({ x: 10, z: 0 }, ["YY.", " yy", "   "])).toEqual([
+      { z: -1, fromX: 9, toX: 10, block: "minecraft:gold_block" },
+      { z: -1, fromX: 11, toX: 11, block: "minecraft:black_concrete" },
+      { z: 0, fromX: 10, toX: 11, block: "minecraft:yellow_concrete" },
     ]);
   });
 
-  it("el piso construido reproduce la grilla (fila 0 al norte, columna 0 al oeste)", () => {
-    const grid = loadLogo();
-    const world = simulate(platanusBuildCommands(ARENA, grid));
-    const half = (grid.length - 1) / 2;
-    const toChar = Object.fromEntries([[FLOOR_BLOCK, "."], ...Object.entries(LOGO_BLOCKS).map(([ch, b]) => [b, ch])]);
+  it("el piso construido reproduce el dibujo (fila 0 al norte, columna 0 al oeste)", () => {
+    const world = simulate(platanusBuildCommands(ARENA));
+    const half = (FLOOR_LOGO_ROWS.length - 1) / 2;
+    const toChar = Object.fromEntries([
+      [FLOOR_BLOCK, " "],
+      ...Object.entries(FLOOR_LOGO_PALETTE).map(([ch, entry]) => [`minecraft:${entry.block}`, ch]),
+    ]);
     const rebuilt: string[] = [];
-    for (let r = 0; r < grid.length; r += 1) {
+    for (let r = 0; r < FLOOR_LOGO_ROWS.length; r += 1) {
       let row = "";
-      for (let col = 0; col < grid.length; col += 1) {
+      for (let col = 0; col < FLOOR_LOGO_ROWS.length; col += 1) {
         row += toChar[blockAt(world, ARENA.center.x - half + col, Y, ARENA.center.z - half + r)] ?? "?";
       }
       rebuilt.push(row);
     }
-    expect(rebuilt).toEqual(grid);
-    // Un /fill por tramo, sin dibujar el fondo celda por celda.
-    const logoFills = platanusBuildCommands(ARENA, grid).filter((c) => /yellow_concrete|white_concrete/.test(c));
-    expect(logoFills).toHaveLength(logoRuns(grid, ARENA.center).length);
-    expect(logoFills.length).toBeLessThan(41 * 6);
+    expect(rebuilt).toEqual([...FLOOR_LOGO_ROWS]);
+  });
+
+  it("cabe entre las dos marcas de spawn, sin taparlas", () => {
+    const half = (FLOOR_LOGO_ROWS.length - 1) / 2;
+    expect(ARENA.spawns.red.x).toBeLessThan(ARENA.center.x - half);
+    expect(ARENA.spawns.blue.x).toBeGreaterThan(ARENA.center.x + half);
   });
 });
 
@@ -88,9 +72,10 @@ describe("Arena Platanus", () => {
   const world = simulate(commands);
   const { minX, maxX, minZ, maxZ } = floorBounds(ARENA);
 
-  it("el piso es un rectángulo completo más grande que el logo", () => {
-    expect(maxX - minX + 1).toBe(57);
-    expect(maxZ - minZ + 1).toBe(45);
+  it("tiene el tamaño de la arena original: piso de 27×27 y 25×25 caminables", () => {
+    expect(maxX - minX + 1).toBe(27);
+    expect(maxZ - minZ + 1).toBe(27);
+    expect(ARENA.radius).toBe(12);
     for (let x = minX - 1; x <= maxX + 1; x += 1)
       for (let z = minZ - 1; z <= maxZ + 1; z += 1) {
         const inside = x >= minX && x <= maxX && z >= minZ && z <= maxZ;
@@ -98,16 +83,27 @@ describe("Arena Platanus", () => {
       }
   });
 
-  it("queda cerrada por vidrio sin huecos y abierta arriba (sin techo ni barrier)", () => {
-    for (let y = Y + 1; y <= WALL_TOP; y += 1)
+  it("no tiene nada a la vista sobre el piso: solo pared y techo de barrera, sin huecos", () => {
+    for (let y = Y + 1; y <= WALL_TOP + 1; y += 1)
       for (let x = minX; x <= maxX; x += 1)
         for (let z = minZ; z <= maxZ; z += 1) {
           const border = x === minX || x === maxX || z === minZ || z === maxZ;
-          expect(blockAt(world, x, y, z), `${x},${y},${z}`).toBe(border ? WALL_BLOCK : "minecraft:air");
+          const lid = y === WALL_TOP + 1;
+          expect(blockAt(world, x, y, z), `${x},${y},${z}`).toBe(border || lid ? WALL_BLOCK : "minecraft:air");
         }
-    for (const key of world.keys()) expect(Number(key.split(",")[1])).toBeLessThanOrEqual(WALL_TOP);
-    expect(commands.join("\n")).not.toContain("barrier");
-    expect(ARENA.wallHeight).toBeGreaterThanOrEqual(4);
+    expect(WALL_BLOCK).toBe("minecraft:barrier");
+    for (const [key, block] of world) {
+      const y = Number(key.split(",")[1]);
+      expect(y).toBeLessThanOrEqual(WALL_TOP + 1);
+      if (y > Y) expect(block).toBe(WALL_BLOCK);
+    }
+    expect(commands.join("\n")).not.toMatch(/glass|sea_lantern/);
+  });
+
+  it("marca en el piso el lugar de cada lado", () => {
+    const { red, blue } = ARENA.spawns;
+    expect(blockAt(world, red.x, Y, red.z)).toBe(SPAWN_MARKS.red);
+    expect(blockAt(world, blue.x, Y, blue.z)).toBe(SPAWN_MARKS.blue);
   });
 
   it("limpia el interior primero y los restos de combate al final", () => {
@@ -120,8 +116,8 @@ describe("Arena Platanus", () => {
 
   it("los spawns están enfrentados sobre el piso, dentro de los muros", () => {
     const { red, blue } = ARENA.spawns;
-    expect(red.x).toBe(ARENA.center.x - 16);
-    expect(blue.x).toBe(ARENA.center.x + 16);
+    expect(red.x).toBe(ARENA.center.x - 8);
+    expect(blue.x).toBe(ARENA.center.x + 8);
     expect(red.z).toBe(blue.z);
     for (const s of [red, blue]) {
       expect(s.x).toBeGreaterThan(minX);
@@ -136,7 +132,7 @@ describe("Arena Platanus", () => {
     // Rojo mira al este (hacia el azul) y el azul al oeste.
     expect(red.yaw).toBe(-90);
     expect(blue.yaw).toBe(90);
-    expect(teleportCommand("red", ARENA)).toBe("tp AgenteRojo -15.5 65 0.5 -90 0");
+    expect(teleportCommand("red", ARENA)).toBe("tp AgenteRojo -7.5 65 0.5 -90 0");
   });
 
   it("el círculo que usan los agentes cabe dentro de los muros", () => {
@@ -146,7 +142,8 @@ describe("Arena Platanus", () => {
   it("las cámaras quedan altas, en +Z (rojo a la izquierda) y fuera del piso", () => {
     for (const cam of [ARENA.camera, ARENA.cameraWide]) {
       expect(cam.x).toBe(ARENA.center.x);
-      expect(cam.y).toBeGreaterThan(WALL_TOP + 10);
+      // Sobre el techo invisible, que va en WALL_TOP + 1.
+      expect(cam.y).toBeGreaterThan(WALL_TOP + 1);
       expect(cam.z).toBeGreaterThan(ARENA.center.z);
     }
     expect(ARENA.cameraWide.y).toBeGreaterThan(ARENA.camera.y);

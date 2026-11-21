@@ -164,11 +164,13 @@ El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado
 
 ### Mapas
 
+**Hoy hay un solo mapa en juego: la Arena Platanus.** La web no muestra selector de mapa y tanto la API (`POST /api/match/start`, `PUT /api/settings`) como el torneo (`--scenario`/`--map`) solo aceptan `platanus` (`SELECTABLE_ARENA_SCENARIOS` en `packages/protocol`). Chunk Battle y Pizza Spleef 2 siguen en el código, sin ofrecerse: lo que sigue sobre ellos describe cómo funcionan si se vuelven a habilitar (sumándolos a `SELECTABLE_ARENA_SCENARIOS`, o arrancando el servidor con `ARENA_SCENARIO` apuntando a uno).
+
 Cada pelea elige su mapa: en la web, el selector **Mapa** junto a "Iniciar pelea" (es un ajuste más de la próxima pelea: se guarda al elegir, se bloquea mientras hay una pelea y el mapa en curso se ve bajo el reloj); por la API, `POST /api/match/start` con `{ "arena": "chunk-battle" }`; en el torneo, `--scenario` (o `--map`). `ARENA_SCENARIO` (`.env`) es solo el mapa por defecto. Todas las rondas de una serie se juegan en el mismo mapa y con la misma semilla.
 
 | Mapa | Id | Cómo es |
 |---|---|---|
-| Arena Platanus (por defecto) | `platanus` | Piso negro de 57×45 con el isotipo de Platanus, muros de vidrio, abierta arriba. Centro `(0, 64, 0)`. |
+| Arena Platanus (la única en juego) | `platanus` | Plataforma lisa de piedra de 27×27 (25×25 caminables) con el logo de Platanus de 15×15 al centro y la marca de cada lado; los agentes parten a 16 bloques uno del otro. Sin muros a la vista: el borde y el techo son de barrera invisible, así nadie cae al vacío. Centro `(0, 64, 0)`. |
 | Chunk Battle | `chunk-battle` | Dos islas flotantes de 16×16 (más cornisa: 20×20 caminables) separadas por al menos 6 bloques de vacío (los bordes son irregulares: en algunas filas el hueco es mayor), centro del conjunto `(1000, 64, 0)`. Cada agente parte en su isla. Sin muros: caer al vacío es KO. |
 | Pizza Spleef 2 | `pizza-spleef-2` | El mapa descargado `Pizza_Spleef_2.zip` (`infra/minecraft/worlds/`), en su propio mundo. Solo con `ARENA_SCENARIO=pizza-spleef-2`; no aparece en el selector. |
 

@@ -7,8 +7,9 @@
  *
  * Lo que el agente le DICE al otro (modo "chat") va en la misma columna, en el orden en
  * que pasó, pero como un globo de conversación: es lo único que el rival también recibe.
- * Para que se distingan de un vistazo, cada entrada con texto lleva su marca: una nube
- * junto a lo que piensa, y un cuadro del color del lado con un globo junto a lo que dice.
+ * Para que se distingan de un vistazo: lo que piensa va en cursiva sobre el velo oscuro
+ * del panel, cuyo pie dice "Rojo piensa"; lo que dice va en un globo de papel claro con
+ * su cola, encabezado por "Le dice a Azul".
  *
  * Los pensamientos y las acciones llegan por la cola sincronizada de main.ts, así que
  * aparecen cuando la imagen llega a ese instante. Lo que aquí depende del tiempo (a qué
@@ -38,6 +39,7 @@ const THINKING_AFTER_MS = 1200;
 const TICK_MS = 200;
 const PULSE_MS = 500;
 const EMPTY = "—";
+const SIDE_NAMES: Record<Side, string> = { red: "Rojo", blue: "Azul" };
 
 type Entry = {
   node: HTMLLIElement;
@@ -56,6 +58,7 @@ type Entry = {
 type Typing = { holder: HTMLElement; text: string; frame: number };
 
 type Column = {
+  side: Side;
   list: HTMLElement;
   thinking: HTMLElement;
   /** Textos ocultos para lectores de pantalla: la lista visible cambia demasiado seguido. */
@@ -83,6 +86,7 @@ let fighting = false;
 
 function column(side: Side): Column {
   return {
+    side,
     list: byId(`thoughts-list-${side}`),
     thinking: byId(`thinking-${side}`),
     lastThought: byId(`last-thought-${side}`),
@@ -159,7 +163,7 @@ function typeOut(target: Column, holder: HTMLElement, text: string): void {
 function pulse(node: HTMLElement): void {
   if (reducedMotion.matches) return;
   node.animate(
-    [{ backgroundColor: "rgba(237, 236, 232, 0.3)" }, { backgroundColor: "rgba(237, 236, 232, 0)" }],
+    [{ backgroundColor: "rgba(237, 236, 232, 0.16)" }, { backgroundColor: "rgba(237, 236, 232, 0)" }],
     { duration: PULSE_MS, easing: "ease-out" },
   );
 }
@@ -189,12 +193,20 @@ function addEntry(target: Column, at: number, text: string, said = false): Entry
   const node = el("li", said ? "thought thought--said" : "thought");
   const entry: Entry = { node, at, text, chip: null, chipLabel: "", said };
   if (text !== "") {
-    // La marca de qué es: nube = lo piensa, globo = lo dice. voice.ts la cambia por el
-    // medidor de voz mientras el mensaje se oye.
-    const kind = el("span", "thought__kind");
-    kind.append(pixelIcon({ name: said ? "talk" : "thought" }));
     const holder = el("p", "thought__text");
-    node.append(kind, holder);
+    if (said) {
+      // El globo: arriba quién habla y a quién, abajo el mensaje. voice.ts cambia el ícono
+      // del cuadro por el medidor de voz mientras el mensaje se oye.
+      const kind = el("span", "thought__kind");
+      kind.append(pixelIcon({ name: "talk" }));
+      const who = el("div", "thought__who");
+      who.append(kind, el("span", "", `Le dice a ${SIDE_NAMES[target.side === "red" ? "blue" : "red"]}`));
+      const bubble = el("div", "thought__bubble");
+      bubble.append(who, holder);
+      node.append(bubble);
+    } else {
+      node.append(holder);
+    }
     typeOut(target, holder, text);
   }
   target.entries.push(entry);
@@ -293,7 +305,7 @@ function seedFromState(target: Column, agent: AgentStatus): void {
   if (action !== "" && action !== target.lastRaw) addAction(target, parseAction(action), now);
 }
 
-/** Tres puntos al pie de la columna mientras el agente pelea y lleva un rato sin decir nada. */
+/** Tres cuadros que laten al pie de la columna mientras el agente pelea y lleva un rato sin novedades. */
 function refreshThinking(): void {
   if (!columns) return;
   const now = videoServerNow();

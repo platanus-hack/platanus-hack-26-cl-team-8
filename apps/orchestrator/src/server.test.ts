@@ -607,45 +607,50 @@ describe("mapa de la pelea", () => {
   const start = (s: FastifyInstance, payload?: unknown) =>
     s.inject({ method: "POST", url: "/api/match/start", ...(payload !== undefined ? { payload: payload as Record<string, unknown> } : {}) });
 
-  it("POST /api/match/start acepta un mapa seleccionable; sin cuerpo, el de los ajustes", async () => {
+  it("POST /api/match/start acepta Platanus; sin cuerpo, el de los ajustes", async () => {
     const s = await server();
     expect((await start(s)).statusCode).toBe(200);
-    expect((await start(s, { arena: "chunk-battle" })).statusCode).toBe(200);
-    expect(starts).toEqual([{}, { arena: "chunk-battle" }]);
+    expect((await start(s, { arena: "platanus" })).statusCode).toBe(200);
+    expect(starts).toEqual([{}, { arena: "platanus" }]);
   });
 
   it("400 con un mapa que no es seleccionable o que el servidor no tiene", async () => {
     const s = await server();
-    // La pizza solo va por ARENA_SCENARIO; "duel" es un escenario de benchmark, no un mapa.
-    for (const arena of ["pizza-spleef-2", "duel", 3]) {
+    // Chunk Battle y la pizza solo van por ARENA_SCENARIO; "duel" es un escenario de benchmark, no un mapa.
+    for (const arena of ["chunk-battle", "pizza-spleef-2", "duel", 3]) {
       const res = await start(s, { arena });
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toContain("platanus o chunk-battle");
+      expect(res.json().error).toBe("Mapa inválido: usa platanus");
     }
+    // Ni siquiera llegan a la pelea.
+    expect(starts).toEqual([]);
     const pizza = await server({ arenaScenario: "pizza-spleef-2" });
-    const res = await start(pizza, { arena: "chunk-battle" });
+    const res = await start(pizza, { arena: "platanus" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toContain("no está disponible");
   });
 
-  it("PUT /api/settings guarda el mapa (null = el por defecto) solo si el servidor lo tiene", async () => {
+  it("PUT /api/settings guarda el mapa (null = el por defecto) solo si es Platanus y el servidor lo tiene", async () => {
     const s = await server();
     const put = (payload: Record<string, unknown>) => s.inject({ method: "PUT", url: "/api/settings", payload });
-    expect((await put({ arena: "chunk-battle" })).json()).toMatchObject({ arena: "chunk-battle" });
+    expect((await put({ arena: "platanus" })).json()).toMatchObject({ arena: "platanus" });
     expect((await put({ arena: null })).json()).toMatchObject({ arena: null });
+    expect((await put({ arena: "chunk-battle" })).statusCode).toBe(400);
     expect((await put({ arena: "pizza-spleef-2" })).statusCode).toBe(400);
     const pizza = await server({ arenaScenario: "pizza-spleef-2" });
     expect((await pizza.inject({ method: "PUT", url: "/api/settings", payload: { arena: "platanus" } })).statusCode).toBe(400);
   });
 
-  it("GET /api/defaults trae los mapas, con el por defecto primero", async () => {
-    const s = await server({ arenaScenario: "chunk-battle" });
+  it("GET /api/defaults trae un solo mapa: Platanus, o el de ARENA_SCENARIO si es otro", async () => {
+    const s = await server();
     expect((await s.inject({ method: "GET", url: "/api/defaults" })).json()).toMatchObject({
+      arena: "platanus",
+      arenas: [{ id: "platanus", name: "Arena Platanus" }],
+    });
+    const chunk = await server({ arenaScenario: "chunk-battle" });
+    expect((await chunk.inject({ method: "GET", url: "/api/defaults" })).json()).toMatchObject({
       arena: "chunk-battle",
-      arenas: [
-        { id: "chunk-battle", name: "Chunk Battle" },
-        { id: "platanus", name: "Arena Platanus" },
-      ],
+      arenas: [{ id: "chunk-battle", name: "Chunk Battle" }],
     });
   });
 });

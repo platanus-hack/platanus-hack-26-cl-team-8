@@ -45,9 +45,10 @@ export const ADMIN_BLOCKS: ReadonlySet<string> = new Set([
 export const isAdminBlock = (name: string): boolean => ADMIN_BLOCKS.has(name.replace(/^minecraft:/, ""));
 
 /**
- * Bloques de la arena: no se rompen nunca (piso con el logo del centro, muros de vidrio con
- * su base de linternas, marcas de spawn y la tapa invisible). Todo lo demás que esté sobre
- * el piso lo puso alguien. Importa: bajo el piso no hay nada, quien lo rompa cae al vacío.
+ * Bloques de la arena: no se rompen nunca (piso con el logo del centro, marcas de spawn y
+ * la pared y el techo invisibles, que son barreras y van en ADMIN_BLOCKS). El vidrio y las
+ * linternas quedan de la arena con muros a la vista. Todo lo demás que esté sobre el piso
+ * lo puso alguien. Importa: bajo el piso no hay nada, quien lo rompa cae al vacío.
  */
 export const ARENA_BLOCKS: ReadonlySet<string> = new Set([
   "smooth_stone",
