@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@phack/llm";
-import { buildTurnMessages, trimHistory } from "./history";
+import { buildTurnMessages, trimHistory, summarizeObservation } from "./history";
 import { ActionPlan, QUEUED_RESULT, replyResults } from "./plan";
 import { parseToolArgs } from "./tools";
 
@@ -13,6 +13,21 @@ function turn(n: number): ChatMessage[] {
 }
 
 describe("trimHistory", () => {
+  it("el presupuesto de bytes elimina turnos completos, incluidos planos grandes", () => {
+    const huge = turn(1);
+    huge[1] = { role: "assistant", content: "", toolCalls: [{ id: "big", name: "build", args: { blocks: "x".repeat(10_000) } }] };
+    const small = turn(2);
+    expect(trimHistory([...huge, ...small], 12, 1000)).toEqual(small);
+    expect(trimHistory(huge, 12, 1000)).toEqual([]);
+  });
+
+  it("el resumen conserva evolución y resultado pero no mapas, catálogos ni planos repetidos", () => {
+    const summary = JSON.parse(summarizeObservation(JSON.stringify({ health: 12, inventory: { oak_planks: 5 }, currentAction: "build", lastActionResult: "faltó un apoyo", world: { huge: true }, resources: [{ uses: "manual repetido" }], construction: { status: "blocked", completed: 3, total: 10, reason: "falta apoyo", remaining: Array(500).fill({ x: 1, y: 2, z: 3 }) } })));
+    expect(summary).toMatchObject({ health: 12, inventory: { oak_planks: 5 }, lastActionResult: "faltó un apoyo", construction: { status: "blocked", completed: 3, total: 10, reason: "falta apoyo" } });
+    expect(summary).not.toHaveProperty("world");
+    expect(summary).not.toHaveProperty("resources");
+    expect(summary.construction).not.toHaveProperty("remaining");
+  });
   it("no toca historiales cortos", () => {
     const history = [...turn(1), ...turn(2)];
     expect(trimHistory(history, 12)).toEqual(history);

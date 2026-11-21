@@ -6,6 +6,7 @@ import { CommsInbox, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
 import { clampToArena, distance3, distanceXZ, retreatTarget, round1, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
+import { profileContext } from "./context-profile";
 import {
   ALWAYS_EDIBLE,
   attackCooldownMs,
@@ -865,6 +866,7 @@ class MineflayerFighter implements Fighter {
     // Latencia, tokens, lo que vio y lo que respondió: se informan antes de actuar, una vez por respuesta.
     const report: DecisionReport = {
       ms: Date.now() - llmStartedAt,
+      contextProfile: profileContext(messages, this.toolDefs),
       observation,
       response: rawResponse(response),
     };

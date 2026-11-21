@@ -1,6 +1,7 @@
 import type { CommsMode, Kit, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 import type { Observation } from "./observation";
+import type { ContextProfile } from "./context-profile";
 
 /** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
 export type DecisionReport = {
@@ -8,6 +9,8 @@ export type DecisionReport = {
   ms: number;
   /** Tokens de esa llamada; falta si el proveedor no los informó. */
   usage?: TokenUsage;
+  /** Tamaño del contexto enviado; los tokens reales siguen viniendo en usage. */
+  contextProfile?: ContextProfile;
   /** La observación que recibió el LLM en esa llamada. */
   observation: Observation;
   /**

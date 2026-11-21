@@ -66,6 +66,7 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
   const bot = new SimulatedBot();
   driver.createBot.mockReturnValue(bot);
   const received: Record<string, unknown>[] = [];
+  const requests: LlmRequest[] = [];
   let turn = 0;
   const options: FighterOptions = {
     side: "red", username: "Red", opponentUsername: "Blue", prompt: "Explora tus recursos", kit: KITS.builder,
@@ -74,6 +75,7 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
     llm: {
       provider: "mock", model: "scripted",
       complete: async (request: LlmRequest) => {
+        requests.push(request);
         const observation = request.messages.at(-1);
         if (observation?.role === "user") received.push(JSON.parse(observation.content));
         const action = actions[turn++] ?? { name: "wait", args: {} };
@@ -90,10 +92,20 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
   await connected;
   fighter.start();
   await vi.advanceTimersByTimeAsync(0);
-  return { bot, received, events: options.events };
+  return { bot, received, requests, events: options.events };
 }
 
 describe("agente: observar, decidir y construir", () => {
+  it("el request real mantiene el mapa actual y resúmenes acotados de turnos anteriores", async () => {
+    const { requests } = await start(Array.from({ length: 15 }, () => []), 100);
+    await vi.advanceTimersByTimeAsync(1200);
+    const request = requests.at(-1)!;
+    const observations = request.messages.filter((message) => message.role === "user").map((message) => JSON.parse(message.content));
+    expect(observations.at(-1)).toHaveProperty("world.regions");
+    expect(observations.at(-1)).toHaveProperty("resources");
+    expect(observations.slice(0, -1).every((observation) => !observation.world && !observation.resources)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(request.messages.slice(1, -1)))).toBeLessThanOrEqual(6000);
+  });
   it("termina el plano y sigue la cola aunque lleguen respuestas sin herramientas", async () => {
     const { bot, received, events } = await start([
       [
@@ -116,6 +128,7 @@ describe("agente: observar, decidir y construir", () => {
     const { bot, received, events } = await start([{ name: "build", args: { blocks: [{ x: 2, y: 65, z: 0, material: "oak_planks" }, { x: 2, y: 66, z: 0, material: "red_wool" }] } }]);
     expect(received[0]?.world).toMatchObject({ coverage: { radius: 8 } });
     expect(received[0]?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ name: "oak_planks", count: 16 })]));
+    expect(events.onDecision).toHaveBeenCalledWith(expect.objectContaining({ contextProfile: expect.objectContaining({ totalBytes: expect.any(Number), observationFields: expect.objectContaining({ world: expect.any(Number) }) }) }));
     await vi.advanceTimersByTimeAsync(1100);
     expect(bot.cells.get("2,65,0")).toBe("oak_planks");
     expect(bot.cells.get("2,66,0")).toBe("red_wool");
