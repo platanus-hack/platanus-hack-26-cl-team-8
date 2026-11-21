@@ -182,3 +182,13 @@ describe("buildObservation: terreno", () => {
   });
 });
 
+
+describe("buildObservation: modo por rondas", () => {
+  it("trae la ronda y cómo va la serie solo si hay serie", () => {
+    expect(buildObservation(base)).not.toHaveProperty("round");
+    expect(buildObservation({ ...base, series: null })).not.toHaveProperty("round");
+    const obs = buildObservation({ ...base, series: { round: 3, won: 1, lost: 0, drawn: 1, maxRounds: 5 } });
+    expect(obs).toMatchObject({ round: 3, maxRounds: 5, roundsWon: 1, roundsLost: 0, roundsDrawn: 1 });
+    expect(JSON.parse(JSON.stringify(obs))).toMatchObject({ round: 3, roundsWon: 1, roundsLost: 0, roundsDrawn: 1 });
+  });
+});

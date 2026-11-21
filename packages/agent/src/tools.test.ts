@@ -10,6 +10,7 @@ import {
   parseToolArgs,
   refusalText,
   shootRefusal,
+  SURRENDER_TOOL,
   TOOL_DEFS,
   TOOL_NAMES,
 } from "./tools";
@@ -288,3 +289,23 @@ describe("move, pociones y elecciones", () => {
   });
 });
 
+
+describe("modo por rondas: surrender", () => {
+  it("solo se ofrece con rondas, a todos los kits, y no es una acción del cuerpo", () => {
+    for (const kit of KIT_LIST) {
+      expect(kitToolDefs(kit).map((def) => def.name)).not.toContain(SURRENDER_TOOL);
+      expect(kitToolDefs(kit, "chat").map((def) => def.name)).not.toContain(SURRENDER_TOOL);
+      expect(kitToolDefs(kit, "none", true).map((def) => def.name)).toContain(SURRENDER_TOOL);
+    }
+    expect(isToolName(SURRENDER_TOOL)).toBe(false);
+    expect([...TOOL_NAMES]).not.toContain(SURRENDER_TOOL);
+  });
+
+  it("dice solo lo que pasa y acepta reason (y say en modo chat)", () => {
+    const def = kitToolDefs(KITS.classic, "none", true).find((d) => d.name === SURRENDER_TOOL);
+    expect(def?.description).toBe("Te rindes en esta ronda: la ronda termina y la gana el otro agente.");
+    expect(Object.keys((def?.parameters as { properties: object }).properties)).toEqual(["reason"]);
+    const chat = kitToolDefs(KITS.classic, "chat", true).find((d) => d.name === SURRENDER_TOOL);
+    expect(Object.keys((chat?.parameters as { properties: object }).properties)).toEqual(["reason", "say"]);
+  });
+});

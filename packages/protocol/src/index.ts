@@ -666,6 +666,30 @@ export const COMMS_LABELS: Record<CommsMode, { name: string; description: string
  */
 export const MAX_AGENT_MESSAGE_LENGTH = 500;
 
+// ---------- Modo de la partida ----------
+
+/**
+ * Cómo se juega una partida:
+ * - "single": una sola pelea, como siempre.
+ * - "rounds": una serie de hasta MAX_ROUNDS rondas entre los mismos dos agentes. Cada
+ *   agente sabe en qué ronda va y cuántas ganó y perdió, y puede rendirse en una ronda.
+ */
+export const MATCH_MODES = ["single", "rounds"] as const;
+export const MatchModeSchema = z.enum(MATCH_MODES);
+export type MatchMode = z.infer<typeof MatchModeSchema>;
+export const DEFAULT_MODE: MatchMode = "single";
+
+/** Máximo de rondas de una serie (modo "rounds"). */
+export const MAX_ROUNDS = 5;
+
+export const MODE_LABELS: Record<MatchMode, { name: string; description: string }> = {
+  single: { name: "Una pelea", description: "Una sola pelea: gana quien deje fuera al otro." },
+  rounds: {
+    name: `Hasta ${MAX_ROUNDS} rondas`,
+    description: `Una serie de hasta ${MAX_ROUNDS} rondas. Cada agente sabe cómo va la serie y puede rendirse en una ronda; el inventario no se repone entre rondas.`,
+  },
+};
+
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
   comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
@@ -675,24 +699,30 @@ export const MatchSettingsSchema = z.object({
    * alguien la detenga (el servidor tiene un tope de seguridad aparte, MATCH_MAX_SECONDS).
    */
   timer: z.boolean().catch(true).default(true),
+  /** Una pelea o una serie por rondas (ver MATCH_MODES). */
+  mode: MatchModeSchema.catch(DEFAULT_MODE).default(DEFAULT_MODE),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
-export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true };
+export const DEFAULT_SETTINGS: MatchSettings = { comms: DEFAULT_COMMS, timer: true, mode: DEFAULT_MODE };
 
 export const TIMER_LABELS = {
   on: "Si se acaba el tiempo y nadie ha caído, gana quien tenga más vida.",
   off: "La pelea no se acaba sola: sigue hasta que uno caiga o alguien la detenga.",
 } as const;
 
-/** Se manda solo lo que cambia; al menos uno de los dos. */
+/** Se manda solo lo que cambia; al menos uno. */
 export const UpdateSettingsBodySchema = z
-  .object({ comms: CommsModeSchema.optional(), timer: z.boolean().optional() })
-  .refine((body) => body.comms !== undefined || body.timer !== undefined);
+  .object({ comms: CommsModeSchema.optional(), timer: z.boolean().optional(), mode: MatchModeSchema.optional() })
+  .refine((body) => body.comms !== undefined || body.timer !== undefined || body.mode !== undefined);
 export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
 
 // ---------- Estado de la pelea ----------
 
-export const MatchPhaseSchema = z.enum(["idle", "preparing", "running", "finished"]);
+/**
+ * "intermission" solo existe en el modo por rondas: la pausa entre una ronda y la
+ * siguiente (los agentes vuelven a su lugar con la vida completa).
+ */
+export const MatchPhaseSchema = z.enum(["idle", "preparing", "running", "intermission", "finished"]);
 export type MatchPhase = z.infer<typeof MatchPhaseSchema>;
 
 /**
@@ -728,7 +758,8 @@ export const AgentStatusSchema = z.object({
 });
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
-export const WinReasonSchema = z.enum(["kill", "timeout_health", "draw", "stopped", "error"]);
+/** "rounds" = ganó la serie por rondas (modo "rounds"). */
+export const WinReasonSchema = z.enum(["kill", "timeout_health", "draw", "stopped", "error", "rounds"]);
 export type WinReason = z.infer<typeof WinReasonSchema>;
 
 export const MatchResultSchema = z.object({
@@ -741,6 +772,50 @@ export const MatchResultSchema = z.object({
   explanation: z.string().max(400).optional(),
 });
 export type MatchResult = z.infer<typeof MatchResultSchema>;
+
+// ---------- Serie por rondas ----------
+
+/** Cómo terminó una ronda. "surrender": el que perdió se rindió. */
+export const RoundReasonSchema = z.enum(["kill", "surrender", "timeout_health", "draw"]);
+export type RoundReason = z.infer<typeof RoundReasonSchema>;
+
+export const RoundResultSchema = z.object({
+  /** Número de ronda, desde 1. */
+  round: z.number(),
+  /** null = ronda empatada (se acabó el tiempo con la misma vida). */
+  winner: SideSchema.nullable(),
+  reason: RoundReasonSchema,
+  durationMs: z.number(),
+});
+export type RoundResult = z.infer<typeof RoundResultSchema>;
+
+/** Cómo va una serie por rondas. */
+export const SeriesSchema = z.object({
+  /** Ronda en juego (o la que viene, durante la pausa), desde 1. */
+  round: z.number(),
+  maxRounds: z.number(),
+  wins: z.object({ red: z.number(), blue: z.number() }),
+  /** Rondas ya jugadas, en orden. */
+  rounds: z.array(RoundResultSchema),
+  /** Epoch ms en que empezó la ronda en juego; null entre rondas. */
+  roundStartedAt: z.number().nullable(),
+});
+export type Series = z.infer<typeof SeriesSchema>;
+
+/**
+ * ¿Ya está decidida la serie? Sí cuando se jugaron todas las rondas o cuando al que va
+ * abajo no le alcanzan las que quedan (3-0, 3-1, o 2-0 con dos empates y una por jugar).
+ */
+export function seriesDecided(series: Pick<Series, "maxRounds" | "wins" | "rounds">): boolean {
+  const left = series.maxRounds - series.rounds.length;
+  return left <= 0 || Math.abs(series.wins.red - series.wins.blue) > left;
+}
+
+/** Quién va ganando la serie (o la ganó); null si van iguales. */
+export function seriesLeader(series: Pick<Series, "wins">): Side | null {
+  if (series.wins.red === series.wins.blue) return null;
+  return series.wins.red > series.wins.blue ? "red" : "blue";
+}
 
 /** Segundos de cuenta regresiva entre que los dos peleadores quedan listos y empieza la pelea. */
 export const COUNTDOWN_SECONDS = 3;
@@ -762,6 +837,8 @@ export const MatchStateSchema = z.object({
   configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
   /** Ajustes congelados con los que se está peleando (o se peleó). */
   settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
+  /** Solo en el modo por rondas: cómo va la serie. */
+  series: SeriesSchema.nullable().default(null),
   result: MatchResultSchema.nullable(),
 });
 export type MatchState = z.infer<typeof MatchStateSchema>;
@@ -776,6 +853,8 @@ export const MatchRecordSchema = z.object({
   final: z.object({ red: AgentStatusSchema, blue: AgentStatusSchema }),
   /** Falta en los registros de antes de que existieran los ajustes: valen los de por defecto. */
   settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
+  /** Solo en el modo por rondas: las rondas jugadas y cómo quedó la serie. */
+  series: SeriesSchema.nullable().default(null),
   result: MatchResultSchema,
 });
 export type MatchRecord = z.infer<typeof MatchRecordSchema>;
@@ -862,6 +941,13 @@ const DamageEventSchema = z.object({
   health: z.number(),
 });
 const DeathEventSchema = z.object({ type: z.literal("death"), at: z.number(), side: SideSchema });
+/** Modo por rondas: terminó una ronda. `series` ya la incluye en su cuenta. */
+const RoundEndEventSchema = z.object({
+  type: z.literal("round_end"),
+  at: z.number(),
+  result: RoundResultSchema,
+  series: SeriesSchema,
+});
 const LogEventSchema = z.object({
   type: z.literal("log"),
   at: z.number(),
@@ -885,6 +971,7 @@ export const ArenaEventSchema = z.discriminatedUnion("type", [
   ActionEventSchema,
   DamageEventSchema,
   DeathEventSchema,
+  RoundEndEventSchema,
   z.object({ type: z.literal("match_end"), at: z.number(), record: MatchRecordSchema }),
   LogEventSchema,
 ]);
@@ -953,6 +1040,9 @@ export const TranscriptEntrySchema = z.discriminatedUnion("type", [
   ActionEventSchema,
   DamageEventSchema,
   DeathEventSchema,
+  /** Modo por rondas: empezó la ronda `round`. */
+  z.object({ type: z.literal("round_start"), at: z.number(), round: z.number() }),
+  RoundEndEventSchema,
   /** Cambio de vida, comida, ítem en la mano o conexión de un agente. */
   z.object({
     type: z.literal("status"),
@@ -996,7 +1086,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer? } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, mode? } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)

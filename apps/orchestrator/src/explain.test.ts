@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentStatus, MatchRecord, MatchResult, Side } from "@phack/protocol";
+import type { AgentStatus, MatchRecord, MatchResult, RoundResult, Side } from "@phack/protocol";
 import {
   MAX_EXPLANATION_LENGTH,
   buildExplanationMessages,
@@ -45,7 +45,8 @@ function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Parti
       },
       blue: { side: "blue", prompt: "Eres defensivo:\n\nmantén distancia y usa el arco." },
     },
-    settings: { comms: "none", timer: true },
+    settings: { comms: "none", timer: true, mode: "single" },
+    series: null,
     final: { red: status("red", red), blue: status("blue", blue) },
     result,
   };
@@ -188,5 +189,66 @@ describe("fallbackExplanation", () => {
       record({ winner: "red", reason: "kill" }, { damageDealt: 1e300, avgDecisionMs: 1 }, { alive: false, avgDecisionMs: 1e300 }),
     );
     expect(text.length).toBeLessThanOrEqual(MAX_EXPLANATION_LENGTH);
+  });
+});
+
+describe("modo por rondas", () => {
+  const round = (n: number, winner: Side | null, reason: RoundResult["reason"]): RoundResult => ({
+    round: n,
+    winner,
+    reason,
+    durationMs: 30_000 + n * 1000,
+  });
+  function seriesRecord(result: MatchResult, rounds: RoundResult[], red: Partial<AgentStatus> = {}, blue: Partial<AgentStatus> = {}): MatchRecord {
+    const wins = { red: rounds.filter((r) => r.winner === "red").length, blue: rounds.filter((r) => r.winner === "blue").length };
+    return {
+      ...record(result, red, blue),
+      settings: { comms: "none", timer: true, mode: "rounds" },
+      series: { round: rounds.length, maxRounds: 5, wins, rounds, roundStartedAt: null },
+    };
+  }
+  const threeToOne = [round(1, "red", "kill"), round(2, "blue", "timeout_health"), round(3, "red", "surrender"), round(4, "red", "kill")];
+
+  it("explica las series ganadas y las empatadas", () => {
+    expect(shouldExplain({ winner: "red", reason: "rounds" })).toBe(true);
+  });
+
+  it("el resumen para el LLM lista cada ronda y el marcador final", () => {
+    const messages = buildExplanationMessages(seriesRecord({ winner: "red", reason: "rounds" }, threeToOne));
+    const user = messages[1]?.content ?? "";
+    expect(user).toContain("Resultado: Rojo ganó la serie 3 a 1.");
+    expect(user).toContain("- Ronda 1: ganó Rojo por KO (31 s).");
+    expect(user).toContain("- Ronda 2: ganó Azul por tener más vida al acabarse el tiempo (32 s).");
+    expect(user).toContain("- Ronda 3: ganó Rojo porque Azul se rindió (33 s).");
+    expect(user).toContain("- Ronda 4: ganó Rojo por KO (34 s).");
+    expect(user).toContain("Marcador final de la serie: Rojo 3, Azul 1.");
+    expect(user.endsWith("Explica por qué ganó Rojo.")).toBe(true);
+    const drawn = buildExplanationMessages(
+      seriesRecord({ winner: null, reason: "draw" }, [round(1, "red", "kill"), round(2, null, "draw"), round(3, "blue", "kill")]),
+    );
+    expect(drawn[1]?.content).toContain("- Ronda 2: empate, se acabó el tiempo con la misma vida (32 s).");
+    expect(drawn[1]?.content).toContain("Resultado: la serie terminó empatada 1 a 1 en rondas ganadas.");
+    expect(drawn[1]?.content.endsWith("Explica por qué la serie terminó en empate.")).toBe(true);
+  });
+
+  it("la plantilla cuenta el marcador y cómo se ganaron las rondas", () => {
+    expect(fallbackExplanation(seriesRecord({ winner: "red", reason: "rounds" }, threeToOne, { damageDealt: 40 }, { damageDealt: 22 }))).toBe(
+      "Rojo ganó la serie 3 a 1: ganó 2 rondas por KO y 1 ronda porque Azul se rindió; hizo 40 de daño contra 22 de Azul.",
+    );
+    const withDraw = [round(1, null, "draw"), round(2, null, "draw"), round(3, "blue", "kill"), round(4, "blue", "kill")];
+    expect(fallbackExplanation(seriesRecord({ winner: "blue", reason: "rounds" }, withDraw, {}, { damageDealt: 12.5 }))).toBe(
+      "Azul ganó la serie 2 a 0 (con 2 empatadas): ganó 2 rondas por KO; hizo 12,5 de daño contra 0 de Rojo.",
+    );
+  });
+
+  it("la plantilla de una serie empatada", () => {
+    const rounds = [round(1, "red", "kill"), round(2, "blue", "kill"), round(3, null, "draw"), round(4, "red", "kill"), round(5, "blue", "surrender")];
+    expect(fallbackExplanation(seriesRecord({ winner: null, reason: "draw" }, rounds, { damageDealt: 30 }, { damageDealt: 28 }))).toBe(
+      "Empate en la serie: 2 rondas cada uno y 1 empatada (Rojo hizo 30 de daño y Azul 28).",
+    );
+  });
+
+  it("una serie detenida a mano usa la frase de siempre", () => {
+    expect(fallbackExplanation(seriesRecord({ winner: null, reason: "stopped" }, [round(1, "red", "kill")]))).toContain("se detuvo a mano");
   });
 });

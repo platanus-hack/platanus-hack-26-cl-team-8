@@ -287,6 +287,17 @@ Cada respuesta del modelo puede llamar una herramienta, varias o ninguna:
 
 El `reason` de cada herramienta y las respuestas sin herramientas también se piden breves, sin repetir lo anterior, y pueden omitirse si no hay nada nuevo. El idioma lo decide el agente. El marcador cuenta una decisión por respuesta del modelo, haga lo que haga. En la transcripción con `?format=text`, las respuestas sin herramienta o con varias quedan anotadas.
 
+## Modo por rondas
+
+En la web, **Formato de la partida** elige entre una sola pelea y una serie de **hasta 5 rondas** (`mode` en `PUT /api/settings`: `single` o `rounds`); vale desde la próxima partida.
+
+- Una ronda termina cuando uno de los dos muere, cuando uno **se rinde** (herramienta `surrender`, que solo existe en este modo) o, con el límite de tiempo encendido, cuando se acaba el tiempo de la ronda: ahí la gana quien tenga más vida, y con la misma vida la ronda queda empatada.
+- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan (3-0, 3-1…) o después de la quinta. Gana quien haya ganado más rondas; con las mismas, empate.
+- Entre rondas los dos vuelven a su lugar con la vida completa y los efectos permanentes de su kit, y se quitan los bloques puestos. **El inventario no se repone**: lo que un agente gasta en una ronda no vuelve en las siguientes (se cambia con `ROUNDS_REFILL_KIT` en `apps/orchestrator/src/match.ts`). El historial de mensajes del modelo y la conversación entre agentes siguen de una ronda a otra.
+- Cada agente sabe cómo va la serie: su observación trae `round`, `roundsWon`, `roundsLost` y `roundsDrawn`, y el prompt describe las reglas de la serie, sin decirle qué hacer con eso.
+
+En el marcador hay un cuadro por ronda bajo el reloj, del color de quien la ganó; el historial muestra el marcador de la serie y cada ronda.
+
 ## Límite de tiempo
 
 En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.

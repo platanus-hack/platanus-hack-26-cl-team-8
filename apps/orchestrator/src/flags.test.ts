@@ -38,7 +38,8 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende", provider: "mock", kit: "tank" },
     },
     final: { red: status("red"), blue: status("blue") },
-    settings: { comms: "chat", timer: false },
+    settings: { comms: "chat", timer: false, mode: "single" },
+    series: null,
     result: { winner: "red", reason: "kill" },
   };
 }
@@ -48,7 +49,7 @@ function live(id: string): FlagSource {
   return {
     matchId: id,
     configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
-    settings: { comms: "chat", timer: false },
+    settings: { comms: "chat", timer: false, mode: "single" },
     outcome: null,
   };
 }
@@ -91,7 +92,7 @@ describe("FlagStore", () => {
       note: "buena",
       config: record(MATCH).configs.red,
       rival: record(MATCH).configs.blue,
-      settings: { comms: "chat", timer: false },
+      settings: { comms: "chat", timer: false, mode: "single" },
       outcome: {
         startedAt: 1000,
         endedAt: 5000,

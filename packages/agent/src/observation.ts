@@ -3,6 +3,7 @@ import { distance3, distanceToWall, round1, type Vec3Like } from "./geometry";
 import type { Bounds, ConstructionPlan } from "./construction";
 import type { describeResources, ResourceItem } from "./resources";
 import type { SpatialSnapshot } from "./spatial";
+import { seriesObservation, type SeriesObservation, type SeriesView } from "./rounds";
 
 type SpatialContext = {
   world?: SpatialSnapshot;
@@ -48,6 +49,8 @@ export type ObservationInput = SpatialContext & {
   rivalMessages?: string[];
   /** Modo "chat": últimos mensajes entre los dos, el más viejo primero. */
   conversation?: ConversationLine[];
+  /** Modo por rondas: cómo va la serie. Ausente en una sola pelea. */
+  series?: SeriesView | null;
 };
 
 /**
@@ -99,7 +102,7 @@ export type Observation = SpatialContext & {
    * Solo aparece mientras queda alguna: comer otra manzana no la suma, solo la renueva.
    */
   absorption?: number;
-};
+} & Partial<SeriesObservation>;
 
 function roundVec(v: Vec3Like): Vec3Like {
   return { x: round1(v.x), y: round1(v.y), z: round1(v.z) };
@@ -171,5 +174,7 @@ export function buildObservation(input: ObservationInput): Observation {
     // Nunca 0 mientras quede algo, para que "aparece el campo" siempre signifique "tienes".
     observation.absorption = Math.max(0.1, round1(absorption));
   }
+  // Modo por rondas: en qué ronda va y cuántas ganó, perdió y empató.
+  if (input.series) Object.assign(observation, seriesObservation(input.series));
   return observation;
 }

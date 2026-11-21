@@ -31,6 +31,7 @@ import { describeResources, type ResourceItem } from "./resources";
 import { buildObservation, type Observation } from "./observation";
 import { ActionPlan, isOpenEnded, QUEUE_STEP_DEFAULT_MS, replyResults, stepSeconds, type PlanStep } from "./plan";
 import { buildSystemPrompt } from "./prompt";
+import { RoundGate, type SeriesView } from "./rounds";
 import {
   DIG_MAX_BLOCKS,
   DIG_MAX_SECONDS,
@@ -45,6 +46,7 @@ import {
   PEARL_MIN_HEALTH,
   refusalText,
   shootRefusal,
+  SURRENDER_TOOL,
   THROW_MAX_DISTANCE,
   WATER_BETWEEN_MIN_DISTANCE,
   type DigTarget,
@@ -308,6 +310,10 @@ class MineflayerFighter implements Fighter {
   private modeUntil: number | null = null;
   /** Lo que queda por hacer de la última respuesta que llamó herramientas (ver plan.ts). */
   private readonly plan = new ActionPlan();
+  /** Modo por rondas: pausa entre rondas (ver RoundGate). */
+  private readonly gate = new RoundGate();
+  /** Modo por rondas: cómo va la serie; null en una sola pelea. */
+  private series: SeriesView | null;
   /**
    * true cuando el cuerpo terminó solo la acción en curso (enterWait). El próximo tick del
    * cuerpo empieza entonces la siguiente acción en cola. Se hace en el tick y no dentro de
@@ -392,7 +398,9 @@ class MineflayerFighter implements Fighter {
   constructor(private readonly opts: FighterOptions) {
     const kit = opts.kit;
     this.toolNames = kitToolNames(kit);
-    this.toolDefs = kitToolDefs(kit, opts.comms);
+    const rounds = opts.rounds ?? null;
+    this.series = rounds ? { round: 1, won: 0, lost: 0, drawn: 0, maxRounds: rounds.maxRounds } : null;
+    this.toolDefs = kitToolDefs(kit, opts.comms, rounds !== null);
     this.systemPrompt = buildSystemPrompt({
       side: opts.side,
       username: opts.username,
@@ -402,6 +410,7 @@ class MineflayerFighter implements Fighter {
       tickMs: opts.tickMs,
       durationSeconds: opts.durationSeconds,
       comms: opts.comms,
+      rounds,
     });
   }
 
@@ -476,6 +485,39 @@ class MineflayerFighter implements Fighter {
     this.loopPromise = this.runLoop().catch((err) => {
       this.log("error", `El bucle de decisiones terminó con error: ${errorText(err)}`);
     });
+  }
+
+  pause(note: string): void {
+    if (this.stopped) return;
+    // Vacía la cola y cambia el número de la llamada en curso: su respuesta ya no se ejecuta.
+    this.gate.pause(this.plan);
+    try {
+      this.llmAbort?.abort();
+    } catch {
+      // nada
+    }
+    const bot = this.bot;
+    if (bot && !this.ended) {
+      try {
+        this.leaveMode(bot);
+        bot.clearControlStates();
+      } catch {
+        // nada
+      }
+    }
+    // El plano de construcción también se descarta: los bloques se borran entre rondas.
+    this.resetBody(note);
+  }
+
+  resume(series: SeriesView, note: string): void {
+    if (this.stopped || !this.gate.isPaused) return;
+    this.series = { ...series };
+    this.lastResult = note;
+    // Los segundos de la observación cuentan desde que empezó la ronda.
+    this.startedAt = Date.now();
+    this.gate.resume();
+    // Decide ya, sin esperar el resto de la pausa del bucle.
+    if (this.wakeSleep) this.wakeSleep();
   }
 
   stop(): Promise<void> {
@@ -837,7 +879,7 @@ class MineflayerFighter implements Fighter {
 
   private async decide(): Promise<void> {
     const bot = this.bot;
-    if (!bot || !this.connected || !this.alive) return;
+    if (!bot || !this.connected || !this.alive || this.gate.isPaused) return;
 
     const heard = this.inbox.snapshot();
     const observation = this.observe(bot, heard);
@@ -850,21 +892,27 @@ class MineflayerFighter implements Fighter {
 
     const abort = new AbortController();
     this.llmAbort = abort;
+    const ticket = this.gate.ticket();
     const timeout = setTimeout(() => abort.abort(), LLM_TIMEOUT_MS);
     const llmStartedAt = Date.now();
     let response: LlmResponse;
     try {
       response = await this.opts.llm.complete({ messages, tools: this.toolDefs, signal: abort.signal });
     } catch (err) {
-      if (!this.stopped) this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
+      // Una llamada cortada por la pausa entre rondas no es una falla.
+      if (!this.stopped && this.gate.accepts(ticket)) {
+        this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
+      }
       return;
     } finally {
       clearTimeout(timeout);
       if (this.llmAbort === abort) this.llmAbort = null;
     }
+    if (this.stopped) return;
+    // Llegó en pausa (o se pidió antes de una pausa): no se ejecuta nada ni entra al historial.
+    if (!this.gate.accepts(ticket)) return;
     // El LLM respondió: lo que vio del rival ya no se repite.
     this.inbox.confirm(heard.upTo);
-    if (this.stopped) return;
 
     // Latencia, tokens, lo que vio y lo que respondió: se informan antes de actuar, una vez por respuesta.
     const report: DecisionReport = {
@@ -905,7 +953,9 @@ class MineflayerFighter implements Fighter {
   private runQueued(thought: string): { results: string[]; started: boolean } {
     const results: string[] = [];
     let fallback = thought;
-    for (let step = this.plan.next(); step; step = this.plan.next()) {
+    // En pausa (por ejemplo, justo después de rendirse) no sigue nada de la cola.
+    const nextStep = (): PlanStep | null => (this.gate.isPaused ? null : this.plan.next());
+    for (let step = nextStep(); step; step = nextStep()) {
       const { result, started } = this.runStep(step, fallback);
       fallback = "";
       results.push(result);
@@ -927,6 +977,14 @@ class MineflayerFighter implements Fighter {
       this.safe(() => this.opts.events.onMessage(said));
     }
 
+    if (step.name === SURRENDER_TOOL && this.series) {
+      const result = this.surrender();
+      this.safe(() => this.opts.events.onAction(step.name, step.args, result));
+      this.safe(() => this.opts.events.onSurrender());
+      // Lo que venía después en la cola ya no corre: la ronda terminó.
+      return { result, started: true };
+    }
+
     const args: ParsedToolArgs = { ...parsed, seconds: stepSeconds(step.name, parsed.seconds, this.plan.hasNext()) };
     let result: string;
     try {
@@ -940,6 +998,20 @@ class MineflayerFighter implements Fighter {
     if (said && !canSay) result += "; mensaje no enviado: espera a que termine sayCooldown";
     this.safe(() => this.opts.events.onAction(step.name, step.args, result));
     return { result, started };
+  }
+
+  /** Modo por rondas: se rinde en la ronda en juego. El cuerpo queda en espera. */
+  private surrender(): string {
+    const result = `te rendiste en la ronda ${this.series?.round ?? 1}`;
+    this.plan.clear();
+    const bot = this.bot;
+    if (bot && !this.ended) {
+      this.leaveMode(bot);
+      this.mode = "wait";
+      this.modeUntil = null;
+    }
+    this.lastResult = result;
+    return result;
   }
 
   private observe(bot: Bot, heard: InboxSnapshot): Observation {
@@ -992,6 +1064,7 @@ class MineflayerFighter implements Fighter {
       // La conversación solo existe en modo "chat".
       conversation: this.opts.comms === "chat" ? heard.conversation : [],
       sayReadyAt: this.opts.comms === "chat" ? this.chatPacing.readyAt : undefined,
+      series: this.series,
     });
   }
 
@@ -1534,6 +1607,8 @@ class MineflayerFighter implements Fighter {
   private bodyTick(): void {
     const bot = this.bot;
     if (!bot || this.stopped || !this.connected || !this.alive || !bot.entity) return;
+    // En pausa entre rondas el cuerpo no hace nada: lo mueve el orquestador.
+    if (this.gate.isPaused) return;
 
     const now = Date.now();
     const opponent = this.opponent(bot);

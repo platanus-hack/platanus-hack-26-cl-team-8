@@ -111,8 +111,13 @@ export function fighterKitCommands(username: string, kit: Kit): string[] {
       (i) =>
         `item replace entity ${username} ${i.slot} with minecraft:${i.item}${itemNbt(i)}${i.count > 1 ? ` ${i.count}` : ""}`,
     ),
-    ...kit.effects.map((e) => `effect give ${username} minecraft:${e.id} infinite ${e.amplifier} true`),
+    ...kitEffectCommands(username, kit),
   ];
+}
+
+/** Los efectos permanentes del kit (por ejemplo, la velocidad del Berserker). */
+export function kitEffectCommands(username: string, kit: Kit): string[] {
+  return kit.effects.map((e) => `effect give ${username} minecraft:${e.id} infinite ${e.amplifier} true`);
 }
 
 /**
@@ -227,6 +232,29 @@ export async function prepareFighter(
       );
     }
   }
+}
+
+/**
+ * Modo por rondas: deja a un peleador listo para la ronda siguiente. Vuelve a su spawn
+ * con la vida completa, saciado y con los efectos permanentes de su kit. No toca el
+ * inventario ni le da los ítems del kit: lo que gastó sigue gastado.
+ *
+ * La vida máxima se fija de nuevo porque al reaparecer después de morir vuelve a la de
+ * Minecraft (y debe ir antes de la cura, como en prepareFighter).
+ */
+export async function resetFighterForRound(rcon: RconLike, side: Side, kit: Kit): Promise<void> {
+  const username = AGENT_USERNAMES[side];
+  const tpResponse = await rcon.send(teleportCommand(side));
+  if (/no (player|entity) was found/i.test(tpResponse)) {
+    throw new Error(`${username} no está conectado al servidor de Minecraft`);
+  }
+  await sendAll(rcon, [
+    `attribute ${username} minecraft:generic.max_health base set ${MAX_HEALTH}`,
+    `effect give ${username} minecraft:instant_health 1 10 true`,
+    `effect give ${username} minecraft:saturation 1 10 true`,
+    // Morir borra los efectos: los del kit son parte del agente, no algo que se gaste.
+    ...kitEffectCommands(username, kit),
+  ]);
 }
 
 /** Cada cuánto se revisa, durante la cuenta regresiva, si la pelea se canceló. */

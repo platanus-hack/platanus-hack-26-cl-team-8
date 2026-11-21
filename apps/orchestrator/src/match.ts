@@ -9,8 +9,10 @@ import {
   DEFAULT_KIT,
   KITS,
   MAX_AGENT_MESSAGE_LENGTH,
+  MAX_ROUNDS,
   SIDES,
   kitOf,
+  seriesDecided,
   type AgentStatus,
   type ArenaEvent,
   type Kit,
@@ -20,15 +22,27 @@ import {
   type MatchState,
   type PromptsResponse,
   type Provider,
+  type RoundReason,
+  type RoundResult,
+  type Series,
   type Side,
   type TranscriptEntry,
 } from "@phack/protocol";
-import { buildArena, clearPlacedBlocks, prepareFighter, runCountdown } from "./arena";
+import { buildArena, clearPlacedBlocks, prepareFighter, resetFighterForRound, runCountdown } from "./arena";
 import { extractCustomKit } from "./customkit";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
-import { SIDE_LABEL, decideTimeoutResult, describeResult, otherSide, resultForDeath } from "./result";
+import {
+  SIDE_LABEL,
+  decideTimeoutResult,
+  describeResult,
+  describeRound,
+  otherSide,
+  resultForDeath,
+  roundNote,
+  seriesResult,
+} from "./result";
 import {
   cutCodePoints,
   errorMessage,
@@ -47,6 +61,20 @@ const FINISHED_HOLD_MS = 5_000;
 const EXPLAIN_TIMEOUT_MS = 15_000;
 /** Máximo que se espera al LLM que arma un kit personalizado; después se usa el kit por defecto. */
 const CUSTOM_KIT_TIMEOUT_MS = 20_000;
+/**
+ * Modo por rondas: pausa entre una ronda y la siguiente, en total. Sus últimos
+ * COUNTDOWN_SECONDS son la cuenta regresiva que dibuja la web.
+ */
+const ROUND_BREAK_MS = 6_000;
+/** Modo por rondas: cuánto se espera, al terminar una ronda, a que reaparezca el que murió. */
+const RESPAWN_WAIT_MS = 2_000;
+const RESPAWN_STEP_MS = 100;
+/**
+ * Modo por rondas: false = el kit se entrega una sola vez, antes de la ronda 1, y lo que
+ * un agente gasta no vuelve en las rondas siguientes. true = se entrega de nuevo (limpio)
+ * antes de cada ronda.
+ */
+export const ROUNDS_REFILL_KIT = false;
 
 export type MatchEnv = Pick<
   Env,
@@ -83,6 +111,8 @@ export type MatchDeps = {
   /** Registro para humanos (consola del servidor). */
   log: (level: LogLevel, text: string) => void;
   sleep?: SleepFn;
+  /** Solo para los tests: reemplaza ROUNDS_REFILL_KIT. */
+  roundsRefillKit?: boolean;
 };
 
 /** Se lanza al intentar iniciar una pelea cuando ya hay una en curso (HTTP 409). */
@@ -121,6 +151,8 @@ type MatchContext = {
    * para desempatar por vida al acabarse el tiempo.
    */
   absorption: Record<Side, number>;
+  /** Modo por rondas: cómo terminó la última ronda, contado a cada agente (ver roundNote). */
+  roundNotes: Record<Side, string>;
 };
 
 type StatusEntry = Extract<TranscriptEntry, { type: "status" }>;
@@ -146,6 +178,11 @@ function emptyStatus(side: Side): AgentStatus {
   };
 }
 
+/** Serie nueva, antes de la ronda 1. */
+function newSeries(): Series {
+  return { round: 1, maxRounds: MAX_ROUNDS, wins: { red: 0, blue: 0 }, rounds: [], roundStartedAt: null };
+}
+
 /** Un contador que llega de afuera: entero >= 0 o 0 si es basura. */
 function count(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
@@ -163,6 +200,7 @@ function formatAction(tool: string, args: Record<string, unknown>, result: strin
 
 /**
  * Máquina de estados de la pelea: idle -> preparing -> running -> finished -> idle.
+ * En el modo por rondas, entre una ronda y la siguiente: running -> intermission -> running.
  * Solo existe una pelea a la vez (sala única).
  */
 export class MatchManager {
@@ -183,6 +221,7 @@ export class MatchManager {
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       configs: deps.prompts.get(),
       settings: deps.settings.get(),
+      series: null,
       result: null,
     };
   }
@@ -192,7 +231,8 @@ export class MatchManager {
   }
 
   isActive(): boolean {
-    if (this.state.phase === "preparing" || this.state.phase === "running") return true;
+    const { phase } = this.state;
+    if (phase === "preparing" || phase === "running" || phase === "intermission") return true;
     // "finished" pero todavía desconectando agentes / guardando el resultado.
     return this.ctx !== null && !this.ctx.finalized;
   }
@@ -217,8 +257,10 @@ export class MatchManager {
       beforeStart: [],
       lastStatus: { red: null, blue: null },
       absorption: { red: 0, blue: 0 },
+      roundNotes: { red: "", blue: "" },
     };
     this.ctx = ctx;
+    const settings = this.deps.settings.get();
     this.state = {
       id: ctx.id,
       phase: "preparing",
@@ -228,7 +270,8 @@ export class MatchManager {
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
       configs: this.deps.prompts.get(),
-      settings: this.deps.settings.get(),
+      settings,
+      series: settings.mode === "rounds" ? newSeries() : null,
       result: null,
     };
     this.deps.hub.flushState();
@@ -283,6 +326,7 @@ export class MatchManager {
           kit,
           comms: this.state.settings.comms,
           durationSeconds: this.durationSeconds(),
+          rounds: this.state.series ? { maxRounds: this.state.series.maxRounds } : null,
           llm: llms[side],
           mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
           tickMs: env.AGENT_TICK_MS,
@@ -339,38 +383,175 @@ export class MatchManager {
         return;
       }
 
-      const now = Date.now();
-      // Con el límite de tiempo apagado no hay hora de término.
-      const seconds = this.durationSeconds();
-      // La cuenta regresiva se borra en la misma actualización que cambia la fase.
-      this.state.phase = "running";
-      this.state.countdownEndsAt = null;
-      this.state.startedAt = now;
-      this.state.endsAt = seconds === null ? null : now + seconds * 1000;
-      this.record(ctx, { type: "phase", at: now, phase: "running" });
-      for (const side of SIDES) {
-        // Recién curados y teletransportados: se parte con vida completa.
-        this.state.agents[side].alive = true;
-        this.state.agents[side].health = MAX_HEALTH;
-        this.state.agents[side].damageDealt = 0;
-        ctx.absorption[side] = 0;
-      }
-      if (seconds !== null) {
-        ctx.timer = setTimeout(() => {
-          void this.onTimeout(ctx);
-        }, seconds * 1000);
-      } else if (env.MATCH_MAX_SECONDS > 0) {
-        ctx.timer = setTimeout(() => {
-          void this.onCeiling(ctx);
-        }, env.MATCH_MAX_SECONDS * 1000);
-      }
-      for (const side of SIDES) ctx.fighters[side]?.start();
-      this.deps.hub.flushState();
-      this.log(ctx, "info", "¡Comienza la pelea!");
+      this.startRound(ctx);
     } catch (err) {
       if (ctx.ended || err instanceof CancelledError) return;
       this.log(ctx, "error", `No se pudo completar la pelea: ${errorMessage(err)}`);
       await this.finish(ctx, { winner: null, reason: "error" });
+    }
+  }
+
+  /**
+   * Pasa a "running": la pelea (una sola) o la ronda que toca (modo por rondas). En la
+   * primera los agentes empiezan a decidir; en las siguientes se reanudan.
+   */
+  private startRound(ctx: MatchContext): void {
+    const { env } = this.deps;
+    const series = this.state.series;
+    const first = series === null || series.rounds.length === 0;
+    const now = Date.now();
+    // Con el límite de tiempo apagado no hay hora de término. En el modo por rondas, el
+    // límite (o el tope de seguridad) vale para cada ronda.
+    const seconds = this.durationSeconds();
+    // La cuenta regresiva se borra en la misma actualización que cambia la fase.
+    this.state.phase = "running";
+    this.state.countdownEndsAt = null;
+    if (first) this.state.startedAt = now;
+    this.state.endsAt = seconds === null ? null : now + seconds * 1000;
+    this.record(ctx, { type: "phase", at: now, phase: "running" });
+    if (series) {
+      series.roundStartedAt = now;
+      this.record(ctx, { type: "round_start", at: now, round: series.round });
+    }
+    for (const side of SIDES) {
+      // Recién curados y teletransportados: se parte con vida completa.
+      this.state.agents[side].alive = true;
+      this.state.agents[side].health = MAX_HEALTH;
+      // El daño hecho se cuenta en toda la serie: solo parte de 0 en la primera ronda.
+      if (first) this.state.agents[side].damageDealt = 0;
+      ctx.absorption[side] = 0;
+    }
+    if (seconds !== null) {
+      ctx.timer = setTimeout(() => {
+        void this.onTimeout(ctx);
+      }, seconds * 1000);
+    } else if (env.MATCH_MAX_SECONDS > 0) {
+      ctx.timer = setTimeout(() => {
+        void this.onCeiling(ctx);
+      }, env.MATCH_MAX_SECONDS * 1000);
+    }
+    for (const side of SIDES) {
+      const fighter = ctx.fighters[side];
+      if (!fighter) continue;
+      if (first || !series) {
+        fighter.start();
+      } else {
+        const lost = series.wins[otherSide(side)];
+        const drawn = series.rounds.filter((r) => r.winner === null).length;
+        const view = { round: series.round, won: series.wins[side], lost, drawn, maxRounds: series.maxRounds };
+        fighter.resume(view, `${ctx.roundNotes[side]}; empieza la ronda ${series.round}`);
+      }
+    }
+    this.deps.hub.flushState();
+    this.log(ctx, "info", series ? `¡Comienza la ronda ${series.round}!` : "¡Comienza la pelea!");
+  }
+
+  /**
+   * Modo por rondas: terminó la ronda en juego. Se anota, se pausa a los agentes y, si la
+   * serie no está decidida, empieza la pausa hacia la siguiente. Desde aquí nada de lo que
+   * pase cuenta para el resultado: la fase deja de ser "running" en el acto.
+   */
+  private endRound(ctx: MatchContext, winner: Side | null, reason: RoundReason): void {
+    const series = this.state.series;
+    if (ctx.ended || !series || this.state.phase !== "running") return;
+    if (ctx.timer) clearTimeout(ctx.timer);
+    ctx.timer = null;
+    const now = Date.now();
+    const result: RoundResult = {
+      round: series.round,
+      winner,
+      reason,
+      durationMs: Math.max(0, now - (series.roundStartedAt ?? now)),
+    };
+    series.rounds.push(result);
+    if (winner) series.wins[winner] += 1;
+    series.roundStartedAt = null;
+    this.state.phase = "intermission";
+    this.state.endsAt = null;
+    for (const side of SIDES) {
+      const note = roundNote(result, side);
+      ctx.roundNotes[side] = note;
+      try {
+        ctx.fighters[side]?.pause(note);
+      } catch (err) {
+        this.log(ctx, "warn", `No se pudo pausar a ${SIDE_LABEL[side]}: ${errorMessage(err)}`);
+      }
+    }
+    const decided = seriesDecided(series);
+    // Durante la pausa, "round" ya es la ronda que viene (ver SeriesSchema).
+    if (!decided) series.round += 1;
+    const event: Extract<ArenaEvent, { type: "round_end" }> = {
+      type: "round_end",
+      at: now,
+      result: { ...result },
+      series: structuredClone(series),
+    };
+    this.deps.hub.broadcast(event);
+    this.record(ctx, event);
+    this.log(ctx, "info", describeRound(result, series));
+    if (decided) {
+      void this.finish(ctx, seriesResult(series));
+      return;
+    }
+    this.record(ctx, { type: "phase", at: now, phase: "intermission" });
+    this.deps.hub.flushState();
+    void this.runIntermission(ctx);
+  }
+
+  /**
+   * Modo por rondas: la pausa entre rondas. Borra los bloques colocados, lleva a los dos a
+   * su lugar con la vida completa (sin reponer el inventario, salvo ROUNDS_REFILL_KIT),
+   * muestra la cuenta regresiva y empieza la ronda siguiente. Se corta si la pelea terminó.
+   */
+  private async runIntermission(ctx: MatchContext): Promise<void> {
+    const { rcon } = this.deps;
+    const breakEndsAt = Date.now() + ROUND_BREAK_MS;
+    try {
+      await this.waitForRespawn(ctx);
+      this.assertNotEnded(ctx);
+      // Primero los bloques: así nadie aparece dentro de un muro que quedó en su spawn.
+      await clearPlacedBlocks(rcon);
+      this.assertNotEnded(ctx);
+      for (const side of SIDES) {
+        if (this.deps.roundsRefillKit ?? ROUNDS_REFILL_KIT) {
+          await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log(ctx, "warn", text));
+        } else {
+          await resetFighterForRound(rcon, side, kitOf(this.state.configs[side]));
+        }
+        this.assertNotEnded(ctx);
+      }
+
+      await runCountdown(this.sleep, breakEndsAt - COUNTDOWN_SECONDS * 1000, () => ctx.ended);
+      this.assertNotEnded(ctx);
+      this.state.countdownEndsAt = breakEndsAt;
+      this.deps.hub.flushState();
+      await runCountdown(this.sleep, breakEndsAt, () => ctx.ended);
+      this.assertNotEnded(ctx);
+
+      const gone = SIDES.find((side) => !this.state.agents[side].connected);
+      if (gone) {
+        this.log(ctx, "error", `${SIDE_LABEL[gone]} se desconectó del servidor entre rondas`);
+        await this.finish(ctx, { winner: null, reason: "error" });
+        return;
+      }
+      this.startRound(ctx);
+    } catch (err) {
+      if (ctx.ended || err instanceof CancelledError) return;
+      this.log(ctx, "error", `No se pudo preparar la ronda siguiente: ${errorMessage(err)}`);
+      await this.finish(ctx, { winner: null, reason: "error" });
+    }
+  }
+
+  /**
+   * El que murió reaparece solo (lo hace mineflayer): se le espera un poco antes de
+   * llevarlo a su lugar, porque al reaparecer queda en el spawn del mundo. Si no avisa a
+   * tiempo, se sigue igual.
+   */
+  private async waitForRespawn(ctx: MatchContext): Promise<void> {
+    const dead = (): boolean => SIDES.some((side) => this.state.agents[side].connected && !this.state.agents[side].alive);
+    for (let waited = 0; waited < RESPAWN_WAIT_MS && dead(); waited += RESPAWN_STEP_MS) {
+      this.assertNotEnded(ctx);
+      await this.sleep(RESPAWN_STEP_MS);
     }
   }
 
@@ -632,6 +813,13 @@ export class MatchManager {
         if (!fighting()) return;
         this.handleDeath(ctx, side);
       },
+      onSurrender: () => {
+        // Solo existe en el modo por rondas, y solo cuenta con la ronda en juego.
+        const series = this.state.series;
+        if (!fighting() || !series) return;
+        this.log(ctx, "info", `${SIDE_LABEL[side]} se rindió en la ronda ${series.round}`);
+        this.endRound(ctx, otherSide(side), "surrender");
+      },
       onLog: (level, text) => {
         if (this.ctx !== ctx) return;
         this.log(ctx, level, `[${SIDE_LABEL[side]}] ${text}`);
@@ -645,7 +833,9 @@ export class MatchManager {
     a.alive = false;
     a.health = 0;
     this.emit(ctx, { type: "death", at: Date.now(), side });
-    void this.finish(ctx, resultForDeath(side));
+    // En el modo por rondas una muerte termina la ronda, no la serie.
+    if (this.state.series) this.endRound(ctx, otherSide(side), "kill");
+    else void this.finish(ctx, resultForDeath(side));
   }
 
   /** Lo que dura esta pelea, en segundos; null si se pelea sin límite de tiempo. */
@@ -664,10 +854,13 @@ export class MatchManager {
   private async onTimeout(ctx: MatchContext): Promise<void> {
     if (ctx.ended) return;
     const { red, blue } = this.state.agents;
-    await this.finish(
-      ctx,
-      decideTimeoutResult({ ...red, absorption: ctx.absorption.red }, { ...blue, absorption: ctx.absorption.blue }),
-    );
+    const result = decideTimeoutResult({ ...red, absorption: ctx.absorption.red }, { ...blue, absorption: ctx.absorption.blue });
+    // En el modo por rondas se acabó el tiempo de la ronda, no el de la serie.
+    if (this.state.series) {
+      this.endRound(ctx, result.winner, result.winner ? "timeout_health" : "draw");
+      return;
+    }
+    await this.finish(ctx, result);
   }
 
   /** Único camino de salida de una pelea. Nunca lanza. */
@@ -700,6 +893,8 @@ export class MatchManager {
         configs: structuredClone(this.state.configs),
         final: structuredClone(this.state.agents),
         settings: structuredClone(this.state.settings),
+        // Modo por rondas: las rondas jugadas; durationMs ya cubre toda la serie.
+        series: this.state.series ? structuredClone(this.state.series) : null,
         result,
       };
 
@@ -733,7 +928,7 @@ export class MatchManager {
           this.deps.log("warn", `No se pudieron borrar los bloques colocados en la arena: ${errorMessage(err)}`);
         });
       }
-      this.log(ctx, result.reason === "error" ? "error" : "info", describeResult(result));
+      this.log(ctx, result.reason === "error" ? "error" : "info", describeResult(result, this.state.series));
     } catch (err) {
       this.log(ctx, "error", `Error al cerrar la pelea: ${errorMessage(err)}`);
     } finally {

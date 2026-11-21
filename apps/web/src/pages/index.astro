@@ -2,7 +2,19 @@
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
-import { COMMS_LABELS, COMMS_MODES, DEFAULT_COMMS, DEFAULT_KIT, KITS, KIT_LIST, MAX_HEALTH, TIMER_LABELS } from "@phack/protocol";
+import {
+  COMMS_LABELS,
+  COMMS_MODES,
+  DEFAULT_COMMS,
+  DEFAULT_KIT,
+  DEFAULT_MODE,
+  KITS,
+  KIT_LIST,
+  MATCH_MODES,
+  MAX_HEALTH,
+  MODE_LABELS,
+  TIMER_LABELS,
+} from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
 import "../styles/global.css";
@@ -146,6 +158,8 @@ const stats = [
             --:--
           </div>
           <span class="phase" id="phase">Conectando…</span>
+          <!-- Modo por rondas: un cuadro por ronda, del color de quien la ganó (scoreboard.ts). -->
+          <ol class="rounds" id="rounds" hidden></ol>
         </div>
       </div>
 
@@ -207,6 +221,15 @@ const stats = [
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
         <div class="match-settings" id="settings-field">
+          <div class="comms">
+            <label class="field">
+              <span class="field__label">Formato de la partida</span>
+              <select id="mode" aria-describedby="mode-description">
+                {MATCH_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_MODE}>{MODE_LABELS[mode].name}</option>)}
+              </select>
+            </label>
+            <p class="comms__description" id="mode-description">{MODE_LABELS[DEFAULT_MODE].description}</p>
+          </div>
           <div class="comms">
             <label class="field">
               <span class="field__label">Comunicación entre agentes</span>

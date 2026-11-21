@@ -219,7 +219,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              "Cuerpo inválido: se espera un JSON { comms?, timer? } con comms = none, thoughts o chat y timer = true o false",
+              "Cuerpo inválido: se espera un JSON { comms?, timer?, mode? } con comms = none, thoughts o chat, timer = true o false y mode = single o rounds",
             ),
           );
       }
@@ -227,6 +227,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const change: Partial<MatchSettings> = {};
       if (body.data.comms !== undefined) change.comms = body.data.comms;
       if (body.data.timer !== undefined) change.timer = body.data.timer;
+      if (body.data.mode !== undefined) change.mode = body.data.mode;
       const updated = await settings.update(change);
       deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
       return updated;

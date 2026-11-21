@@ -11,7 +11,7 @@ let busy: "start" | "stop" | null = null;
 function render(): void {
   if (!startBtn || !stopBtn) return;
   const canStart = phase === "idle" || phase === "finished";
-  const canStop = phase === "preparing" || phase === "running";
+  const canStop = phase === "preparing" || phase === "running" || phase === "intermission";
   startBtn.disabled = busy !== null || !canStart;
   stopBtn.disabled = busy !== null || !canStop;
   setText(startBtn, busy === "start" ? "Iniciando…" : phase === "finished" ? "Iniciar otra pelea" : "Iniciar pelea");

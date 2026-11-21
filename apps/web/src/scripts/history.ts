@@ -22,12 +22,13 @@ import {
   type MatchResult,
   type MatchSettings,
   type MatchState,
+  type Series,
   type Side,
 } from "@phack/protocol";
 import { ApiError, describeError, fetchFlags, fetchMatches, removeFlag, saveFlag } from "./api";
 import { MOCK, apiUrl } from "./config";
 import { byId, el } from "./dom";
-import { SIDE_LABEL, formatClock, formatDateTime, formatDuration, formatNumber, resultDetail } from "./format";
+import { SIDE_LABEL, formatClock, formatDateTime, formatDuration, formatNumber, resultDetail, roundTitle } from "./format";
 import { pixelIcon } from "./icons";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import type { IconName } from "./pixelicons";
@@ -45,6 +46,8 @@ type Bout = {
   result: MatchResult | null;
   durationMs: number | null;
   final: Record<Side, AgentStatus> | null;
+  /** Solo si fue una serie por rondas. */
+  series: Series | null;
   flags: Partial<Record<Side, FlaggedPrompt>>;
 };
 
@@ -88,10 +91,12 @@ function buildBouts(): Bout[] {
       result: record.result,
       durationMs: record.durationMs,
       final: record.final,
+      series: record.series,
       flags: {},
     });
   }
-  if (live && (live.phase === "preparing" || live.phase === "running") && !bouts.has(live.id)) {
+  const underway = live !== null && (live.phase === "preparing" || live.phase === "running" || live.phase === "intermission");
+  if (live && underway && !bouts.has(live.id)) {
     bouts.set(live.id, {
       id: live.id,
       at: Number.MAX_SAFE_INTEGER,
@@ -101,6 +106,7 @@ function buildBouts(): Bout[] {
       result: null,
       durationMs: null,
       final: null,
+      series: live.series,
       flags: {},
     });
   }
@@ -118,6 +124,7 @@ function buildBouts(): Bout[] {
         result: flag.outcome?.result ?? null,
         durationMs: flag.outcome?.durationMs ?? null,
         final: flag.outcome?.final ?? null,
+        series: null,
         flags: {},
       };
       bouts.set(flag.matchId, bout);
@@ -384,6 +391,12 @@ function rowSide(bout: Bout, side: Side): HTMLElement {
 /** Entre los dos lados: "vs", o el ícono de cómo terminó cuando nadie ganó. */
 function rowMiddle(bout: Bout): HTMLElement {
   if (bout.live) return el("span", "row__mid row__mid--live", "En vivo");
+  // Una serie muestra su marcador: rondas de Rojo y de Azul.
+  if (bout.series) {
+    const score = el("span", "row__mid row__score", `${bout.series.wins.red}-${bout.series.wins.blue}`);
+    score.dataset.tip = `Serie por rondas: Rojo ${bout.series.wins.red}, Azul ${bout.series.wins.blue}`;
+    return score;
+  }
   const result = bout.result;
   if (!result || result.winner) return el("span", "row__mid", "vs");
   const icon: IconName = result.reason === "draw" ? "tie" : result.reason === "stopped" ? "halt" : "alert";
@@ -394,6 +407,9 @@ function rowMiddle(bout: Bout): HTMLElement {
 function factsLine(bout: Bout): string {
   const facts = [`${headline(bout)}.`];
   if (bout.result && !bout.live) facts.push(resultDetail(bout.result));
+  if (bout.series) {
+    facts.push(`Serie de hasta ${bout.series.maxRounds} rondas: Rojo ${bout.series.wins.red}, Azul ${bout.series.wins.blue}.`);
+  }
   if (bout.durationMs !== null) facts.push(`Duró ${formatDuration(bout.durationMs)}.`);
   facts.push(`${COMMS_LABELS[bout.settings.comms].name}.`);
   facts.push(bout.settings.timer ? "Con límite de tiempo." : "Sin límite de tiempo.");
@@ -451,6 +467,14 @@ function boutNode(bout: Bout): HTMLElement {
 
   const body = el("div", "bout__body");
   body.append(el("p", "bout__facts", factsLine(bout)));
+  if (bout.series && bout.series.rounds.length > 0) {
+    const rounds = el("ol", "bout__rounds");
+    for (const round of bout.series.rounds) {
+      const item = el("li", undefined, `${roundTitle(round)}, en ${formatDuration(round.durationMs)}${round.reason === "surrender" ? " (el otro se rindió)" : ""}.`);
+      rounds.append(item);
+    }
+    body.append(rounds);
+  }
   if (bout.result?.explanation) body.append(el("p", "bout__why", bout.result.explanation));
   if (!MOCK) {
     const link = el("a", "bout__transcript", "Ver transcripción");

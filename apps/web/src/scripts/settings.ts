@@ -1,16 +1,26 @@
-import { COMMS_LABELS, CommsModeSchema, TIMER_LABELS, type MatchSettings, type UpdateSettingsBody } from "@phack/protocol";
+import {
+  COMMS_LABELS,
+  CommsModeSchema,
+  MODE_LABELS,
+  MatchModeSchema,
+  TIMER_LABELS,
+  type MatchSettings,
+  type UpdateSettingsBody,
+} from "@phack/protocol";
 import { ApiError, describeError, fetchSettings, saveSettings } from "./api";
 import { byId, setText } from "./dom";
 import { showToast } from "./toast";
 
 /**
- * Ajustes de la próxima pelea: el modo de comunicación entre agentes y el límite de
- * tiempo. Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
+ * Ajustes de la próxima pelea: el formato de la partida (una pelea o una serie por
+ * rondas), el modo de comunicación entre agentes y el límite de tiempo. Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
  * guardan al elegir; si otro visitante los cambia, llega por el websocket (evento "settings").
  */
 
 type Elements = {
   field: HTMLElement;
+  mode: HTMLSelectElement;
+  modeDescription: HTMLElement;
   comms: HTMLSelectElement;
   commsDescription: HTMLElement;
   timer: HTMLInputElement;
@@ -25,6 +35,8 @@ let remote: MatchSettings | null = null;
 
 function render(settings: MatchSettings): void {
   if (!els) return;
+  if (els.mode.value !== settings.mode) els.mode.value = settings.mode;
+  setText(els.modeDescription, MODE_LABELS[settings.mode].description);
   if (els.comms.value !== settings.comms) els.comms.value = settings.comms;
   setText(els.commsDescription, COMMS_LABELS[settings.comms].description);
   els.timer.checked = settings.timer;
@@ -52,9 +64,10 @@ export async function loadSettings(): Promise<void> {
 /** Guarda un cambio; mientras tanto la página muestra lo elegido y, si falla, vuelve a lo del servidor. */
 function save(change: UpdateSettingsBody, what: string): void {
   if (!els) return;
-  const { comms, timer } = els;
+  const { mode, comms, timer } = els;
   if (remote) render({ ...remote, ...change } as MatchSettings);
   saving = true;
+  mode.disabled = true;
   comms.disabled = true;
   timer.disabled = true;
   saveSettings(change)
@@ -68,6 +81,7 @@ function save(change: UpdateSettingsBody, what: string): void {
     })
     .finally(() => {
       saving = false;
+      mode.disabled = false;
       comms.disabled = false;
       timer.disabled = false;
     });
@@ -76,14 +90,20 @@ function save(change: UpdateSettingsBody, what: string): void {
 export function initSettings(): void {
   els = {
     field: byId("settings-field"),
+    mode: byId<HTMLSelectElement>("mode"),
+    modeDescription: byId("mode-description"),
     comms: byId<HTMLSelectElement>("comms"),
     commsDescription: byId("comms-description"),
     timer: byId<HTMLInputElement>("timer"),
     timerState: byId("timer-state"),
     timerDescription: byId("timer-description"),
   };
-  const { comms, timer } = els;
+  const { mode, comms, timer } = els;
 
+  mode.addEventListener("change", () => {
+    const parsed = MatchModeSchema.safeParse(mode.value);
+    if (parsed.success) save({ mode: parsed.data }, "el formato de la partida");
+  });
   comms.addEventListener("change", () => {
     const parsed = CommsModeSchema.safeParse(comms.value);
     if (parsed.success) save({ comms: parsed.data }, "el modo de comunicación");

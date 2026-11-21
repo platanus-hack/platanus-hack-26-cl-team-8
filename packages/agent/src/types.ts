@@ -2,6 +2,7 @@ import type { CommsMode, Kit, Side } from "@phack/protocol";
 import type { LlmClient, TokenUsage } from "@phack/llm";
 import type { Observation } from "./observation";
 import type { ContextProfile } from "./context-profile";
+import type { SeriesView } from "./rounds";
 
 /** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
 export type DecisionReport = {
@@ -41,6 +42,8 @@ export type FighterEvents = {
   onDeath(): void;
   /** Modo "chat": el agente le dijo `text` al rival (con limpieza técnica, ver cleanMessage). */
   onMessage(text: string): void;
+  /** Modo por rondas: el agente se rindió en la ronda en juego (llamó a "surrender"). */
+  onSurrender(): void;
   onLog(level: "info" | "warn" | "error", text: string): void;
 };
 
@@ -55,6 +58,11 @@ export type FighterOptions = {
   comms: CommsMode;
   /** Duración de la pelea en segundos (contexto para el prompt). */
   durationSeconds: number | null;
+  /**
+   * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas (se ofrece
+   * "surrender" y la observación trae cómo va la serie). null = una sola pelea.
+   */
+  rounds: { maxRounds: number } | null;
   llm: LlmClient;
   mc: { host: string; port: number; version: string };
   tickMs: number;
@@ -75,6 +83,17 @@ export interface Fighter {
    * "chat"). Lo verá en su próxima observación. El orquestador decide cuándo llamarlo.
    */
   hear(kind: "thought" | "message", text: string): void;
+  /**
+   * Modo por rondas: deja de decidir y de actuar hasta `resume`. Corta la llamada al LLM
+   * en curso (su respuesta no se ejecuta), vacía la cola y deja el cuerpo en espera.
+   * `note` queda como resultado de la última acción.
+   */
+  pause(note: string): void;
+  /**
+   * Modo por rondas: vuelve a decidir, con la serie al día. `note` llega como
+   * "lastActionResult" en la próxima observación.
+   */
+  resume(series: SeriesView, note: string): void;
   /** Detiene el bucle, cancela la llamada al LLM en curso y desconecta. Idempotente. */
   stop(): Promise<void>;
 }

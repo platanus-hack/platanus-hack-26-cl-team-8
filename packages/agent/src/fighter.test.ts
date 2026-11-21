@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KITS, type CommsMode } from "@phack/protocol";
-import type { LlmRequest } from "@phack/llm";
+import type { LlmRequest, LlmResponse } from "@phack/llm";
 import type { Fighter, FighterOptions } from "./types";
 
 const driver = vi.hoisted(() => ({ createBot: vi.fn(), goals: vi.fn() }));
@@ -62,7 +62,20 @@ afterEach(async () => {
 
 type ScriptedAction = { name: string; args: Record<string, unknown> };
 
-async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 1000, comms: CommsMode = "none") {
+type StartOptions = {
+  comms?: CommsMode;
+  rounds?: { maxRounds: number } | null;
+  /** Si se da, reemplaza la respuesta guionada del LLM. */
+  complete?: (request: LlmRequest) => Promise<LlmResponse>;
+};
+
+/** El tercer argumento es el modo de comunicación a secas, o las opciones completas. */
+async function start(
+  actions: (ScriptedAction | ScriptedAction[])[],
+  tickMs = 1000,
+  options3: CommsMode | StartOptions = {},
+) {
+  const extra: StartOptions = typeof options3 === "string" ? { comms: options3 } : options3;
   vi.useFakeTimers();
   const bot = new SimulatedBot();
   driver.createBot.mockReturnValue(bot);
@@ -71,12 +84,13 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
   let turn = 0;
   const options: FighterOptions = {
     side: "red", username: "Red", opponentUsername: "Blue", prompt: "Explora tus recursos", kit: KITS.builder,
-    comms, durationSeconds: 120, tickMs, observationRadius: 8,
+    comms: extra.comms ?? "none", durationSeconds: 120, rounds: extra.rounds ?? null, tickMs, observationRadius: 8,
     mc: { host: "test", port: 25565, version: "1.20.4" },
     llm: {
       provider: "mock", model: "scripted",
       complete: async (request: LlmRequest) => {
         requests.push(request);
+        if (extra.complete) return extra.complete(request);
         const observation = request.messages.at(-1);
         if (observation?.role === "user") received.push(JSON.parse(observation.content));
         const action = actions[turn++] ?? { name: "wait", args: {} };
@@ -84,7 +98,7 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
         return { text: "", toolCalls: calls.map((call, index) => ({ id: `${turn}_${index}`, ...call })) };
       },
     },
-    events: { onStatus: vi.fn(), onDecision: vi.fn(), onThought: vi.fn(), onAction: vi.fn(), onDamageTaken: vi.fn(), onDeath: vi.fn(), onMessage: vi.fn(), onLog: vi.fn() },
+    events: { onStatus: vi.fn(), onDecision: vi.fn(), onThought: vi.fn(), onAction: vi.fn(), onDamageTaken: vi.fn(), onDeath: vi.fn(), onMessage: vi.fn(), onSurrender: vi.fn(), onLog: vi.fn() },
   };
   const fighter = createFighter(options);
   fighters.push(fighter);
@@ -252,5 +266,88 @@ describe("agente: observar, decidir y construir", () => {
     await vi.advanceTimersByTimeAsync(1100);
     expect(driver.goals).toHaveBeenCalledWith(3, 65, 4, 1);
     expect(events.onAction).toHaveBeenCalledWith("move", expect.anything(), expect.stringContaining("destino fuera de la arena"));
+  });
+});
+
+describe("agente: modo por rondas", () => {
+  const ROUNDS = { maxRounds: 5 };
+
+  it("una respuesta que llega en pausa no ejecuta nada y la cola queda vacía", async () => {
+    let answer: (response: LlmResponse) => void = () => {};
+    let calls = 0;
+    const { bot, fighter, requests, events } = await start([], 100, {
+      rounds: ROUNDS,
+      complete: () => {
+        calls += 1;
+        return calls === 1
+          ? new Promise<LlmResponse>((resolve) => {
+              answer = resolve;
+            })
+          : Promise.resolve({ text: "", toolCalls: [] });
+      },
+    });
+    expect(requests).toHaveLength(1);
+    fighter.pause("terminó la ronda 1");
+    answer({
+      text: "",
+      toolCalls: [
+        { id: "1", name: "build", args: { blocks: [{ x: 2, y: 65, z: 0, material: "oak_planks" }] } },
+        { id: "2", name: "attack", args: {} },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(events.onAction).not.toHaveBeenCalled();
+    expect(events.onDecision).not.toHaveBeenCalled();
+    expect(bot.placeBlock).not.toHaveBeenCalled();
+    // En pausa no vuelve a preguntarle al LLM.
+    expect(requests).toHaveLength(1);
+  });
+
+  it("al reanudar decide con la serie al día y la nota como resultado de la última acción", async () => {
+    const { fighter, received } = await start([{ name: "wait", args: {} }], 100, { rounds: ROUNDS });
+    expect(received[0]).toMatchObject({ round: 1, maxRounds: 5, roundsWon: 0, roundsLost: 0, roundsDrawn: 0 });
+    fighter.pause("terminó la ronda 1");
+    await vi.advanceTimersByTimeAsync(300);
+    const seen = received.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(received).toHaveLength(seen);
+    const note = "terminó la ronda 1: la ganaste por K.O.; empieza la ronda 2";
+    fighter.resume({ round: 2, won: 1, lost: 0, drawn: 0, maxRounds: 5 }, note);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received[seen]).toMatchObject({ round: 2, roundsWon: 1, roundsLost: 0, lastActionResult: note, currentAction: "wait" });
+  });
+
+  it("morir en pausa no lo detiene: reaparece y espera a que lo reanuden", async () => {
+    const { bot, fighter, received, events } = await start([], 100, { rounds: ROUNDS });
+    fighter.pause("terminó la ronda 1");
+    await vi.advanceTimersByTimeAsync(200);
+    bot.emit("death");
+    bot.emit("spawn");
+    const seen = received.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(events.onDeath).toHaveBeenCalledTimes(1);
+    expect(received).toHaveLength(seen);
+    fighter.resume({ round: 2, won: 0, lost: 1, drawn: 0, maxRounds: 5 }, "empieza la ronda 2");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received[seen]).toMatchObject({ round: 2, roundsLost: 1, lastActionResult: "empieza la ronda 2" });
+  });
+
+  it("surrender avisa la acción, después la rendición, y no corre lo que venía en cola", async () => {
+    const { requests, events } = await start([[{ name: "surrender", args: { reason: "no me alcanza" } }, { name: "attack", args: {} }]], 1000, {
+      rounds: ROUNDS,
+    });
+    expect(requests[0]?.tools.map((tool) => tool.name)).toContain("surrender");
+    expect(vi.mocked(events.onAction).mock.calls).toEqual([["surrender", { reason: "no me alcanza" }, "te rendiste en la ronda 1"]]);
+    expect(events.onSurrender).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(events.onAction).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(events.onSurrender).mock.invocationCallOrder[0]!);
+    expect(events.onThought).toHaveBeenCalledWith("no me alcanza");
+  });
+
+  it("en una sola pelea no hay surrender ni campos de la serie", async () => {
+    const { requests, received, events } = await start([{ name: "surrender", args: {} }]);
+    expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain("surrender");
+    expect(received[0]).not.toHaveProperty("round");
+    expect(events.onSurrender).not.toHaveBeenCalled();
+    expect(events.onAction).toHaveBeenCalledWith("surrender", {}, expect.stringContaining("herramienta desconocida"));
   });
 });
