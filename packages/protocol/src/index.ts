@@ -273,7 +273,7 @@ export function kitOf(config: { kit?: KitId | undefined; customKit?: Kit | undef
 // ---------- Kit personalizado ----------
 //
 // Lista cerrada de lo que se puede pedir: son los ítems que el cuerpo del agente sabe
-// usar (armas, arco, comida, perlas, tablones y armadura). No hay presupuesto: el
+// usar (armas, arco, escudo, comida, pociones, perlas, cubos, bloques, pico y armadura). No hay presupuesto: el
 // usuario decide cuánto lleva. Lo que no esté aquí se ignora.
 
 type CatalogEntry = { label: string; /** Tamaño de un stack en Minecraft. */ stack: number };
@@ -356,15 +356,15 @@ export const CUSTOM_KIT_ENCHANTMENTS: Readonly<Record<string, number>> = {
 export const CUSTOM_KIT_POTIONS: Readonly<Record<string, { label: string; effect: string; harmful?: boolean }>> = {
   healing: { label: "curación", effect: "cura 4 de vida al instante" },
   strong_healing: { label: "curación II", effect: "cura 8 de vida al instante" },
-  regeneration: { label: "regeneración", effect: "recuperas vida de a poco durante unos 45 s" },
-  strength: { label: "fuerza", effect: "tus golpes quitan más vida durante 3 min" },
-  swiftness: { label: "rapidez", effect: "caminas más rápido durante 3 min" },
+  regeneration: { label: "regeneración", effect: "recuperas 1 de vida cada 2.5 s durante 45 s" },
+  strength: { label: "fuerza", effect: "tus golpes quitan 3 más durante 3 min" },
+  swiftness: { label: "rapidez", effect: "caminas un 20% más rápido durante 3 min" },
   fire_resistance: { label: "resistencia al fuego", effect: "la lava y el fuego no te dañan durante 3 min" },
   harming: { label: "daño", effect: "quita 6 de vida al instante", harmful: true },
   strong_harming: { label: "daño II", effect: "quita 12 de vida al instante", harmful: true },
-  poison: { label: "veneno", effect: "quita vida de a poco (no mata: deja en 1)", harmful: true },
-  slowness: { label: "lentitud", effect: "camina más lento", harmful: true },
-  weakness: { label: "debilidad", effect: "sus golpes quitan menos vida", harmful: true },
+  poison: { label: "veneno", effect: "quita 1 de vida cada 1.25 s durante 45 s (no mata: deja en 1)", harmful: true },
+  slowness: { label: "lentitud", effect: "camina un 15% más lento durante 1 min 30 s", harmful: true },
+  weakness: { label: "debilidad", effect: "sus golpes quitan 4 menos durante 1 min 30 s", harmful: true },
 };
 
 /** Efectos permanentes permitidos: id -> nombre en español (el nivel va aparte). */
@@ -420,9 +420,9 @@ export function customKitGroup(id: string): CustomKitGroup {
   if (/_(sword|axe)$/.test(id)) return "weapon";
   if (id === "bow" || id === "arrow") return "ranged";
   if (id === "potion" || id === "splash_potion") return "potion";
-  if (id.endsWith("_pickaxe") || id === "shears") return "utility";
+  if (id.endsWith("_pickaxe")) return "utility";
   if (FOOD_RE.test(id)) return "food";
-  // Lo que queda y se apila de a 64 son bloques (tablones, roca, lana…); el resto, utilidades (cubos, perlas).
+  // Lo que queda y se apila de a 64 son bloques (tablones, roca); el resto, utilidades (cubos, perlas).
   return CUSTOM_KIT_ITEMS[id]?.stack === 64 ? "block" : "utility";
 }
 

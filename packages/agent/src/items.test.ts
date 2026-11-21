@@ -3,8 +3,8 @@ import {
   ARENA_BLOCKS,
   bestDigTool,
   isBreakable,
-  attackCooldownMs, isArrow, isAxe, isBuildBlock, isFoodName, isPearl,
-  isSword,
+  attackCooldownMs, defaultMeleeWeapon, isArrow, isAxe, isBuildBlock, isFoodName, isPearl,
+  isSword, meleeDamage,
 } from "./items";
 
 describe("clasificación de ítems", () => {
@@ -80,8 +80,7 @@ describe("romper bloques", () => {
   });
 
   it("elige la mejor herramienta para cada bloque", () => {
-    const inventory = ["iron_sword", "stone_pickaxe", "diamond_pickaxe", "iron_axe", "shears"];
-    expect(bestDigTool("red_wool", inventory)).toBe("shears");
+    const inventory = ["iron_sword", "stone_pickaxe", "diamond_pickaxe", "iron_axe"];
     expect(bestDigTool("oak_planks", inventory)).toBe("iron_axe");
     expect(bestDigTool("obsidian", inventory)).toBe("diamond_pickaxe");
     expect(bestDigTool("dirt", inventory)).toBeNull();
@@ -91,3 +90,20 @@ describe("romper bloques", () => {
   });
 });
 
+describe("arma por defecto y daño", () => {
+  it("attack saca la espada de mejor material y, sin espada, la mejor hacha", () => {
+    expect(defaultMeleeWeapon(["bow", "iron_sword", "diamond_sword", "netherite_axe"])).toBe("diamond_sword");
+    expect(defaultMeleeWeapon(["stone_axe", "diamond_axe", "diamond_pickaxe"])).toBe("diamond_axe");
+    // Entre dos del mismo material, la primera del inventario.
+    expect(defaultMeleeWeapon(["golden_sword", "wooden_sword"])).toBe("golden_sword");
+    expect(defaultMeleeWeapon(["bow", "cooked_beef"])).toBeNull();
+  });
+
+  it("el daño por golpe es el de Minecraft 1.20.4", () => {
+    expect(["wooden", "golden", "stone", "iron", "diamond", "netherite"].map((m) => meleeDamage(`${m}_sword`))).toEqual([4, 4, 5, 6, 7, 8]);
+    expect(["wooden", "golden", "stone", "iron", "diamond", "netherite"].map((m) => meleeDamage(`${m}_axe`))).toEqual([7, 7, 9, 9, 9, 10]);
+    // El pico no es un hacha, y cualquier otra cosa pega como la mano.
+    expect(meleeDamage("diamond_pickaxe")).toBe(1);
+    expect(meleeDamage("")).toBe(1);
+  });
+});

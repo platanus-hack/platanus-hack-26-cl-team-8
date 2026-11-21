@@ -12,9 +12,9 @@ import {
   ALWAYS_EDIBLE,
   attackCooldownMs,
   bestDigTool,
+  defaultMeleeWeapon,
   FOOD_NAMES,
   isArrow,
-  isAxe,
   isBow,
   isBreakable,
   isDrinkPotion,
@@ -29,14 +29,18 @@ import { critStep, CRIT_NO_SPRINT_RANGE } from "./crit";
 import { keepDistanceTarget, orbitTarget, placeTarget, strafeTarget, type MovePlace } from "./tactics";
 import { ConstructionPlan, inside, parseBlueprint, type PlannedBlock } from "./construction";
 import { lineOfSight, scanWorld } from "./spatial";
-import { describeResources, type ResourceItem } from "./resources";
+import { describeResources, wornItem, type ResourceItem, type WornItem } from "./resources";
 import { buildObservation, type Observation } from "./observation";
 import { ActionPlan, isOpenEnded, QUEUE_STEP_DEFAULT_MS, replyResults, stepSeconds, type PlanStep } from "./plan";
 import { buildSystemPrompt } from "./prompt";
 import { RoundGate, type SeriesView } from "./rounds";
 import {
+  BOW_CHARGE_MS,
+  BOW_PAUSE_MS,
   DIG_MAX_BLOCKS,
   DIG_MAX_SECONDS,
+  DRINK_MS,
+  EAT_MS,
   eatRefusal,
   isToolName,
   kitToolDefs,
@@ -45,7 +49,10 @@ import {
   LAVA_MIN_DISTANCE,
   parseToolArgs,
   PEARL_COOLDOWN_MS,
-  PEARL_MIN_HEALTH,
+  PEARL_MAX_HEIGHT,
+  PEARL_MIN_DISTANCE,
+  pearlDamage,
+  pearlMinHealth,
   refusalText,
   shootRefusal,
   SURRENDER_TOOL,
@@ -94,11 +101,6 @@ const LLM_TIMEOUT_MS = 60_000;
 const BODY_TICK_MS = 100;
 const MELEE_REACH = 3.2;
 const FOLLOW_RANGE = 2;
-const BOW_CHARGE_MS = 1100;
-const BOW_PAUSE_MS = 250;
-const EAT_MS = 1800;
-/** Lo que tarda beber una poción (32 ticks) más un margen. */
-const DRINK_MS = 1800;
 /** Cada cuánto cambia de lado al esquivar. */
 const STRAFE_SWITCH_MS = 1200;
 /** Con "guard", el escudo solo se levanta con el rival a esta distancia o menos (más lejos, se persigue a toda velocidad). */
@@ -129,10 +131,6 @@ const PEARL_FLIGHT_TIMEOUT_MS = 1500;
  * 1 o 2 bloques la perla cae casi donde está el bot.
  */
 const PEARL_LANDING_WINDOW_MS = 2000;
-/** Con el rival más cerca que esto la perla no sirve: se llega antes caminando. */
-const PEARL_MIN_DISTANCE = 4;
-/** Sobre esta altura respecto del piso no se lanza: la perla podría pasar el muro. */
-const PEARL_MAX_HEIGHT = 1.5;
 /** Cuánto se adelanta el movimiento del rival al apuntar la perla (segundos). */
 const PEARL_LEAD_S = 0.35;
 /** Tope de la velocidad del rival que se usa para adelantar la perla (bloques/s). */
@@ -272,6 +270,9 @@ class MineflayerFighter implements Fighter {
   /** Herramientas del kit: lo único que se le ofrece al LLM y lo único que se ejecuta. */
   private readonly toolNames: ToolName[];
   private readonly toolDefs: ToolDef[];
+  /** Vida que le quita una perla al caer con su kit, y vida con la que ya no se lanza. */
+  private readonly pearlHit: number;
+  private readonly pearlMinHealth: number;
 
   // Ciclo de vida
   private stopped = false;
@@ -407,6 +408,8 @@ class MineflayerFighter implements Fighter {
   constructor(private readonly opts: FighterOptions) {
     const kit = opts.kit;
     this.toolNames = kitToolNames(kit);
+    this.pearlHit = pearlDamage(kit);
+    this.pearlMinHealth = pearlMinHealth(kit);
     const rounds = opts.rounds ?? null;
     this.series = rounds
       ? {
@@ -1048,7 +1051,8 @@ class MineflayerFighter implements Fighter {
         position: bot.entity.position,
         health: typeof bot.health === "number" && Number.isFinite(bot.health) ? bot.health : 0,
         food: typeof bot.food === "number" && Number.isFinite(bot.food) ? bot.food : 0,
-        heldItem: held ? held.name : null,
+        // Con el mismo nombre que en "inventory": una poción lleva su tipo ("potion:healing").
+        heldItem: held ? this.resourceItem(held).name : null,
         inventory: this.inventoryWithOffhand(bot),
         absorption: readAbsorption(bot.entity),
       },
@@ -1064,7 +1068,7 @@ class MineflayerFighter implements Fighter {
       }),
       buildBounds: BUILD_BOUNDS,
       resources: describeResources(this.resourceItems(bot), {
-        health: bot.health, food: bot.food, absorption: readAbsorption(bot.entity),
+        health: bot.health, food: bot.food, pearlMinHealth: this.pearlMinHealth,
         pearlCooldown: Math.max(0, (this.pearlReadyAt - Date.now()) / 1000), tools: this.toolNames,
       }),
       equipment: this.equipment(bot),
@@ -1113,11 +1117,14 @@ class MineflayerFighter implements Fighter {
     return items.map((item) => this.resourceItem(item));
   }
 
-  private equipment(bot: Bot) {
-    return Object.fromEntries(([ ["head", 5], ["chest", 6], ["legs", 7], ["feet", 8], ["offhand", OFFHAND_SLOT] ] as const).map(([name, slot]) => {
+  /** Lo que lleva puesto; un lugar vacío no aparece. */
+  private equipment(bot: Bot): Record<string, WornItem> {
+    const worn: Record<string, WornItem> = {};
+    for (const [name, slot] of [["head", 5], ["chest", 6], ["legs", 7], ["feet", 8], ["offhand", OFFHAND_SLOT]] as const) {
       const item = bot.inventory.slots[slot];
-      return [name, item ? this.resourceItem(item) : null];
-    }));
+      if (item) worn[name] = wornItem(this.resourceItem(item));
+    }
+    return worn;
   }
 
   private startConstruction(bot: Bot, args: ParsedToolArgs): string {
@@ -1264,7 +1271,6 @@ class MineflayerFighter implements Fighter {
     const opponent = this.opponent(bot);
     const items = bot.inventory.items();
     const itemNames = items.map((item) => item.name);
-    const has = (match: (itemName: string) => boolean): boolean => itemNames.some(match);
 
     // Una herramienta que no se puede usar ahora no gasta nada ni cambia de acción: el
     // cuerpo sigue con lo que hacía (quedarse quieto en "wait" sería regalarle golpes al rival).
@@ -1278,13 +1284,14 @@ class MineflayerFighter implements Fighter {
       case "attack": {
         const chosen = args.weapon && itemNames.includes(args.weapon) ? args.weapon : null;
         const missing = args.weapon && !chosen ? `no tienes ${args.weapon}; ` : "";
+        const fallback = defaultMeleeWeapon(itemNames);
         const how = chosen
           ? `con ${chosen.replaceAll("_", " ")}`
-          : has(isSword)
-            ? "con la espada"
-            : has(isAxe)
-              ? "con el hacha"
-              : "sin arma";
+          : !fallback
+            ? "sin arma"
+            : isSword(fallback)
+              ? "con la espada"
+              : "con el hacha";
         const guard = args.guard ? (this.hasShield(bot) ? ", cubriéndote con el escudo entre golpes" : " (no tienes escudo para cubrirte)") : "";
         const crit = args.crit ? (args.guard && this.hasShield(bot) ? " (sin saltos críticos: con guard manda el escudo)" : ", saltando para pegar en la caída (crítico)") : "";
         result = `${missing}atacando cuerpo a cuerpo ${how}${guard}${crit}`;
@@ -1419,7 +1426,7 @@ class MineflayerFighter implements Fighter {
   private pearlRefusal(bot: Bot, opponent: Entity | null, target: PearlTarget, now: number): string | null {
     if (this.countItems(bot, isPearl) === 0) return "no puedes usar la perla: no te quedan perlas";
     if (now < this.pearlReadyAt) return `la perla está en recarga: faltan ${secondsLeft(this.pearlReadyAt, now)} s`;
-    if (bot.health <= PEARL_MIN_HEALTH) return "no puedes usar la perla: te queda muy poca vida (caer quita ~2.5)";
+    if (bot.health <= this.pearlMinHealth) return `no puedes usar la perla: te queda muy poca vida (caer quita ~${this.pearlHit})`;
     if (bot.entity.position.y - FLOOR_Y > PEARL_MAX_HEIGHT) return "no puedes usar la perla desde altura";
     if (target === "rival") {
       if (!opponent) return "no ves al rival: no hay hacia dónde lanzar la perla";
@@ -1563,6 +1570,25 @@ class MineflayerFighter implements Fighter {
   private hasShield(bot: Bot): boolean {
     if (bot.inventory.slots[OFFHAND_SLOT]?.name === "shield") return true;
     return bot.inventory.items().some((item) => isShield(item.name));
+  }
+
+  /**
+   * ¿Está el escudo en la mano secundaria? Si está en el inventario, empieza a pasarlo
+   * (sin bloquear el tick) y responde false hasta que llegue.
+   */
+  private shieldInOffhand(bot: Bot): boolean {
+    if (bot.inventory.slots[OFFHAND_SLOT]?.name === "shield") return true;
+    const shield = bot.inventory.items().find((item) => isShield(item.name));
+    if (shield && !this.equipBusy) {
+      this.equipBusy = true;
+      bot
+        .equip(shield, "off-hand")
+        .catch((err: unknown) => this.log("warn", `No se pudo pasar el escudo a la mano secundaria: ${errorText(err)}`))
+        .finally(() => {
+          this.equipBusy = false;
+        });
+    }
+    return false;
   }
 
   private enterWait(bot: Bot, result: string): string {
@@ -1734,19 +1760,19 @@ class MineflayerFighter implements Fighter {
       this.lastResult = "rival no visible; lo buscas en el centro de la arena";
       return;
     }
-    // El arma que eligió el modelo; si no eligió (o no la tiene), espada; si no hay, hacha;
-    // si no, a puño limpio.
-    const items = bot.inventory.items();
+    // El arma que eligió el modelo; si no eligió (o no la tiene), la de defaultMeleeWeapon
+    // (la mejor espada y, si no hay, la mejor hacha); si no, a puño limpio.
+    const names = bot.inventory.items().map((item) => item.name);
     const chosen = this.attackWeapon;
-    if (chosen && items.some((item) => item.name === chosen)) this.ensureHeld(bot, (name) => name === chosen);
-    else if (items.some((item) => isSword(item.name))) this.ensureHeld(bot, isSword);
-    else if (items.some((item) => isAxe(item.name))) this.ensureHeld(bot, isAxe);
+    const weapon = chosen && names.includes(chosen) ? chosen : defaultMeleeWeapon(names);
+    if (weapon) this.ensureHeld(bot, (name) => name === weapon);
 
     this.follow(bot, opponent);
     const dist = distance3(bot.entity.position, opponent.position);
     // La recarga depende del arma que está en la mano (un hacha es más lenta que una espada).
     const ready = now - this.lastAttackAt >= attackCooldownMs(heldItemName(bot));
-    const guarding = this.attackGuard && bot.inventory.slots[OFFHAND_SLOT]?.name === "shield";
+    // Un escudo que el kit dejó en el inventario se pasa primero a la mano secundaria.
+    const guarding = this.attackGuard && this.shieldInOffhand(bot);
     if (dist <= MELEE_REACH) this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
     if (guarding) {
       // Con escudo no se puede pegar: se baja justo antes del golpe y se vuelve a subir
@@ -2175,21 +2201,8 @@ class MineflayerFighter implements Fighter {
     this.clearGoal(bot);
     bot.clearControlStates();
     if (opponent) this.look(bot, opponent.position.offset(0, EYE_HEIGHT, 0));
-    if (bot.inventory.slots[OFFHAND_SLOT]?.name !== "shield") {
-      const shield = bot.inventory.items().find((item) => isShield(item.name));
-      if (!shield) {
-        this.enterWait(bot, "no tienes escudo");
-        return;
-      }
-      if (!this.equipBusy) {
-        this.equipBusy = true;
-        bot
-          .equip(shield, "off-hand")
-          .catch((err: unknown) => this.log("warn", `No se pudo pasar el escudo a la mano secundaria: ${errorText(err)}`))
-          .finally(() => {
-            this.equipBusy = false;
-          });
-      }
+    if (!this.shieldInOffhand(bot)) {
+      if (!this.hasShield(bot)) this.enterWait(bot, "no tienes escudo");
       return;
     }
     if (!this.using) {

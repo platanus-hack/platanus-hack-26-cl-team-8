@@ -10,14 +10,13 @@ export const isBow = (name: string): boolean => name === "bow";
 export const isArrow = (name: string): boolean => name === "arrow" || name.endsWith("_arrow");
 export const isPearl = (name: string): boolean => name === "ender_pearl";
 /**
- * Bloques con los que se levanta el muro o la torre: tablones y lana (no piedra ni tierra,
- * que el pathfinder usaría de andamio si se le permitiera).
+ * Bloques que "build" acepta como material. Un kit solo trae tablones de roble y roca; la
+ * obsidiana aparece cuando el agua toca la lava y se puede recoger con pico de diamante.
  */
 const BUILD_BLOCK_NAMES: ReadonlySet<string> = new Set(["cobblestone", "dirt", "obsidian"]);
 export const isBuildBlock = (name: string): boolean =>
   name.endsWith("_planks") || name.endsWith("_wool") || BUILD_BLOCK_NAMES.has(name);
 export const isPickaxe = (name: string): boolean => name.endsWith("_pickaxe");
-export const isShears = (name: string): boolean => name === "shears";
 
 /**
  * Bloques de la arena: no se rompen nunca (piso con el logo del centro, muros de vidrio con
@@ -47,15 +46,11 @@ const TIER: Record<string, number> = { wooden: 1, golden: 2, stone: 3, iron: 4, 
 const tierOf = (name: string): number => TIER[name.slice(0, name.indexOf("_"))] ?? 0;
 
 /**
- * Herramienta del inventario que mejor rompe un bloque (null = a mano): tijeras para la
- * lana, hacha para la madera, pico para la piedra y la obsidiana; la de mejor material.
+ * Herramienta del inventario que mejor rompe un bloque (null = a mano): hacha para la
+ * madera, pico para la piedra y la obsidiana; la de mejor material.
  */
 export function bestDigTool(blockName: string, inventory: readonly string[]): string | null {
   let match: ((name: string) => boolean) | null = null;
-  if (blockName.endsWith("_wool")) {
-    if (inventory.some(isShears)) return "shears";
-    return null;
-  }
   if (blockName.endsWith("_planks") || blockName.endsWith("_log")) match = isAxe;
   else if (blockName === "dirt" || blockName === "sand" || blockName === "gravel") match = null;
   else match = isPickaxe;
@@ -64,6 +59,32 @@ export function bestDigTool(blockName: string, inventory: readonly string[]): st
   if (candidates.length === 0) return null;
   return candidates.reduce((best, name) => (tierOf(name) > tierOf(best) ? name : best));
 }
+
+/**
+ * Arma que saca "attack" cuando no se le nombra una: la espada de mejor material y, si no
+ * hay espada, el hacha de mejor material. Lo usan el cuerpo y el prompt: una sola regla.
+ */
+export function defaultMeleeWeapon(inventory: readonly string[]): string | null {
+  const best = (match: (name: string) => boolean): string | null => {
+    const found = inventory.filter(match);
+    return found.length === 0 ? null : found.reduce((top, name) => (tierOf(name) > tierOf(top) ? name : top));
+  };
+  return best(isSword) ?? best(isAxe);
+}
+
+/** Daño de un golpe a recarga completa, antes de la armadura del rival (Minecraft Java 1.20.4). */
+const SWORD_DAMAGE: Record<string, number> = { wooden: 4, golden: 4, stone: 5, iron: 6, diamond: 7, netherite: 8 };
+const AXE_DAMAGE: Record<string, number> = { wooden: 7, golden: 7, stone: 9, iron: 9, diamond: 9, netherite: 10 };
+/** A puño limpio, o con un ítem que no es arma en la mano. */
+export const FIST_DAMAGE = 1;
+
+export function meleeDamage(heldItem: string): number {
+  const material = heldItem.slice(0, heldItem.indexOf("_"));
+  if (isSword(heldItem)) return SWORD_DAMAGE[material] ?? FIST_DAMAGE;
+  if (isAxe(heldItem)) return AXE_DAMAGE[material] ?? FIST_DAMAGE;
+  return FIST_DAMAGE;
+}
+
 export const isShield = (name: string): boolean => name === "shield";
 export const isDrinkPotion = (name: string): boolean => name === "potion";
 export const isSplashPotion = (name: string): boolean => name === "splash_potion";

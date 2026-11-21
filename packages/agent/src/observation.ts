@@ -1,7 +1,7 @@
 import type { ConversationLine } from "./comms";
 import { distance3, distanceToWall, round1, type Vec3Like } from "./geometry";
 import type { Bounds, ConstructionPlan } from "./construction";
-import type { describeResources, ResourceItem } from "./resources";
+import type { describeResources, WornItem } from "./resources";
 import type { SpatialSnapshot } from "./spatial";
 import { seriesObservation, type SeriesObservation, type SeriesView } from "./rounds";
 
@@ -9,7 +9,7 @@ type SpatialContext = {
   world?: SpatialSnapshot;
   buildBounds?: Bounds;
   resources?: ReturnType<typeof describeResources>;
-  equipment?: Record<string, ResourceItem | null>;
+  equipment?: Record<string, WornItem>;
   motion?: { velocity: Vec3Like; yaw: number; pitch: number; onGround: boolean };
   effects?: { id: number; name: string; amplifier: number; durationTicks: number }[];
   opponentState?: { position: Vec3Like; velocity: Vec3Like; yaw: number; pitch: number; lineOfSight: boolean; equipment: ({ name: string; count: number } | null)[] } | null;

@@ -13,7 +13,7 @@ import {
   isSplashPotion,
   isWaterBucket,
 } from "./items";
-import type { Vec3Like } from "./geometry";
+import { round1, type Vec3Like } from "./geometry";
 import { MAX_PLAN_BLOCKS } from "./construction";
 import { MOVE_PLACES, type MovePlace } from "./tactics";
 
@@ -84,6 +84,43 @@ export const WATER_BETWEEN_MIN_DISTANCE = 2.5;
 export const PEARL_COOLDOWN_MS = 5000;
 /** Con esta vida o menos no se lanza la perla: el golpe de la caída podría matar. */
 export const PEARL_MIN_HEALTH = 4;
+/** Con el rival más cerca que esto la perla no sirve: se llega antes caminando. */
+export const PEARL_MIN_DISTANCE = 4;
+/** Sobre esta altura respecto del piso no se lanza: la perla podría pasar el muro. */
+export const PEARL_MAX_HEIGHT = 1.5;
+/** Daño de caída de una perla en Minecraft 1.20.4, sin nada que lo reduzca. */
+export const PEARL_FALL_DAMAGE = 5;
+
+/**
+ * Vida que quita una perla al caer con este kit. La armadura no reduce el daño de caída;
+ * sí Caída de pluma (12% por nivel), Protección (4% por nivel y pieza; entre las dos, hasta
+ * 80%) y el efecto Resistencia (20% por nivel).
+ */
+export function pearlDamage(kit: Kit): number {
+  let points = 0;
+  for (const piece of kit.items) {
+    if (!piece.slot.startsWith("armor.")) continue;
+    for (const e of piece.enchantments ?? []) {
+      if (e.id === "feather_falling") points += 3 * e.level;
+      else if (e.id === "protection") points += e.level;
+    }
+  }
+  const resistance = kit.effects.find((e) => e.id === "resistance");
+  const resisted = Math.max(0, 1 - 0.2 * (resistance ? resistance.amplifier + 1 : 0));
+  return round1(PEARL_FALL_DAMAGE * resisted * (1 - Math.min(20, points) / 25));
+}
+
+/** Vida con la que ya no se lanza la perla con este kit: nunca menos de lo que quita al caer. */
+export function pearlMinHealth(kit: Kit): number {
+  return Math.max(PEARL_MIN_HEALTH, Math.ceil(pearlDamage(kit)));
+}
+
+/** Tiempos del cuerpo que también cita el prompt (en fighter.ts se usan tal cual). */
+export const BOW_CHARGE_MS = 1100;
+export const BOW_PAUSE_MS = 250;
+/** Lo que tarda comer o beber (32 ticks) más un margen. */
+export const EAT_MS = 1800;
+export const DRINK_MS = 1800;
 /**
  * Por qué no se puede disparar con ese inventario (nombres de ítems), o null si se puede.
  * Igual que con la perla, una herramienta que no se puede usar no cambia nada:
@@ -229,7 +266,7 @@ export const TOOL_DEFS: ToolDef[] = [
   ),
   {
     name: "eat",
-    description: "Come para recuperar vida: filete (solo si tu barra de comida no está llena) o manzana dorada (siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras tengas corazones amarillos). Tarda cerca de 2 segundos y te deja quieto. Con 'food' eliges qué comer.",
+    description: "Come una comida de tu inventario; mientras comes te quedas quieto. Con 'food' eliges cuál. Lo que da cada comida, cuánto tarda y cuándo se puede comer está en TU KIT.",
     parameters: {
       type: "object",
       properties: {
@@ -245,7 +282,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "drink",
     description:
-      "Bebe una poción de tu inventario (tarda cerca de 2 segundos y te deja quieto). 'potion' es el tipo (por ejemplo 'healing' o 'strength'); en la observación aparecen como 'potion:<tipo>'.",
+      "Bebe una poción de tu inventario; mientras bebes te quedas quieto. 'potion' es el tipo (por ejemplo 'healing' o 'strength'); en la observación aparecen como 'potion:<tipo>'.",
     parameters: {
       type: "object",
       properties: {
@@ -270,7 +307,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "pearl",
-    description: `Lanza una perla de ender y te teletransporta donde cae. target='rival': caes junto al rival y pasas a atacar automáticamente. target='away': caes lejos del rival, al otro lado de la arena, y empiezas a comer de inmediato si tienes comida y tu barra de comida no está llena (si no, quedas en espera). Cada perla te quita unos 2.5 de vida al caer. Recarga de ${PEARL_COOLDOWN_MS / 1000} segundos. Tienes pocas: tu inventario dice cuántas te quedan.`,
+    description: `Lanza una perla de ender y te teletransporta donde cae. target='rival': caes junto al rival y pasas a atacar automáticamente. target='away': caes lejos del rival, al otro lado de la arena, y empiezas a comer de inmediato si tienes comida y tu barra de comida no está llena (si no, quedas en espera). Caer te quita vida y hay una recarga de ${PEARL_COOLDOWN_MS / 1000} segundos entre perlas: las cifras de tu kit están en TU KIT.`,
     parameters: {
       type: "object",
       properties: {
@@ -323,13 +360,13 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   simpleTool(
     "shield",
-    "Levanta el escudo (en tu mano secundaria) mirando al rival: bloquea por completo los golpes y las flechas que vienen de frente. Mientras lo tienes levantado te quedas quieto y no atacas. Sigue levantado hasta que elijas otra acción. Un hacha puede desactivarlo unos segundos.",
+    "Levanta el escudo (en tu mano secundaria) mirando al rival. Mientras lo tienes levantado te quedas quieto y no atacas. Sigue levantado hasta que elijas otra acción.",
     "tener el escudo levantado",
   ),
   {
     name: "water",
     description:
-      "Vacía un cubo de agua. where='between' (por defecto): a unos 2 bloques hacia el rival; el agua corre por el piso varios bloques, lo empuja y lo frena. where='feet': en el piso bajo tus pies (sirve aunque estés cayendo): anula el daño de caída y apaga el fuego si te estás quemando. Cada cubo sirve una sola vez.",
+      `Vacía un cubo de agua. where='between' (por defecto): a unos 2 bloques hacia el rival, si no está a menos de ${WATER_BETWEEN_MIN_DISTANCE}. where='feet': en el piso bajo tus pies (sirve aunque estés cayendo). Cada cubo sirve una sola vez.`,
     parameters: {
       type: "object",
       properties: {
@@ -345,7 +382,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   simpleTool(
     "lava",
-    `Vacía un cubo de lava a los pies del rival: se prende fuego, recibe daño mientras esté en ella o quemándose y tiene que alejarse. Solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. La lava se extiende unos 3 bloques alrededor: no camines hacia ella. Cada cubo sirve una sola vez.`,
+    `Vacía un cubo de lava a los pies del rival. Solo con el rival a entre ${LAVA_MIN_DISTANCE} y ${LAVA_MAX_DISTANCE} bloques. Cada cubo sirve una sola vez.`,
   ),
   simpleTool("wait", "Quédate quieto mirando al rival.", "quedarte quieto"),
 ];

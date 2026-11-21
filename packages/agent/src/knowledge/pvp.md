@@ -96,19 +96,19 @@ rival y carga cada flecha a tope; salta solo con attack y "crit": true.
 - Una torre de 2 o 3 bloques te da altura: disparas con ventaja y el rival cuerpo a cuerpo no te alcanza sin romper la base o subir. Ojo: bajar desde más de 3 bloques hace daño.
 - Encerrarte en bloques te da unos segundos para comer o beber a salvo; el rival tiene que romperlos para llegar. Encerrado, tampoco puedes atacar: es una pausa, no una defensa permanente.
 - Construir lleva tiempo y te deja ocupado: hacerlo con el rival encima casi nunca funciona. Construye con distancia de por medio o cuando él está ocupado.
-- La madera se rompe en ~3 s a mano y rápido con hacha; la roca solo con pico. Un muro de roca frena mucho más a un rival sin pico.
+- La madera se rompe en ~3 s a mano y rápido con hacha; la roca tarda 10 s a mano y poco con pico. Un muro de roca frena mucho más a un rival sin pico.
 - Romper los bloques del rival (dig "between") le quita la cobertura; romper la base de su torre lo obliga a bajar.
 
 ## Comida y curación
 <!-- requiere: eat, drink, throw -->
 - La vida vuelve sola de a poco solo con la comida alta (18 o más); con la comida a 20 vuelve más rápido. Por debajo, comer es lo que hace volver la vida.
-- Comer tarda ~1.6 s y te deja quieto: hazlo con distancia, detrás de cobertura o justo después de empujar al rival lejos.
+- Comer tarda cerca de 2 s y te deja quieto: hazlo con distancia, detrás de cobertura o justo después de empujar al rival lejos.
 - La manzana dorada da 4 de vida extra (corazones amarillos) que se gastan antes que la vida normal, y regeneración unos segundos. Comida antes de un intercambio, entra a la pelea con ventaja; dos seguidas no suman la vida extra.
 - La manzana dorada encantada da mucha más vida extra, regeneración fuerte, y resistencia al daño y al fuego por varios minutos: es la mejor carta para un momento decisivo.
 
 ## Pociones
 <!-- requiere: drink, throw -->
-- Beber tarda ~1.6 s y te deja quieto; arrojar es instantáneo. En plena pelea, la arrojadiza a tus pies cura o fortalece sin perder el ritmo.
+- Beber tarda cerca de 2 s y te deja quieto; arrojar es instantáneo. En plena pelea, la arrojadiza a tus pies cura o fortalece sin perder el ritmo.
 - Las arrojadizas hacen más efecto cuanto más cerca del impacto está el objetivo: al rival, tírala cuando está cerca (a 8 bloques o menos).
 - Daño (instantánea) ignora la armadura: solo la reduce Protección. Es ideal para rematar a un rival bien acorazado que está bajo de vida.
 - Fuerza suma daño fijo a cada golpe: tómala justo antes de cerrar distancia. Debilidad en el rival resta daño a cada golpe suyo.

@@ -42,7 +42,7 @@ export function worldRuleCommands(): string[] {
     "gamerule keepInventory true",
     // Con regeneración natural, comer sirve de algo (los prompts pueden decidir cuándo comer).
     "gamerule naturalRegeneration true",
-    // La lava de los cubos no debe incendiar la lana ni los tablones: el fuego no se propaga.
+    // La lava de los cubos no debe incendiar los tablones: el fuego no se propaga.
     "gamerule doFireTick false",
     "gamerule doImmediateRespawn true",
     "gamerule announceAdvancements false",
@@ -155,9 +155,10 @@ export function kitEffectCommands(username: string, kit: Kit): string[] {
 }
 
 /**
- * Borra lo que los peleadores dejaron dentro de la arena: bloques (tablones y lana), el
- * agua y la lava de los cubos y el fuego. Un comando por cosa: `fill ... replace` acepta
- * un solo filtro (que puede ser un tag de bloques).
+ * Borra lo que los peleadores dejaron dentro de la arena: bloques (tablones, roca y la
+ * obsidiana que deja el agua sobre la lava), el agua y la lava de los cubos y el fuego. Un
+ * comando por cosa: `fill ... replace` acepta un solo filtro (que puede ser un tag de bloques).
+ * Los filtros de lana y tierra quedan de cuando el catálogo las tenía: hoy no borran nada.
  */
 export function clearPlacedBlocksCommands(): string[] {
   const box = `fill ${MIN_X + 1} ${FLOOR_Y + 1} ${MIN_Z + 1} ${MAX_X - 1} ${WALL_TOP_Y} ${MAX_Z - 1} minecraft:air replace`;

@@ -159,8 +159,8 @@ describe("buildSystemPrompt", () => {
       "- attack: cuerpo a cuerpo con la espada; solo golpea a menos de ~3 bloques, así que te acerca solo.",
       "- retreat: alejarte del rival dentro de la arena.",
       '- move: moverte con táctica: esquivar de lado ("strafe"), rodearlo ("circle"), mantener una distancia ("keep") o ir a un lugar ("goto").',
-      "- shoot: disparar con el arco (necesita flechas); funciona mejor a más de 5 bloques.",
-      "- eat: comer para recuperar hambre y vida; te deja quieto unos 2 segundos.",
+      "- shoot: disparar con el arco.",
+      "- eat: comer una comida de tu inventario.",
       '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.',
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.',
       "- wait: quedarte quieto.",
@@ -199,7 +199,7 @@ describe("buildSystemPrompt", () => {
     expect(archer).not.toContain("Efectos permanentes");
 
     const berserker = section(promptFor(KITS.berserker), "TU KIT").join("\n");
-    expect(berserker).toContain("- Efectos permanentes: Velocidad I (caminas más rápido");
+    expect(berserker).toContain("- Efectos permanentes: Velocidad I (caminas un 20% más rápido).");
 
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
     expect(ender).toContain("Botas de malla (Caída de pluma IV)");
@@ -210,18 +210,35 @@ describe("buildSystemPrompt", () => {
     expect(builder).toContain("Tablones de roble x16");
   });
 
-  it("explica la mecánica de cada herramienta que depende del kit", () => {
-    const usesItems = ["attack", "shoot", "eat", "pearl", "build"];
-    for (const kit of KIT_LIST) {
+  it("los datos de un objeto van una sola vez, en su guía, y no en una línea aparte de su herramienta", () => {
+    const usesItems = ["shoot", "eat", "drink", "throw", "pearl", "shield", "water", "lava"];
+    const { kit: full } = buildCustomKit({
+      items: [
+        { item: "iron_sword" },
+        { item: "shield" },
+        { item: "bow" },
+        { item: "arrow", count: 8 },
+        { item: "bread" },
+        { item: "ender_pearl" },
+        { item: "water_bucket" },
+        { item: "lava_bucket" },
+        { item: "potion", potion: "strength" },
+        { item: "splash_potion", potion: "harming" },
+      ],
+    });
+    for (const kit of [...KIT_LIST, full]) {
       const lines = section(promptFor(kit), "TU KIT");
+      const objects = lines.filter((line) => line.startsWith("  - "));
       for (const tool of kitToolNames(kit).filter((name) => usesItems.includes(name))) {
-        expect(lines.filter((line) => line.startsWith(`- ${tool}: `))).toHaveLength(1);
-      }
-      // Y ninguna línea habla de una herramienta que no se ofrece.
-      for (const tool of TOOL_NAMES.filter((name) => !kitToolNames(kit).includes(name))) {
+        expect(objects.some((line) => line.includes(`Cómo usarlo: ${tool}`))).toBe(true);
         expect(lines.some((line) => line.startsWith(`- ${tool}:`))).toBe(false);
       }
+      // Fuera de la guía solo queda lo que no es de un objeto.
+      const rest = lines.filter((line) => /^- [a-z]+: /.test(line)).map((line) => line.slice(2, line.indexOf(":")));
+      const unarmed = !kit.items.some((i) => /_(sword|axe)$/.test(i.item));
+      expect(rest).toEqual([...(unarmed ? ["attack"] : []), "move", "build", "dig"]);
     }
+    expect(kitToolNames(full)).toEqual(expect.arrayContaining(usesItems));
   });
 
   it("explica qué hace cada objeto, cómo se usa y cuándo sirve", () => {
@@ -238,7 +255,7 @@ describe("buildSystemPrompt", () => {
     expect(archer).toContain("Empuje: cada flecha que acierta empuja al rival hacia atrás.");
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
     expect(ender).toContain('pearl con "target": "rival"');
-    expect(ender).toContain("Caída de pluma: reduce el daño de caída");
+    expect(ender).toContain("Caída de pluma: reduce un 48% el daño de caída, también el de una perla.");
     const { kit } = buildCustomKit({
       items: [
         { item: "cooked_beef", count: 2 },
@@ -253,28 +270,94 @@ describe("buildSystemPrompt", () => {
     expect(mine).toContain('throw con "potion": "healing" y "at": "self"');
   });
 
-  it("da los datos que el modelo no puede adivinar", () => {
+  it("da los datos que el modelo no puede adivinar, en números", () => {
     const berserker = section(promptFor(KITS.berserker), "TU KIT").join("\n");
-    expect(berserker).toContain("- attack: tu arma por defecto es Hacha de diamante; da un golpe cada ~1.1 s.");
+    expect(berserker).toContain(
+      "Hacha de diamante. Qué hace: arma cuerpo a cuerpo: quita 9 por golpe (13.5 si es crítico) antes de la armadura del rival; un golpe cada 1.05 s; un golpe suyo deja sin escudo al rival 5 s",
+    );
     const classic = section(promptFor(KITS.classic), "TU KIT").join("\n");
-    expect(classic).toContain("- attack: tu arma por defecto es Espada de hierro; da un golpe cada ~0.7 s.");
-    expect(classic).toContain("Filete x4 (solo se puede comer con la comida bajo 20");
+    expect(classic).toContain("Espada de hierro. Qué hace: arma cuerpo a cuerpo: quita 6 por golpe (9 si es crítico) antes de la armadura del rival; un golpe cada 0.65 s.");
+    expect(classic).toContain("Cómo usarlo: attack; es el arma que saca si no nombras otra.");
+    expect(classic).toContain("Arco. Qué hace: ataque a distancia: cada flecha quita de 6 a 10 antes de la armadura del rival; un disparo cada ~1.35 s; necesita flechas.");
+    expect(classic).toContain("Filete x4. Qué hace: recupera 8 de comida (de 20)");
+    expect(classic).toContain("Cómo usarlo: eat; tarda 1.8 s y te deja quieto; solo con la comida bajo 20.");
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
-    expect(ender).toContain("no se puede lanzar con 4 de vida o menos");
-    expect(ender).toContain('Con target "away", al caer empiezas a comer solo si tienes comida y tu comida está bajo 20.');
-    expect(ender).toContain("5 segundos de recarga");
+    // Con Caída de pluma IV la perla quita 5 x (1 - 0.48).
+    expect(ender).toContain("cada caída te quita 2.6 de vida");
+    expect(ender).toContain("entre una y otra pasan 5 s");
     expect(ender).toContain('"pearlCooldown"');
+    expect(ender).toContain("no se lanza con 4 de vida o menos, a más de 1.5 bloques sobre el piso, ni hacia un rival a menos de 4 bloques");
     const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
-    expect(builder).toContain(`${titleOf(KITS.builder, "golden_apple")} (se puede comer siempre`);
+    expect(builder).toContain(`${titleOf(KITS.builder, "golden_apple")}. Qué hace: recupera 4 de comida, da Regeneración II por 5 s (unos 4 de vida) y 4 de vida extra`);
+    expect(builder).toContain("se puede comer aunque la comida esté llena");
     expect(builder).toContain("define blocks como una lista ordenada");
     expect(builder).toContain("No hay formas fijas ni recarga artificial");
     expect(builder).toContain("construction");
   });
 
+  it("la armadura dice cuánto reduce y qué no reduce", () => {
+    const armor = (kit: Kit): string => section(promptFor(kit), "TU KIT")[0] ?? "";
+    expect(armor(KITS.classic)).toContain("15 puntos de armadura: a un golpe de 6 le quita cerca de un 48%");
+    expect(armor(KITS.archer)).toContain("12 puntos de armadura: a un golpe de 6 le quita cerca de un 36%");
+    // Peto y grebas de diamante suman dureza: detienen más de lo que dicen sus puntos solos.
+    expect(armor(KITS.tank)).toContain("18 puntos de armadura: a un golpe de 6 le quita cerca de un 64%");
+    for (const kit of KIT_LIST.filter((k) => k.items.length > 0)) {
+      expect(armor(kit)).toContain("no reduce caídas, pociones ni el fuego que ya llevas encima");
+      expect(armor(kit)).not.toMatch(/golpes, flechas y caídas/);
+    }
+  });
+
+  it("la perla quita lo que corresponde a la armadura del kit, y el cuerpo no la lanza si lo mataría", () => {
+    const { kit } = buildCustomKit({ items: [{ item: "iron_sword" }, { item: "iron_boots" }, { item: "ender_pearl", count: 3 }] });
+    const mine = section(promptFor(kit), "TU KIT").join("\n");
+    expect(mine).toContain("cada caída te quita 5 de vida");
+    expect(mine).toContain("no se lanza con 5 de vida o menos");
+    expect(promptFor(kit)).not.toContain("2.5 de vida");
+  });
+
+  it("un encantamiento que no hace nada en ese objeto se dice, no se inventa su efecto", () => {
+    const { kit } = buildCustomKit({
+      items: [
+        { item: "diamond_sword", enchantments: [{ id: "sharpness", level: 3 }, { id: "power", level: 2 }] },
+        { item: "bow", enchantments: [{ id: "power", level: 2 }, { id: "protection", level: 1 }] },
+        { item: "arrow", count: 4 },
+      ],
+      effects: [{ id: "strength", level: 1 }],
+    });
+    const mine = section(promptFor(kit), "TU KIT").join("\n");
+    // 7 de la espada + 3 de Fuerza I = 10, más 2 de Filo III; el crítico multiplica solo los 10.
+    expect(mine).toContain("quita 12 por golpe (17 si es crítico)");
+    expect(mine).toContain("Filo: suma 2 al daño de cada golpe (ya contado).");
+    expect(mine).toContain("Poder: en este objeto no hace nada.");
+    expect(mine).toContain("cada flecha quita de 11 a 17");
+    expect(mine).toContain("Poder: suma un 75% al daño de cada flecha (ya contado).");
+    expect(mine).toContain("Protección: en este objeto no hace nada.");
+    expect(mine).toContain("Fuerza I (tus golpes quitan 3 más (ya contado en tus armas))");
+  });
+
+  it("no nombra una herramienta que el kit no ofrece", () => {
+    const { kit } = buildCustomKit({ items: [{ item: "stone_sword" }, { item: "bow" }] });
+    expect(kitToolNames(kit)).not.toContain("shoot");
+    const mine = section(promptFor(kit), "TU KIT").join("\n");
+    expect(mine).toContain("Cómo usarlo: tu kit no trae flechas, así que shoot no se te ofrece.");
+    expect(mine).not.toContain("Cómo usarlo: shoot");
+  });
+
+  it("el arma por defecto es la misma que saca el cuerpo: la espada de mejor material", () => {
+    const { kit } = buildCustomKit({ items: [{ item: "iron_sword" }, { item: "diamond_sword" }, { item: "netherite_axe" }] });
+    const lines = section(promptFor(kit), "TU KIT");
+    const line = (title: string): string => lines.find((l) => l.startsWith(`  - ${title}.`)) ?? "";
+    expect(line("Espada de diamante")).toContain("es el arma que saca si no nombras otra");
+    expect(line("Espada de hierro")).toContain('Cómo usarlo: attack con "weapon": "iron_sword".');
+    expect(line("Hacha de netherita")).toContain('Cómo usarlo: attack con "weapon": "netherite_axe"');
+  });
+
   it("avisa que los corazones amarillos no se acumulan solo a quien lleva manzanas doradas", () => {
     const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
-    expect(builder).toContain("corazones amarillos, que no se acumulan");
-    expect(builder).toContain('no comas otra mientras la observación traiga "absorption"');
+    expect(builder).toContain("los corazones amarillos no se acumulan (otra manzana solo los renueva)");
+    expect(builder).toContain('mientras te quedan, la observación trae "absorption"');
+    // Describe, no ordena.
+    expect(builder).not.toContain("no comas");
     for (const kit of KIT_LIST.filter((k) => !k.items.some((i) => i.item === "golden_apple"))) {
       expect(promptFor(kit)).not.toContain("absorption");
     }
@@ -305,11 +388,16 @@ describe("buildSystemPrompt", () => {
     const tools = section(prompt, "HERRAMIENTAS").join("\n");
     for (const tool of ["build", "shield", "water", "lava"]) expect(tools).toContain(`- ${tool}:`);
     const mine = section(prompt, "TU KIT").join("\n");
-    expect(mine).toContain("Roca (128 en total)");
+    // Dos stacks del mismo material se cuentan juntos, una sola vez.
+    expect(mine).toContain("  - Roca x128. Qué hace: bloques para construir");
+    expect(mine).not.toContain("en total");
     expect(mine).toContain("define blocks como una lista ordenada");
-    expect(mine).toContain("- shield: tu Escudo va en la mano secundaria");
-    expect(mine).toContain("- water: tienes 1 Cubo de agua");
-    expect(mine).toContain("- lava: tienes 1 Cubo de lava");
+    expect(mine).toContain("Escudo. Qué hace: levantado bloquea todo el daño de golpes y flechas que llega de frente");
+    expect(mine).toContain("va en la mano secundaria, así que no sueltas el arma");
+    expect(mine).toContain('water con "where": "between" (a 2 bloques hacia el rival; no con él a menos de 2.5) o "feet"');
+    expect(mine).toContain("lava: cae a los pies del rival, solo si está a entre 3 y 5 bloques; cada cubo se vacía una sola vez");
+    expect(mine).toContain('Después de usarlo queda el cubo vacío ("bucket"), que no sirve para nada.');
+    expect(mine).toContain("- attack: no tienes arma; a puño limpio cada golpe quita 1.");
   });
 
   it("dice qué puede y qué no puede hacer el cuerpo", () => {
@@ -332,6 +420,7 @@ describe("buildSystemPrompt", () => {
     expect(perception).toContain("Fuera de cobertura no has observado el terreno");
     expect(perception).toContain("lineOfSight");
     expect(perception).toContain("resources dicen qué conservas ahora");
+    expect(perception).toContain("un uso con blocked no se puede hacer ahora");
   });
 
   it("explica cómo elegir arma, comida y pociones, y el escudo entre golpes", () => {
@@ -348,15 +437,18 @@ describe("buildSystemPrompt", () => {
       ],
     });
     const mine = section(promptFor(kit), "TU KIT").join("\n");
-    expect(mine).toContain('Puedes elegir otra con "weapon": iron_sword');
-    expect(mine).toContain("diamond_axe");
-    expect(mine).toContain('Con "guard": true');
-    expect(mine).toContain('Con "food" eliges cuál');
-    expect(mine).toContain('- drink: tienes 1 de fuerza (potion "strength"');
-    expect(mine).toContain('2 de curación (potion "healing"');
-    expect(mine).toContain('1 de veneno (potion "poison"');
+    expect(mine).toContain('es el arma que saca si no nombras otra ("weapon": "iron_sword" la elige igual)');
+    expect(mine).toContain('attack con "weapon": "diamond_axe"');
+    expect(mine).toContain('attack con "guard": true lo levanta entre golpe y golpe');
+    expect(mine).toContain('eat con "food": "cooked_beef" (sin "food", la primera que se pueda comer)');
+    expect(mine).toContain('eat con "food": "golden_apple"; tarda');
+    expect(mine).toContain('Poción de fuerza. Qué hace: tus golpes quitan 3 más durante 3 min. Cómo usarlo: drink con "potion": "strength"; tarda 1.8 s');
+    // El nombre de la poción ya trae su tipo: no se repite ("x2 de curación").
+    expect(mine).toContain('Poción arrojadiza de curación x2. Qué hace: cura 4 de vida al instante. Cómo usarlo: throw con "potion": "healing" y "at": "self"');
+    expect(mine).toContain('Poción arrojadiza de veneno. Qué hace: al rival: quita 1 de vida cada 1.25 s');
+    expect(mine).toContain('Después de usarlo queda la botella vacía ("glass_bottle")');
     const tank = section(promptFor(KITS.tank), "TU KIT").join("\n");
-    expect(tank).toContain('Con "guard": true');
+    expect(tank).toContain('attack con "guard": true');
     expect(section(promptFor(KITS.classic), "CAPACIDADES").join("\n")).toContain('"weapon" en attack');
   });
 });
@@ -493,6 +585,9 @@ describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => 
     expect(prompt).toContain("pero la serie la gana quien gane más rondas");
     expect(prompt).toContain("el kit entero de nuevo");
     expect(prompt).not.toContain("El inventario no se repone");
+    // TU KIT no contradice a la serie: lo gastado vuelve con la ronda.
+    expect(prompt).toContain("- Lo que gastas no se repone hasta la ronda siguiente;");
+    expect(buildSystemPrompt({ ...base, rounds: { maxRounds: 3 } })).toContain("- Lo que gastas no se repone; el campo");
   });
 
   it("con horizonte desconocido no dice cuántas rondas hay", () => {

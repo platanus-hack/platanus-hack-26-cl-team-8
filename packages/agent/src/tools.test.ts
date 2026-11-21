@@ -8,6 +8,9 @@ import {
   kitToolDefs,
   kitToolNames,
   parseToolArgs,
+  PEARL_MIN_HEALTH,
+  pearlDamage,
+  pearlMinHealth,
   refusalText,
   shootRefusal,
   SURRENDER_TOOL,
@@ -41,10 +44,29 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     expect(build?.parameters["required"]).toEqual([]); // {} continúa un plano existente.
   });
 
-  it("eat avisa que los corazones amarillos de la manzana dorada no se acumulan", () => {
+  it("eat y pearl no afirman datos que dependen del kit: esos van en TU KIT", () => {
     const eat = TOOL_DEFS.find((def) => def.name === "eat");
-    expect(eat?.description).toContain("corazones amarillos, que no se acumulan");
-    expect(eat?.description).toContain("no comas otra mientras tengas corazones amarillos");
+    expect(eat?.description).not.toMatch(/filete|manzana|corazones/i);
+    expect(eat?.description).toContain("Con 'food' eliges cuál");
+    const pearl = TOOL_DEFS.find((def) => def.name === "pearl");
+    expect(pearl?.description).not.toContain("2.5");
+    expect(pearl?.description).not.toContain("Tienes pocas");
+  });
+
+  it("la perla quita 5 al caer, menos lo que reducen Caída de pluma, Protección y Resistencia", () => {
+    const kitWith = (boots: { id: string; level: number }[], effects: { id: string; level: number }[] = []) =>
+      buildCustomKit({ items: [{ item: "iron_boots", enchantments: boots }, { item: "ender_pearl", count: 2 }], effects }).kit;
+    expect(pearlDamage(kitWith([]))).toBe(5);
+    expect(pearlMinHealth(kitWith([]))).toBe(5);
+    expect(pearlDamage(kitWith([{ id: "feather_falling", level: 4 }]))).toBe(2.6);
+    expect(pearlDamage(KITS.ender)).toBe(2.6);
+    // Con poca reducción el límite de siempre (4) sigue mandando.
+    expect(pearlMinHealth(KITS.ender)).toBe(PEARL_MIN_HEALTH);
+    expect(pearlDamage(kitWith([{ id: "feather_falling", level: 4 }, { id: "protection", level: 4 }]))).toBe(1.8);
+    expect(pearlDamage(kitWith([], [{ id: "resistance", level: 2 }]))).toBe(3);
+    // Un encantamiento en un objeto que no es armadura no cuenta.
+    const { kit: sword } = buildCustomKit({ items: [{ item: "iron_sword", enchantments: [{ id: "protection", level: 4 }] }] });
+    expect(pearlDamage(sword)).toBe(5);
   });
 
   it("pearl explica que al escapar se pasa a comer si se puede", () => {
