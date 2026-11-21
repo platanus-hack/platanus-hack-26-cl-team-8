@@ -19,6 +19,9 @@ import {
   type UpdateSettingsBody,
   type FlagBody,
   type FlaggedPrompt,
+  JudgementSchema,
+  type BenchReport,
+  type Judgement,
 } from "@phack/protocol";
 import { MOCK, apiUrl } from "./config";
 
@@ -162,6 +165,22 @@ export function fetchDefaults(): Promise<ServerDefaults> {
 /** Modelos que se pueden elegir: el servidor ya dejó fuera los que pasan del tope de precio. */
 export function fetchModels(): Promise<ModelsResponse> {
   return request(API_ROUTES.models, ModelsResponseSchema);
+}
+
+/** Tablero de benchmarks, calculado por el servidor con todo el historial. */
+export function fetchBench(): Promise<BenchReport> {
+  return request(API_ROUTES.bench, {
+    parse: (data) => {
+      const report = data as BenchReport;
+      if (typeof report !== "object" || report === null || !Array.isArray(report.models)) throw new Error("formato");
+      return report;
+    },
+  });
+}
+
+/** Pide al LLM juez que califique una pelea. */
+export function judgeMatch(matchId: string): Promise<Judgement> {
+  return request(API_ROUTES.judge(matchId), JudgementSchema, { method: "POST" });
 }
 
 export function describeError(err: unknown): string {

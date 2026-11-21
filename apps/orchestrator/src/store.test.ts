@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPTS, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
+import { DEFAULT_SETTINGS, DEFAULT_PROMPTS, type AgentStatus, type MatchRecord, type Side } from "@phack/protocol";
 import {
   MatchStore,
   defaultPrompts,
@@ -10,8 +10,7 @@ import {
   normalizeConfig,
   parseMatchLines,
   parsePrompts,
-  parseSettings,
-} from "./store";
+  parseSettings, MAX_HISTORY } from "./store";
 
 function status(side: Side): AgentStatus {
   return {
@@ -43,7 +42,7 @@ function record(id: string): MatchRecord {
       blue: { side: "blue", prompt: "defiende" },
     },
     final: { red: status("red"), blue: status("blue") },
-    settings: { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
+    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
     series: null,
     result: { winner: "red", reason: "kill" },
   };
@@ -305,6 +304,20 @@ describe("MatchStore.update", () => {
     }
   });
 
+  it("corrige también una pelea que ya salió de la caché (la busca en el archivo)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "phack-store-"));
+    try {
+      const store = new MatchStore(dir, () => {});
+      await store.append(record("vieja"));
+      for (let i = 0; i < MAX_HISTORY; i += 1) await store.append(record(`r${i}`));
+      expect(store.latest().some((r) => r.id === "vieja")).toBe(false);
+      expect(await store.update("vieja", (r) => ({ ...r, result: { ...r.result, explanation: "tarde" } }))).toBe(true);
+      expect((await store.find("vieja"))?.result.explanation).toBe("tarde");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("devuelve false si la pelea no está", async () => {
     const dir = await mkdtemp(join(tmpdir(), "phack-store-"));
     try {
@@ -318,15 +331,15 @@ describe("MatchStore.update", () => {
 
 describe("parseSettings", () => {
   it("vuelve a los ajustes por defecto si el archivo está corrupto o trae basura", () => {
-    expect(parseSettings("{no")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
-    expect(parseSettings("{}")).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
-    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
-    expect(parseSettings('{"comms":"chat"}')).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings("{no")).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings("{}")).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"telepatía"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"chat"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("guarda el límite de tiempo apagado; un archivo de antes lo trae encendido", () => {
-    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false });
-    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"chat","timer":false}')).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false });
+    expect(parseSettings('{"comms":"none","timer":"quizás"}')).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("guarda la duración elegida; una fuera de rango vuelve a la del servidor", () => {
@@ -337,6 +350,6 @@ describe("parseSettings", () => {
 
   it("un registro de historial sin ajustes vale como sin comunicación", () => {
     const { settings: _omit, ...old } = record("viejo");
-    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
+    expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 });

@@ -13,6 +13,7 @@ import {
   formatTranscript,
   parseTranscript,
   type AgentConfig,
+  type BenchReport,
   type FlagBody,
   type FlaggedPrompt,
   type MatchSettings,
@@ -27,6 +28,7 @@ import {
 } from "@phack/protocol";
 import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
+import type { JudgeOutcome } from "./judge";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
 import { isSpeechId } from "./speech";
@@ -56,6 +58,10 @@ export type ServerDeps = {
     edit(matchId: string, side: Side, body: FlagBody, now: number): Promise<FlaggedPrompt | null>;
     remove(matchId: string, side: Side): Promise<boolean>;
   };
+  /** Tablero de benchmarks (ver buildBenchReport); opcional para los tests que no lo usan. */
+  bench?: { report(): Promise<BenchReport> };
+  /** Califica una pelea con el LLM juez; null si esa pelea no existe. */
+  judge?: (matchId: string) => Promise<JudgeOutcome | null>;
   /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
   transcripts: { read(matchId: string): Promise<string | null> };
   /** Proveedor y modelos que se usan cuando un agente no elige los suyos. */
@@ -247,7 +253,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds y voice = true o false`,
+              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
             ),
           );
       }
@@ -258,6 +264,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (body.data.timerSeconds !== undefined) change.timerSeconds = body.data.timerSeconds;
       if (body.data.mode !== undefined) change.mode = body.data.mode;
       if (body.data.voice !== undefined) change.voice = body.data.voice;
+      const b = body.data;
+      if (b.scenario !== undefined) change.scenario = b.scenario;
+      if (b.rounds !== undefined) change.rounds = b.rounds;
+      if (b.horizon !== undefined) change.horizon = b.horizon;
+      if (b.seriesWin !== undefined) change.seriesWin = b.seriesWin;
+      if (b.refillKit !== undefined) change.refillKit = b.refillKit;
+      if (b.judge !== undefined) change.judge = b.judge;
+      if (b.rules !== undefined) {
+        // Las reglas van por lado: el lado que no viene conserva las suyas.
+        const current = settings.get().rules;
+        change.rules = { red: b.rules.red ?? current.red, blue: b.rules.blue ?? current.blue };
+      }
       const updated = await settings.update(change);
       deps.hub.broadcast({ type: "settings", at: Date.now(), settings: updated });
       return updated;
@@ -360,6 +378,25 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
     return reply.type("audio/mpeg").send(audio);
   });
+  const bench = deps.bench;
+  if (bench) {
+    app.get(API_ROUTES.bench, async (_req, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return bench.report();
+    });
+  }
+
+  const judge = deps.judge;
+  if (judge) {
+    app.post<{ Params: { id: string } }>("/api/matches/:id/judge", async (req, reply) => {
+      const id = req.params.id;
+      if (!isTranscriptId(id)) return reply.code(400).send(errorBody("Id de pelea inválido"));
+      const outcome = await judge(id);
+      if (outcome === null) return reply.code(404).send(errorBody("Esa pelea no está en el historial"));
+      if (!outcome.ok) return reply.code(outcome.status).send(errorBody(`No se pudo calificar: ${outcome.reason}`));
+      return outcome.judgement;
+    });
+  }
 
   app.get(API_ROUTES.defaults, async () => deps.defaults);
 

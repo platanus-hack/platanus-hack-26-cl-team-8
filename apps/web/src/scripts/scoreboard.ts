@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS, seriesTally } from "@phack/protocol";
 import {
   MAX_HEALTH,
   SIDES,
@@ -290,7 +291,13 @@ function renderRounds(series: Series | null): void {
     pips.push(pip);
   }
   holder.replaceChildren(...pips);
-  holder.setAttribute("aria-label", `Serie: Rojo ${series.wins.red}, Azul ${series.wins.blue}`);
+  const t = seriesTally(series, current?.settings ?? DEFAULT_SETTINGS);
+  holder.setAttribute("aria-label", `Serie: Rojo ${t.red}, Azul ${t.blue}${t.unit === "puntos" ? " en puntos" : ""}`);
+}
+
+/** Ajustes de la partida que se está mostrando (para contar la serie como se decide). */
+export function shownSettings(): MatchState["settings"] | undefined {
+  return current?.settings;
 }
 
 /** Terminó una ronda: el cartel dice quién la ganó, sin tapar el video como el del final. */
@@ -299,7 +306,7 @@ export function showRound(result: RoundResult, series: Series): void {
   els.banner.dataset.winner = result.winner ?? "none";
   els.banner.dataset.kind = "round";
   setText(els.bannerTitle, roundTitle(result));
-  setText(els.bannerDetail, roundDetail(result, series));
+  setText(els.bannerDetail, roundDetail(result, series, current?.settings));
   setText(els.bannerWhy, "");
   els.bannerWhy.hidden = true;
   els.banner.hidden = false;

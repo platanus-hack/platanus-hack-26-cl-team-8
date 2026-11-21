@@ -1704,6 +1704,59 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   color: var(--muted);
 }
 
+.comms__hint {
+  color: var(--text);
+}
+
+.comms > .btn {
+  justify-self: start;
+}
+
+.bench-settings {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.rounds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.rounds input[type="number"] {
+  width: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+/* Reglas del entrenador, bajo el kit de cada editor. */
+.rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.rules legend {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.rules__item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 /* ---------- Kit ---------- */
 
 /* Kit de cada lado: un desplegable, una línea que lo describe y su inventario dibujado. */

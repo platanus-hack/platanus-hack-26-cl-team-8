@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { createFighter } from "@phack/agent";
 import { loadEnv } from "@phack/env";
 import { DEFAULT_MODELS, createLlmClient } from "@phack/llm";
-import type { ServerDefaults } from "@phack/protocol";
+import { buildBenchReport, type ServerDefaults } from "@phack/protocol";
 import { applyWorldRules, buildArena } from "./arena";
 import { FlagStore, withFlagOutcomes } from "./flags";
 import { Hub } from "./hub";
@@ -91,7 +91,13 @@ async function main(): Promise<void> {
     transcripts,
     createFighter,
     createLlmClient,
-    models,
+    models: {
+      isAllowed: (id) => models.isAllowed(id),
+      price: (id) => {
+        const found = models.snapshot().models.find((model) => model.id === id);
+        return found ? { input: found.inputPrice, output: found.outputPrice } : null;
+      },
+    },
     speech,
     // Los turnos para hablar estiman cada frase a la velocidad con que la dice la voz.
     speechSpeed: clampSpeed(env.ELEVENLABS_SPEED),
@@ -112,6 +118,11 @@ async function main(): Promise<void> {
     history,
     flags,
     transcripts,
+    bench: { report: async () => buildBenchReport(await history.all()) },
+    judge: async (id) => {
+      const record = await history.find(id);
+      return record ? match.judgeRecord(record) : null;
+    },
     defaults,
     models,
     vercelKeyConfigured: env.VERCEL_API_KEY.trim() !== "",

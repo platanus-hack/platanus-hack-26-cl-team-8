@@ -51,6 +51,7 @@ import {
   formatTranscript,
   FlagBodySchema,
   DEFAULT_PROMPTS,
+  DEFAULT_SETTINGS,
   normalizeTags,
   type FlaggedPrompt,
   type MatchRecord,
@@ -101,6 +102,7 @@ const prompts: PromptsResponse = {
  * ?voice=on, con la voz de los agentes encendida.
  */
 const settings: MatchSettings = {
+  ...DEFAULT_SETTINGS,
   comms: params.get("comms") === "chat" ? "chat" : params.get("comms") === "thoughts" ? "thoughts" : "none",
   timer: params.get("timer") !== "off",
   timerSeconds: null,
@@ -254,6 +256,7 @@ const FINISHED_SERIES: Series = {
     { round: 4, winner: "red", reason: "kill", durationMs: 96_000 },
   ],
   roundStartedAt: null,
+  points: { red: 9, blue: 3 },
 };
 
 /** Serie de la maqueta: dos rondas jugadas (una por lado) y la tercera en juego o por empezar. */
@@ -266,6 +269,7 @@ function mockSeries(playing: boolean): Series {
       { round: 1, winner: "red", reason: "kill", durationMs: 74_000 },
       { round: 2, winner: "blue", reason: "surrender", durationMs: 41_000 },
     ],
+    points: { red: 3, blue: 3 },
     roundStartedAt: playing ? runningSince : null,
   };
 }
@@ -715,7 +719,7 @@ function pastMatch(
   result: MatchResult,
   configs: PromptsResponse,
   final: { red: Partial<AgentStatus>; blue: Partial<AgentStatus> },
-  matchSettings: MatchSettings = { comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
+  matchSettings: MatchSettings = { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
   series: Series | null = null,
 ): MatchRecord {
   const endedAt = Date.now() - minutesAgo * MINUTE;
@@ -761,7 +765,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: 4.5, damageDealt: 20, decisions: 74, heldItem: "diamond_sword" },
       blue: { alive: false, health: 0, damageDealt: 15.5, decisions: 71, heldItem: "bow" },
     },
-    { comms: "none", timer: true, timerSeconds: null, mode: "rounds", voice: false },
+    { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "rounds", voice: false },
     FINISHED_SERIES,
   ),
   pastMatch(
@@ -774,7 +778,7 @@ const HISTORY: MatchRecord[] = [
       red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
       blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
     },
-    { comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
+    { ...DEFAULT_SETTINGS, comms: "chat", timer: false, timerSeconds: null, mode: "single", voice: false },
   ),
   pastMatch(
     "b84d2c60-1f77-4a9e-a3c5-9e0f44d1c7e8",
@@ -839,14 +843,25 @@ export async function mockRequest(path: string, init?: { method: string; body?: 
   if (method === "GET" && path === API_ROUTES.settings) return settings;
   if (method === "PUT" && path === API_ROUTES.settings) {
     const body = UpdateSettingsBodySchema.safeParse(init?.body);
-    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice? }");
-    if (body.data.comms !== undefined) settings.comms = body.data.comms;
-    if (body.data.timer !== undefined) settings.timer = body.data.timer;
-    if (body.data.timerSeconds !== undefined) settings.timerSeconds = body.data.timerSeconds;
-    if (body.data.mode !== undefined) settings.mode = body.data.mode;
-    if (body.data.voice !== undefined) settings.voice = body.data.voice;
+    if (!body.success) fail(400, "Cuerpo inválido: se espera un JSON con los ajustes que cambian");
+    const { rules, ...rest } = body.data;
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined) Object.assign(settings, { [key]: value });
+    }
+    if (rules) settings.rules = { red: rules.red ?? settings.rules.red, blue: rules.blue ?? settings.rules.blue };
     emit?.({ type: "settings", at: Date.now(), settings: { ...settings } });
     return settings;
+  }
+  if (method === "GET" && path === API_ROUTES.bench) {
+    const { mockBenchReport } = await import("./mockbench");
+    return mockBenchReport();
+  }
+  const judgePath = /^\/api\/matches\/([^/]+)\/judge$/.exec(path);
+  if (judgePath && method === "POST") {
+    const { mockJudge } = await import("./mockbench");
+    const judgement = mockJudge(decodeURIComponent(judgePath[1]!));
+    if (!judgement) fail(404, "Esa pelea no está en el historial");
+    return judgement;
   }
   if (method === "GET" && path === API_ROUTES.defaults) return defaults;
   if (method === "GET" && path === API_ROUTES.models) return models;
