@@ -26,10 +26,11 @@ export const DEFAULT_ARENA_SCENARIO: ArenaScenarioId = "platanus";
 export const ARENA_WORLD = "arena";
 
 /**
- * Escenarios que se construyen en `ARENA_WORLD` y que se pueden elegir por pelea (selector
- * "Mapa" de la web, `--scenario`/`--map` del torneo). Cambiar entre ellos es instantáneo.
+ * Escenarios que se pueden pedir por pelea. Hoy hay un solo mapa en juego: la Arena
+ * Platanus. Chunk Battle y Pizza Spleef 2 siguen definidos más abajo, pero no se ofrecen
+ * (ni en la web ni en el torneo).
  */
-export const SELECTABLE_ARENA_SCENARIOS = ["platanus", "chunk-battle"] as const;
+export const SELECTABLE_ARENA_SCENARIOS = ["platanus"] as const;
 export const SelectableArenaScenarioIdSchema = z.enum(SELECTABLE_ARENA_SCENARIOS);
 export type SelectableArenaScenarioId = z.infer<typeof SelectableArenaScenarioIdSchema>;
 
@@ -87,8 +88,9 @@ export type TemplateArena = ArenaCommon & {
 
 /**
  * Mundo vacío (void): la arena entera se construye por RCON antes de cada pelea.
- * `floor` son las medias longitudes del piso desde el centro, incluyendo la fila de
- * los muros: el piso va de center.x - halfX a center.x + halfX (ídem en z).
+ * `floor` son las medias longitudes del piso desde el centro, incluyendo la fila del
+ * borde (donde va la pared invisible): el piso va de center.x - halfX a center.x + halfX
+ * (ídem en z). `wallHeight` es el alto de esa pared; el techo invisible va justo encima.
  */
 export type BuiltArena = ArenaCommon & {
   kind: "built";
@@ -164,23 +166,28 @@ function chunkIsland(side: "red" | "blue", x: number): ChunkIsland {
 }
 
 export const ARENAS: Record<ArenaScenarioId, ArenaScenario> = {
-  /** Mundo vacío con piso negro de 57×45, el isotipo de Platanus al centro y muros de vidrio. */
+  /**
+   * La arena: una plataforma lisa de 27×27 en un mundo vacío, con el logo de Platanus al
+   * centro (FLOOR_LOGO_ROWS, 15×15) y nada más a la vista. La fila del borde y el techo son
+   * de barrera invisible, así nadie cae al vacío. Es el tamaño de la arena original: más
+   * grande, la cámara se aleja, los peleadores quedan lejos y la transmisión pesa más.
+   */
   platanus: {
     id: "platanus",
     name: "Arena Platanus",
     level: ARENA_WORLD,
     kind: "built",
     center: { x: 0, y: 64, z: 0 },
-    floor: { halfX: 28, halfZ: 22 },
-    // Interior caminable: |x| <= 27, |z| <= 21.
-    radius: 21,
-    wallHeight: 5,
+    floor: { halfX: 13, halfZ: 13 },
+    // Interior caminable: |x| <= 12, |z| <= 12.
+    radius: 12,
+    wallHeight: 6,
     spawns: {
-      red: { x: -16, y: 65, z: 0, yaw: -90 },
-      blue: { x: 16, y: 65, z: 0, yaw: 90 },
+      red: { x: -8, y: 65, z: 0, yaw: -90 },
+      blue: { x: 8, y: 65, z: 0, yaw: 90 },
     },
-    camera: { x: 0, y: 90, z: 40 },
-    cameraWide: { x: 0, y: 104, z: 30 },
+    camera: { x: 0, y: 78, z: 18 },
+    cameraWide: { x: 0, y: 83, z: 14 },
   },
   /**
    * Dos islas de 16×16 (más cornisa: superficie de 20×20) del mapa "Chunk Battle",

@@ -17,6 +17,9 @@ import { showToast } from "./toast";
  * (MatchSettings.arena): se guarda al elegir, vale desde la próxima pelea y, si otro
  * visitante lo cambia, llega por el websocket con los demás ajustes. Con una pelea en
  * curso queda bloqueado y muestra el mapa en juego; el HUD muestra ese mapa al lado de la fase.
+ *
+ * Hoy el servidor ofrece un solo mapa (la Arena Platanus): con menos de dos mapas no hay
+ * nada que elegir, así que ni el selector ni el nombre del mapa se muestran.
  */
 
 let select: HTMLSelectElement | null = null;
@@ -38,6 +41,9 @@ function options(): ArenaOption[] {
 function render(): void {
   if (!select) return;
   const list = options();
+  const choice = list.length > 1;
+  const picker = select.closest<HTMLElement>(".map-picker");
+  if (picker) picker.hidden = !choice;
   if (select.options.length !== list.length || list.some((o, i) => select?.options[i]?.value !== o.id)) {
     select.replaceChildren(
       ...list.map((option) => {
@@ -55,7 +61,7 @@ function render(): void {
   select.disabled = saving || active || phase === null || list.length < 2;
   select.title = active ? "No se puede cambiar el mapa con una pelea en curso." : "Mapa de la próxima pelea.";
   if (liveName) {
-    const name = live && (active || phase === "finished") ? ARENAS[live].name : "";
+    const name = choice && live && (active || phase === "finished") ? ARENAS[live].name : "";
     setText(liveName, name);
     liveName.hidden = name === "";
   }

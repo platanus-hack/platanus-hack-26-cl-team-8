@@ -59,7 +59,7 @@ type SetupOptions = {
   /** ARENA_SCENARIO del servidor; "platanus" si falta. */
   arenaScenario?: "platanus" | "chunk-battle" | "pizza-spleef-2";
   /** Mapa guardado en los ajustes (MatchSettings.arena). */
-  arena?: "platanus" | "chunk-battle" | null;
+  arena?: MatchSettings["arena"];
   provider?: Provider;
   /** LLM_MODEL del servidor. */
   model?: string;
@@ -1850,8 +1850,8 @@ describe("MatchManager: mapa y semilla por pelea", () => {
     expect(t.stored()).toMatchObject({ arena: "platanus", seed: null });
   });
 
-  it("el mapa de los ajustes elige Chunk Battle: semilla sorteada, islas, kit para cruzar y registro", async () => {
-    const t = setup({ arena: "chunk-battle", rconReply: islandsReply });
+  it("con ARENA_SCENARIO=chunk-battle juega Chunk Battle: semilla sorteada, islas, kit para cruzar y registro", async () => {
+    const t = setup({ arenaScenario: "chunk-battle", rconReply: islandsReply });
     await startRunning(t);
     const state = t.manager.getState();
     expect(state.arena).toBe("chunk-battle");
@@ -1872,40 +1872,63 @@ describe("MatchManager: mapa y semilla por pelea", () => {
     expect(t.stored()).toMatchObject({ arena: "chunk-battle", seed: state.seed });
   });
 
-  it("en reposo, recién encendido, informa el mapa que se construye al arrancar (el de los ajustes)", () => {
+  it("en reposo, recién encendido, informa el mapa que se construye al arrancar", () => {
     // index.ts deja lista la arena de readyArena(); la cámara encuadra el `arena` del estado.
-    const t = setup({ arena: "chunk-battle" });
-    expect(t.manager.readyArena()).toBe("chunk-battle");
-    expect(t.manager.getState()).toMatchObject({ phase: "idle", arena: "chunk-battle", seed: null });
+    const t = setup({ arena: "platanus" });
+    expect(t.manager.readyArena()).toBe("platanus");
+    expect(t.manager.getState()).toMatchObject({ phase: "idle", arena: "platanus", seed: null });
+    const chunk = setup({ arenaScenario: "chunk-battle" });
+    expect(chunk.manager.readyArena()).toBe("chunk-battle");
+    expect(chunk.manager.getState()).toMatchObject({ phase: "idle", arena: "chunk-battle", seed: null });
     // Un mapa guardado que el servidor no tiene: el por defecto (como start()).
-    const pizza = setup({ arenaScenario: "pizza-spleef-2", arena: "chunk-battle" });
+    const pizza = setup({ arenaScenario: "pizza-spleef-2", arena: "platanus" });
     expect(pizza.manager.readyArena()).toBe("pizza-spleef-2");
     expect(pizza.manager.getState().arena).toBe("pizza-spleef-2");
   });
 
-  it("el cuerpo de inicio manda sobre los ajustes; un mapa que el servidor no tiene es un error", async () => {
-    const t = setup({ arena: "chunk-battle" });
+  it("el cuerpo de inicio pide Platanus; un mapa que el servidor no tiene es un error", async () => {
+    const t = setup({ arena: null });
     current = t.manager;
     t.manager.start({ arena: "platanus" });
     await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
     expect(t.manager.getState().arena).toBe("platanus");
     await t.manager.stop();
 
+    // Con Platanus por defecto, Chunk Battle ya no se ofrece.
+    expect(t.manager.availableArenas()).toEqual(["platanus"]);
     const pizza = setup({ arenaScenario: "pizza-spleef-2" });
     expect(pizza.manager.availableArenas()).toEqual(["pizza-spleef-2"]);
-    expect(() => pizza.manager.start({ arena: "chunk-battle" })).toThrow(ArenaUnavailableError);
+    expect(() => pizza.manager.start({ arena: "platanus" })).toThrow(ArenaUnavailableError);
     expect(pizza.manager.getState().phase).toBe("idle");
+    const chunk = setup({ arenaScenario: "chunk-battle" });
+    expect(chunk.manager.availableArenas()).toEqual(["chunk-battle"]);
+    expect(() => chunk.manager.start({ arena: "platanus" })).toThrow(ArenaUnavailableError);
   });
 
   it("un mapa de los ajustes que el servidor ya no tiene juega en el por defecto y avisa", async () => {
-    const t = setup({ arenaScenario: "pizza-spleef-2", arena: "chunk-battle", rconReply: (c) => (c.startsWith("execute if block") ? "Test passed" : serverReply(c)) });
+    const t = setup({ arenaScenario: "pizza-spleef-2", arena: "platanus", rconReply: (c) => (c.startsWith("execute if block") ? "Test passed" : serverReply(c)) });
     await startRunning(t);
     expect(t.manager.getState().arena).toBe("pizza-spleef-2");
     expect(t.logs.some((l) => l.level === "warn" && l.text.includes("no está en este servidor"))).toBe(true);
   });
 
   it("runOnce (torneo): el mapa y la semilla pedidos deciden las islas", async () => {
-    const t = setup({ rconReply: islandsReply });
+    // Con Platanus por defecto, el torneo no puede pedir Chunk Battle.
+    const platanus = setup();
+    await expect(
+      platanus.manager.runOnce({
+        configs: {
+          red: { provider: "vercel", model: "a/x", prompt: "p" },
+          blue: { provider: "vercel", model: "b/y", prompt: "p" },
+        },
+        durationSeconds: 60,
+        arena: "chunk-battle",
+        seed: 77,
+      }),
+    ).rejects.toThrow(ArenaUnavailableError);
+    expect(platanus.manager.getState().phase).toBe("idle");
+
+    const t = setup({ arenaScenario: "chunk-battle", rconReply: islandsReply });
     current = t.manager;
     const running = t.manager.runOnce({
       configs: {
@@ -1924,7 +1947,7 @@ describe("MatchManager: mapa y semilla por pelea", () => {
   });
 
   it("serie en Chunk Battle: cada ronda rehace las mismas islas (misma semilla)", async () => {
-    const t = setup({ arena: "chunk-battle", rconReply: islandsReply, settings: { rounds: 2 } });
+    const t = setup({ arenaScenario: "chunk-battle", rconReply: islandsReply, settings: { rounds: 2 } });
     await startRunning(t);
     const seed = t.manager.getState().seed;
     const firstBuild = t.rconCommands.filter((c) => c.startsWith("place template phack:chunk/"));

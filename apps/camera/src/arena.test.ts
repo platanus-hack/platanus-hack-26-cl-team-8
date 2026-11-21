@@ -16,7 +16,7 @@ const [RED_ISLAND, BLUE_ISLAND] = (ARENAS["chunk-battle"] as IslandsArena).islan
 
 describe("mapa por posición", () => {
   it("ubica a un peleador en Platanus, en cualquiera de las islas o en ninguna parte", () => {
-    expect(arenaAt({ x: -16, z: 0 }, BUILT)).toBe("platanus");
+    expect(arenaAt({ x: -8, z: 0 }, BUILT)).toBe("platanus");
     expect(arenaAt({ x: RED_ISLAND.from.x + 3, z: 0 }, BUILT)).toBe("chunk-battle");
     expect(arenaAt({ x: BLUE_ISLAND.to.x - 3, z: 2 }, BUILT)).toBe("chunk-battle");
     // Sobre el hueco entre islas (puente) también es Chunk Battle.
@@ -106,22 +106,12 @@ describe("trackOnce", () => {
     configs: { red: { side: "red", prompt: "" }, blue: { side: "blue", prompt: "" } },
   });
 
-  it("reencuadra cuando la pelea del orquestador cambia de mapa, sin preguntar por RCON", async () => {
-    const d = deps(running("chunk-battle"));
-    expect(await trackOnce(d)).toBe("chunk-battle");
-    expect(currentArena().id).toBe("chunk-battle");
-    expect(d.onChange).toHaveBeenCalledTimes(1);
+  it("con un solo mapa en juego (Platanus) no pregunta nada ni reencuadra", async () => {
+    const d = deps(running("chunk-battle"), ["AgenteRojo has the following entity data: [1013.5d, 65.0d, 0.5d]"]);
+    expect(await trackOnce(d)).toBeNull();
+    expect(currentArena().id).toBe("platanus");
     expect(d.rcon).not.toHaveBeenCalled();
-    // Mismo mapa: no se vuelve a avisar.
-    await trackOnce(d);
-    expect(d.onChange).toHaveBeenCalledTimes(1);
-  });
-
-  it("sin orquestador, sigue a los peleadores por RCON", async () => {
-    const d = deps(null, ["No entity was found", "AgenteAzul has the following entity data: [1013.5d, 65.0d, 0.5d]"]);
-    expect(await trackOnce(d)).toBe("chunk-battle");
-    expect(d.rcon).toHaveBeenCalledWith(["data get entity AgenteRojo Pos", "data get entity AgenteAzul Pos"]);
-    expect(d.onChange).toHaveBeenCalledTimes(1);
+    expect(d.onChange).not.toHaveBeenCalled();
   });
 
   it("con la pizza (un solo mapa posible) no hace nada", async () => {

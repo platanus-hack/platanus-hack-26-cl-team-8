@@ -265,7 +265,7 @@ describe("dig", () => {
     const dig = TOOL_DEFS.find((def) => def.name === "dig");
     const properties = dig?.parameters["properties"] as Record<string, { enum?: string[] }>;
     expect(properties["target"]?.enum).toEqual(["between", "nearest"]);
-    expect(dig?.description).toContain("nunca el piso, los muros de vidrio ni el techo");
+    expect(dig?.description).toContain("nunca el piso ni la pared y el techo invisibles");
   });
 
   it("parseToolArgs: digTarget", () => {

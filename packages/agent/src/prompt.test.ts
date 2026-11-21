@@ -602,9 +602,11 @@ describe("buildSystemPrompt: escenario de arena", () => {
     comms: "none" as const,
   };
 
-  it("describe la arena Platanus: muros de vidrio, sin pizza", () => {
+  it("describe la arena Platanus: plataforma de 25 x 25 cerrada por pared y techo invisibles, sin pizza", () => {
     const text = buildSystemPrompt({ ...base, arena: "platanus" });
-    expect(text).toContain("muros de vidrio");
+    expect(text).toContain("Una plataforma de unos 25 x 25 bloques");
+    expect(text).toContain("pared invisible en el borde y un techo invisible a 6 bloques del piso");
+    expect(text).not.toContain("muros de vidrio");
     expect(text).not.toContain("pizza");
   });
 
@@ -620,7 +622,7 @@ describe("buildSystemPrompt: escenario de arena", () => {
       process.env.ARENA_SCENARIO = "pizza-spleef-2";
       expect(buildSystemPrompt(base)).toContain("plataforma circular");
       delete process.env.ARENA_SCENARIO;
-      expect(buildSystemPrompt(base)).toContain("muros de vidrio");
+      expect(buildSystemPrompt(base)).toContain("pared invisible en el borde");
     } finally {
       if (previous === undefined) delete process.env.ARENA_SCENARIO;
       else process.env.ARENA_SCENARIO = previous;
@@ -660,8 +662,8 @@ describe("buildSystemPrompt: mapa de la pelea", () => {
   it("el mismo resultado con el id o con el objeto del mapa; Platanus sigue igual", () => {
     expect(buildSystemPrompt({ ...base, arena: "chunk-battle" })).toBe(buildSystemPrompt({ ...base, arena: ARENAS["chunk-battle"] }));
     const platanus = buildSystemPrompt({ ...base, kit: KITS.classic, arena: ARENAS.platanus });
-    expect(platanus).toContain("rodeado por muros de vidrio");
-    expect(platanus).toContain("El piso, los muros de vidrio y el techo invisible de la arena no se rompen.");
+    expect(platanus).toContain("la cierran una pared invisible en el borde y un techo invisible");
+    expect(platanus).toContain("El piso y la pared y el techo invisibles de la arena no se rompen.");
     expect(platanus).not.toContain("islas");
   });
 });

@@ -1284,8 +1284,7 @@ textarea {
  */
 @media (max-width: 699px) {
   .thoughts {
-    /* Sobre el selector de mapa y el botón de la pelea. */
-    bottom: 126px;
+    bottom: 90px;
   }
 
   .thoughts__col {
