@@ -1,5 +1,11 @@
 # @phack/camera — cámara espectadora
 
+> **Dos modos.** Con `CAMERA_MODE=client` (el oficial, por defecto en Docker Compose) este
+> servicio no dibuja nada: solo vuela al bot cámara (`src/operator.ts`) y el video lo produce
+> el cliente real de Minecraft (`infra/stream`, ver el README de la raíz). Todo lo que sigue
+> describe el modo `CAMERA_MODE=viewer`: el render propio por software, que queda como
+> respaldo para máquinas sin GPU y para desarrollo local. El punto de entrada es `src/main.ts`.
+
 Un bot que entra al servidor de Minecraft como espectador, **dibuja el mundo sin pantalla
 dentro de Node** y publica video real (H.264) hacia MediaMTX por RTMP. La web lo reproduce
 como HLS en `/live/arena/index.m3u8`.
