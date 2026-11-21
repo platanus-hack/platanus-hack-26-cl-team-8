@@ -19,6 +19,7 @@ import {
   type AgentConfig,
   type BenchOptions,
   type BenchReport,
+  type PresetsResponse,
   type FlagBody,
   type FlaggedPrompt,
   type MatchSettings,
@@ -34,6 +35,7 @@ import {
 import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
 import type { JudgeOutcome } from "./judge";
+import { UnknownPresetError } from "./presets";
 import { MatchActiveError } from "./match";
 import { createRateLimiter } from "./ratelimit";
 import { isSpeechId } from "./speech";
@@ -45,6 +47,8 @@ export type ServerDeps = {
     getState(): MatchState;
     start(): MatchState;
     stop(): Promise<MatchState>;
+    /** Hay una pelea (o una serie) en curso; opcional para los tests que no lo usan. */
+    isActive?(): boolean;
   };
   prompts: {
     get(): PromptsResponse;
@@ -65,6 +69,15 @@ export type ServerDeps = {
   };
   /** Tablero de benchmarks (ver buildBenchReport); opcional para los tests que no lo usan. */
   bench?: { report(options: BenchOptions): Promise<BenchReport> };
+  /** Pre-ajustes de benchmark y la batería que los corre (ver presets.ts). */
+  presets?: {
+    snapshot(): PresetsResponse;
+    run(id: string, start: boolean): Promise<PresetsResponse>;
+    stop(): PresetsResponse;
+    isRunning(): boolean;
+  };
+  /** Archiva el historial de peleas (ver MatchStore.archive). */
+  archiveHistory?: () => Promise<string | null>;
   /** Califica una pelea con el LLM juez; null si esa pelea no existe. */
   judge?: (matchId: string) => Promise<JudgeOutcome | null>;
   /** Transcripción cruda (JSONL) de una pelea; null si no existe. */
@@ -405,6 +418,49 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       }
       reply.header("Cache-Control", "no-store");
       return bench.report({ scenario: scenario ? scenario.data : null, minMatches: min });
+    });
+  }
+
+  const presets = deps.presets;
+  if (presets) {
+    app.get(API_ROUTES.presets, async (_req, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return presets.snapshot();
+    });
+
+    app.post(API_ROUTES.presetsStop, async () => presets.stop());
+
+    app.post<{ Params: { id: string } }>("/api/presets/:id", async (req, reply) => {
+      const body = (typeof req.body === "object" && req.body !== null ? req.body : {}) as Record<string, unknown>;
+      if (body.start !== undefined && typeof body.start !== "boolean") {
+        return reply.code(400).send(errorBody("Cuerpo inválido: se espera un JSON { start?: true o false }"));
+      }
+      try {
+        return await presets.run(req.params.id, body.start === true);
+      } catch (err) {
+        if (err instanceof UnknownPresetError) return reply.code(404).send(errorBody(err.message));
+        if (err instanceof MatchActiveError) {
+          return reply.code(409).send(errorBody("Hay una pelea o una batería en curso: espera a que termine o detenla"));
+        }
+        throw err;
+      }
+    });
+  }
+
+  const archiveHistory = deps.archiveHistory;
+  if (archiveHistory) {
+    // Doble confirmación: la web pregunta dos veces y además el cuerpo debe decir "BORRAR".
+    app.delete(API_ROUTES.history, async (req, reply) => {
+      const body = (typeof req.body === "object" && req.body !== null ? req.body : {}) as Record<string, unknown>;
+      if (body.confirm !== "BORRAR") {
+        return reply.code(400).send(errorBody('Para borrar el historial manda { "confirm": "BORRAR" }'));
+      }
+      if (deps.match.isActive?.() || presets?.isRunning()) {
+        return reply.code(409).send(errorBody("No se puede borrar el historial con una pelea o una batería en curso"));
+      }
+      const archived = await archiveHistory();
+      deps.hub.broadcast({ type: "log", at: Date.now(), level: "warn", text: "Se borró el historial de peleas (quedó archivado en el servidor)" });
+      return { archived };
     });
   }
 

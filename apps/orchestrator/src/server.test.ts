@@ -20,6 +20,8 @@ import {
 } from "@phack/protocol";
 import { FlagStore } from "./flags";
 import { Hub } from "./hub";
+import { MatchActiveError } from "./match";
+import { UnknownPresetError } from "./presets";
 import { applyModelPolicy, buildServer, parseRange, type ModelPolicy } from "./server";
 import { defaultPrompts } from "./store";
 
@@ -99,6 +101,8 @@ let settings: MatchSettings = { ...DEFAULT_SETTINGS, comms: "none", timer: true,
 
 /** Lo que llegó a guardarse con PUT /api/prompts/:side. */
 let saved: { side: Side; body: UpdatePromptBody }[] = [];
+let presetCalls: { id: string; start: boolean }[] = [];
+let archived = 0;
 
 async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
   saved = [];
@@ -123,6 +127,21 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     defaults: { provider: opts.provider ?? "mock", models: {} } as unknown as ServerDefaults,
     models: { isAllowed: () => true, snapshot: () => ({ models: [], source: "fallback", updatedAt: null }) },
     vercelKeyConfigured: opts.vercelKeyConfigured ?? false,
+    presets: {
+      snapshot: () => ({ presets: [], suite: { running: false, queue: [], index: 0, done: 0, stoppedReason: null } }),
+      run: async (id: string, start: boolean) => {
+        presetCalls.push({ id, start });
+        if (id === "nada") throw new UnknownPresetError(id);
+        if (id === "ocupado") throw new MatchActiveError();
+        return { presets: [], suite: { running: start, queue: [id], index: 0, done: 0, stoppedReason: null } };
+      },
+      stop: () => ({ presets: [], suite: { running: false, queue: [], index: 0, done: 0, stoppedReason: "detenida a mano" } }),
+      isRunning: () => false,
+    },
+    archiveHistory: async () => {
+      archived += 1;
+      return "matches-x.jsonl";
+    },
     bench: { report: async (options) => buildBenchReport(opts.history ?? [], 42, options) },
     judge: async (id) =>
       id === ID ? { ok: false as const, reason: "el juez necesita un LLM real", status: 400 as const } : id === JUDGED ? { ok: true as const, judgement: JUDGEMENT } : null,
@@ -534,5 +553,33 @@ describe("PUT /api/settings: rondas", () => {
     // Con un número de rondas, el modo que venga no manda.
     expect((await put(s, { rounds: 4, mode: "single" })).json()).toMatchObject({ rounds: 4, mode: "rounds" });
     expect((await put(s, { mode: "single" })).json()).toMatchObject({ rounds: 1, mode: "single" });
+  });
+});
+
+describe("pre-ajustes y borrar el historial", () => {
+  it("POST /api/presets/:id carga o ejecuta; 404 si no existe, 409 si hay algo en curso", async () => {
+    presetCalls = [];
+    const s = await server();
+    expect((await s.inject({ method: "POST", url: "/api/presets/dilema", payload: {} })).json().suite.running).toBe(false);
+    expect((await s.inject({ method: "POST", url: "/api/presets/todos", payload: { start: true } })).json().suite.running).toBe(true);
+    expect(presetCalls).toEqual([
+      { id: "dilema", start: false },
+      { id: "todos", start: true },
+    ]);
+    expect((await s.inject({ method: "POST", url: "/api/presets/nada" })).statusCode).toBe(404);
+    expect((await s.inject({ method: "POST", url: "/api/presets/ocupado", payload: { start: true } })).statusCode).toBe(409);
+    expect((await s.inject({ method: "POST", url: "/api/presets/dilema", payload: { start: "sí" } })).statusCode).toBe(400);
+    expect((await s.inject({ method: "POST", url: "/api/presets/stop" })).json().suite.stoppedReason).toBe("detenida a mano");
+    expect((await s.inject({ method: "GET", url: "/api/presets" })).statusCode).toBe(200);
+  });
+
+  it("DELETE /api/history exige confirm BORRAR", async () => {
+    archived = 0;
+    const s = await server();
+    expect((await s.inject({ method: "DELETE", url: "/api/history", payload: {} })).statusCode).toBe(400);
+    expect((await s.inject({ method: "DELETE", url: "/api/history", payload: { confirm: "borrar" } })).statusCode).toBe(400);
+    const ok = await s.inject({ method: "DELETE", url: "/api/history", payload: { confirm: "BORRAR" } });
+    expect(ok.json()).toEqual({ archived: "matches-x.jsonl" });
+    expect(archived).toBe(1);
   });
 });

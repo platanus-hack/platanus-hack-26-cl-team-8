@@ -43,6 +43,28 @@ import "../styles/global.css";
         </div>
       </header>
 
+      <section class="bench__section" aria-labelledby="t-auto">
+        <h2 class="bench__title" id="t-auto">Pruebas automáticas</h2>
+        <p class="bench__hint">
+          Un pre-ajuste fija escenario, rondas, comunicación, reglas, prompts y kits; los modelos son los que estén elegidos en
+          cada lado. "Cargar" solo deja la configuración lista; "Ejecutar" además empieza la partida. "Todos" corre la batería
+          completa, una partida tras otra.
+        </p>
+        <div class="preset" id="bench-preset-field">
+            <div class="preset__row">
+              <label class="field preset__select">
+                <span class="field__label">Pre-ajuste</span>
+                <select id="bench-preset" aria-describedby="bench-preset-description"></select>
+              </label>
+              <button type="button" class="btn btn--small" id="bench-preset-load">Cargar</button>
+              <button type="button" class="btn btn--small preset__run" id="bench-preset-run">Ejecutar</button>
+              <button type="button" class="btn btn--small" id="bench-preset-stop" hidden>Detener batería</button>
+            </div>
+            <p class="comms__description" id="bench-preset-description"></p>
+            <p class="comms__description comms__hint" id="bench-preset-status" role="status" hidden></p>
+          </div>
+      </section>
+
       <section class="bench__section" aria-labelledby="t-models">
         <h2 class="bench__title" id="t-models">Ranking de modelos</h2>
         <p class="bench__hint">
@@ -95,6 +117,31 @@ import "../styles/global.css";
           desviación dice cuánto varía el modelo contra sí mismo.
         </p>
         <div class="bench__scroll"><table class="bench__table" id="tbl-mirror"></table></div>
+      </section>
+
+      <section class="bench__section" aria-labelledby="t-danger">
+        <h2 class="bench__title" id="t-danger">Borrar historial</h2>
+        <p class="bench__hint">
+          Para empezar a medir de cero (por ejemplo, después de pruebas o cambios). Saca todas las peleas del historial y del
+          tablero. En el servidor no se pierde nada: el archivo queda guardado aparte (DATA_DIR/archive) y se puede recuperar
+          a mano. No se puede con una pelea o una batería en curso.
+        </p>
+        <div class="danger" id="danger">
+          <button type="button" class="btn btn--small danger__start" id="clear-start">Borrar historial…</button>
+          <div class="danger__step" id="clear-step1" hidden>
+            <p id="clear-step1-text">¿Seguro? Se quitarán todas las peleas del historial y del tablero.</p>
+            <button type="button" class="btn btn--small" id="clear-cancel1">Cancelar</button>
+            <button type="button" class="btn btn--small danger__go" id="clear-next">Sí, continuar</button>
+          </div>
+          <div class="danger__step" id="clear-step2" hidden>
+            <label class="field">
+              <span class="field__label">Para confirmar, escribe BORRAR</span>
+              <input id="clear-word" type="text" autocomplete="off" spellcheck="false" />
+            </label>
+            <button type="button" class="btn btn--small" id="clear-cancel2">Cancelar</button>
+            <button type="button" class="btn btn--small danger__go" id="clear-confirm" disabled>Borrar historial</button>
+          </div>
+        </div>
       </section>
 
       <section class="bench__section" aria-labelledby="t-judge">
@@ -168,6 +215,44 @@ import "../styles/global.css";
     font-size: 12px;
     color: var(--muted);
     text-align: left;
+  }
+
+  .danger {
+    display: grid;
+    gap: 12px;
+    justify-items: start;
+  }
+
+  .danger__step {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: end;
+    padding: 12px;
+    border: 1px solid var(--red);
+  }
+
+  .danger__step[hidden] {
+    display: none;
+  }
+
+  .danger__step p {
+    width: 100%;
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .danger__step input {
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .danger__go {
+    border-color: var(--red);
+    color: var(--red);
   }
 
   .bench__status {

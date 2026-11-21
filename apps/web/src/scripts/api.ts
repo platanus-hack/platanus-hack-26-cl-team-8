@@ -21,6 +21,7 @@ import {
   type FlaggedPrompt,
   JudgementSchema,
   type BenchOptions,
+  type PresetsResponse,
   type BenchReport,
   type Judgement,
 } from "@phack/protocol";
@@ -186,6 +187,44 @@ export function fetchBench(options: BenchOptions = {}): Promise<BenchReport> {
 /** Pide al LLM juez que califique una pelea. */
 export function judgeMatch(matchId: string): Promise<Judgement> {
   return request(API_ROUTES.judge(matchId), JudgementSchema, { method: "POST" });
+}
+
+/** Pre-ajustes de benchmark y cómo va la batería. */
+const presetsParser: Parser<PresetsResponse> = {
+  parse: (data) => {
+    const value = data as PresetsResponse;
+    if (typeof value !== "object" || value === null || !Array.isArray(value.presets) || typeof value.suite !== "object") {
+      throw new Error("formato");
+    }
+    return value;
+  },
+};
+
+export function fetchPresets(): Promise<PresetsResponse> {
+  return request(API_ROUTES.presets, presetsParser);
+}
+
+/** Carga un pre-ajuste; con `start`, lo ejecuta ("todos" corre la batería completa). */
+export function runPreset(id: string, start: boolean): Promise<PresetsResponse> {
+  return request(API_ROUTES.preset(encodeURIComponent(id)), presetsParser, { method: "POST", body: { start } });
+}
+
+export function stopPresets(): Promise<PresetsResponse> {
+  return request(API_ROUTES.presetsStop, presetsParser, { method: "POST" });
+}
+
+/** Archiva el historial de peleas en el servidor (el tablero queda vacío). */
+export function clearHistory(): Promise<{ archived: string | null }> {
+  return request(
+    API_ROUTES.history,
+    {
+      parse: (data) => {
+        const value = data as { archived?: unknown };
+        return { archived: typeof value?.archived === "string" ? value.archived : null };
+      },
+    },
+    { method: "DELETE", body: { confirm: "BORRAR" } },
+  );
 }
 
 export function describeError(err: unknown): string {
