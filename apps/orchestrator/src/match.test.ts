@@ -7,7 +7,7 @@ import {
   MAX_HEALTH,
   COUNTDOWN_SECONDS,
   MAX_AGENT_MESSAGE_LENGTH,
-  MAX_ROUNDS,
+  LEGACY_SERIES_ROUNDS,
   type AgentConfig,
   type CommsMode,
   type MatchMode,
@@ -183,6 +183,8 @@ function setup(opts: SetupOptions = {}) {
         timer: opts.timer ?? true,
         timerSeconds: opts.timerSeconds ?? null,
         mode: opts.mode ?? "single",
+        // El formato sale de las rondas: los tests de series de antes eran de 5.
+        rounds: opts.mode === "rounds" ? LEGACY_SERIES_ROUNDS : 1,
         voice: opts.voice ?? false,
         ...opts.settings,
       }),
@@ -1243,8 +1245,8 @@ describe("MatchManager: modo por rondas", () => {
   it("KO, pausa y ronda siguiente hasta que la serie queda decidida (3-0)", async () => {
     const t = setup({ mode: "rounds" });
     await startRunning(t);
-    expect(t.fighters.red?.rounds).toEqual({ maxRounds: MAX_ROUNDS, scenario: "duel", horizon: "known", byPoints: false, refillKit: false });
-    expect(series(t)).toMatchObject({ round: 1, maxRounds: MAX_ROUNDS, wins: { red: 0, blue: 0 }, rounds: [] });
+    expect(t.fighters.red?.rounds).toEqual({ maxRounds: LEGACY_SERIES_ROUNDS, scenario: "duel", horizon: "known", byPoints: false, refillKit: false });
+    expect(series(t)).toMatchObject({ round: 1, maxRounds: LEGACY_SERIES_ROUNDS, wins: { red: 0, blue: 0 }, rounds: [] });
     expect(series(t)?.roundStartedAt).toBe(t.manager.getState().startedAt);
     const startedAt = t.manager.getState().startedAt;
 
@@ -1275,7 +1277,7 @@ describe("MatchManager: modo por rondas", () => {
     expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: la ganaste por K.O.");
     expect(t.calls.blue[2]).toEqual({
       call: "resume",
-      series: { round: 2, won: 0, lost: 1, drawn: 0, maxRounds: MAX_ROUNDS },
+      series: { round: 2, won: 0, lost: 1, drawn: 0, maxRounds: LEGACY_SERIES_ROUNDS },
       note: "terminó la ronda 1: la perdiste por K.O.; empieza la ronda 2",
     });
     expect(t.createLlmClient).toHaveBeenCalledTimes(3);
@@ -1343,7 +1345,7 @@ describe("MatchManager: modo por rondas", () => {
     expect(t.calls.blue.at(-1)?.note).toBe(
       "terminó la ronda 4: la perdiste por tener menos vida al acabarse el tiempo; empieza la ronda 5",
     );
-    expect(t.calls.red.at(-1)?.series).toEqual({ round: 5, won: 2, lost: 1, drawn: 1, maxRounds: MAX_ROUNDS });
+    expect(t.calls.red.at(-1)?.series).toEqual({ round: 5, won: 2, lost: 1, drawn: 1, maxRounds: LEGACY_SERIES_ROUNDS });
     // Ronda 5: gana Azul y la serie queda 2 a 2.
     t.ev("red").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
@@ -1553,7 +1555,8 @@ describe("MatchManager: benchmarks", () => {
     expect(state.settings).toMatchObject({ mode: "rounds", timer: true });
     expect(state.series?.maxRounds).toBe(2);
     expect(t.fighters.red?.rounds).toEqual({ maxRounds: 2, scenario: "dilemma", horizon: "known", byPoints: true, refillKit: false });
-    expect(t.logs.some((l) => l.text.includes("se juega por rondas"))).toBe(true);
+    // Con 2 rondas ya es una serie: no hay nada que avisar.
+    expect(t.logs.some((l) => l.text.includes("se juega como serie"))).toBe(false);
 
     // Ronda 1: Rojo ataca y Azul no; se acaba el tiempo. 5 a 0.
     t.ev("blue").onDamageTaken(2, 28, false);
@@ -1610,6 +1613,23 @@ describe("MatchManager: benchmarks", () => {
     await roundRunning(t, 2);
     expect(t.rconCommands.filter((c) => c.startsWith("item replace entity ")).length).toBeGreaterThan(before);
     expect(t.fighters.red?.rounds?.refillKit).toBe(true);
+  });
+
+  it("rondas: 1 es una pelea suelta y más de 1 una serie; un escenario con puntos en 1 ronda es una serie de 1", async () => {
+    const single = setup({ settings: { rounds: 1 } });
+    await startRunning(single);
+    expect(single.manager.getState()).toMatchObject({ series: null, settings: { mode: "single" } });
+    await single.manager.shutdown();
+
+    const three = setup({ settings: { rounds: 3 } });
+    await startRunning(three);
+    expect(three.manager.getState()).toMatchObject({ series: { maxRounds: 3 }, settings: { mode: "rounds" } });
+    await three.manager.shutdown();
+
+    const dilemma = setup({ settings: { scenario: "dilemma", rounds: 1 } });
+    await startRunning(dilemma);
+    expect(dilemma.manager.getState().series?.maxRounds).toBe(1);
+    expect(dilemma.logs.some((l) => l.text.includes("se juega como serie"))).toBe(true);
   });
 
   it("horizonte desconocido: el agente no recibe cuántas rondas hay", async () => {

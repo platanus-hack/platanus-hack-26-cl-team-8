@@ -353,3 +353,12 @@ describe("parseSettings", () => {
     expect(parseMatchLines(JSON.stringify(old))[0]?.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 });
+
+describe("parseSettings: rondas", () => {
+  it("el modo sale de las rondas; un archivo de antes con mode rounds era una serie de 5", () => {
+    expect(parseSettings('{"rounds":3}')).toMatchObject({ rounds: 3, mode: "rounds" });
+    expect(parseSettings('{"rounds":1,"mode":"rounds"}')).toMatchObject({ rounds: 1, mode: "single" });
+    expect(parseSettings('{"mode":"rounds"}')).toMatchObject({ rounds: 5, mode: "rounds" });
+    expect(parseSettings("{}")).toMatchObject({ rounds: 1, mode: "single" });
+  });
+});

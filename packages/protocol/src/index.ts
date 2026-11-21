@@ -680,13 +680,15 @@ export type MatchMode = z.infer<typeof MatchModeSchema>;
 export const DEFAULT_MODE: MatchMode = "single";
 
 /** Máximo de rondas de una serie (modo "rounds"). */
-export const MAX_ROUNDS = 5;
+export const MAX_ROUNDS = 10;
+/** Rondas que se le dan a una serie pedida con mode "rounds" sin decir cuántas (clientes de antes). */
+export const LEGACY_SERIES_ROUNDS = 5;
 
 export const MODE_LABELS: Record<MatchMode, { name: string; description: string }> = {
   single: { name: "Una pelea", description: "Una sola pelea: gana quien deje fuera al otro." },
   rounds: {
-    name: `Hasta ${MAX_ROUNDS} rondas`,
-    description: `Una serie de hasta ${MAX_ROUNDS} rondas. Cada agente sabe cómo va la serie y puede rendirse en una ronda; el inventario no se repone entre rondas.`,
+    name: "Serie de rondas",
+    description: "Una serie de rondas. Cada agente sabe cómo va la serie y puede rendirse en una ronda.",
   },
 };
 
@@ -826,8 +828,11 @@ export const MatchSettingsSchema = z.object({
   mode: MatchModeSchema.catch(DEFAULT_MODE).default(DEFAULT_MODE),
   /** Benchmarks: qué reparte puntos en cada ronda (ver SCENARIOS). Otro que "duel" juega por rondas. */
   scenario: ScenarioIdSchema.catch(DEFAULT_SCENARIO).default(DEFAULT_SCENARIO),
-  /** Rondas de la serie (modo "rounds"), de 2 a MAX_ROUNDS. */
-  rounds: z.number().int().min(2).max(MAX_ROUNDS).catch(MAX_ROUNDS).default(MAX_ROUNDS),
+  /**
+   * Rondas de la partida, de 1 a MAX_ROUNDS: 1 = una pelea suelta, 2 o más = una serie.
+   * `mode` se deduce de aquí (ver syncMode).
+   */
+  rounds: z.number().int().min(1).max(MAX_ROUNDS).catch(1).default(1),
   /** Si los agentes saben cuántas rondas tiene la serie. */
   horizon: HorizonSchema.catch("known").default("known"),
   /** Cómo se gana la serie (ver SERIES_WINS). */
@@ -856,13 +861,21 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   mode: DEFAULT_MODE,
   voice: false,
   scenario: DEFAULT_SCENARIO,
-  rounds: MAX_ROUNDS,
+  rounds: 1,
   horizon: "known",
   seriesWin: "auto",
   refillKit: false,
   judge: false,
   rules: { red: [], blue: [] },
 };
+
+/**
+ * El formato sale del número de rondas: 1 es una pelea suelta y más de 1, una serie.
+ * Siempre se guarda y se devuelve así, para que `mode` y `rounds` nunca se contradigan.
+ */
+export function syncMode<T extends Pick<MatchSettings, "mode" | "rounds">>(settings: T): T {
+  return { ...settings, mode: settings.rounds > 1 ? "rounds" : "single" };
+}
 
 export const VOICE_LABELS = {
   on: "Lo que los agentes se dicen también se oye, con una voz distinta por lado.",
@@ -885,7 +898,7 @@ export const UpdateSettingsBodySchema = z
     mode: MatchModeSchema.optional(),
     voice: z.boolean().optional(),
     scenario: ScenarioIdSchema.optional(),
-    rounds: z.number().int().min(2).max(MAX_ROUNDS).optional(),
+    rounds: z.number().int().min(1).max(MAX_ROUNDS).optional(),
     horizon: HorizonSchema.optional(),
     seriesWin: SeriesWinSchema.optional(),
     refillKit: z.boolean().optional(),

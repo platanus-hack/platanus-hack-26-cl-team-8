@@ -8,6 +8,7 @@ import {
   API_ROUTES,
   DEFAULT_SETTINGS,
   buildBenchReport,
+  syncMode,
   type AgentStatus,
   type MatchRecord,
   type MatchState,
@@ -129,7 +130,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     settings: {
       get: () => ({ ...settings }),
       update: async (change) => {
-        settings = { ...settings, ...change };
+        settings = syncMode({ ...settings, ...change });
         return { ...settings };
       },
     },
@@ -188,7 +189,8 @@ describe("PUT /api/settings", () => {
   it("acepta el modo de la partida y cambia solo eso", async () => {
     const s = await server();
     expect((await put(s, { timer: false })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, timerSeconds: null, mode: "single", voice: false });
-    expect((await put(s, { mode: "rounds" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, timerSeconds: null, mode: "rounds", voice: false });
+    // Un cliente de antes que solo manda el modo pide una serie de 5 rondas.
+    expect((await put(s, { mode: "rounds" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, timerSeconds: null, mode: "rounds", rounds: 5, voice: false });
     expect((await put(s, { mode: "single" })).json()).toEqual({ ...DEFAULT_SETTINGS, comms: "none", timer: false, timerSeconds: null, mode: "single", voice: false });
     const bad = await put(s, { mode: "torneo" });
     expect(bad.statusCode).toBe(400);
@@ -226,7 +228,7 @@ describe("PUT /api/settings", () => {
 
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
     const s = await server();
-    for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }, { rounds: 1 }, { rounds: 6 }, { scenario: "batalla" }, { rules: { red: ["volar"] } }]) {
+    for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }, { rounds: 0 }, { rounds: 11 }, { rounds: 2.5 }, { scenario: "batalla" }, { rules: { red: ["volar"] } }]) {
       const res = await put(s, payload);
       expect(res.statusCode).toBe(400);
     }
@@ -519,5 +521,18 @@ describe("parseRange", () => {
     expect(parseRange("bytes=0-1,4-5", 10)).toBeNull();
     expect(parseRange("bytes=10-", 10)).toBe("invalid");
     expect(parseRange("bytes=4-2", 10)).toBe("invalid");
+  });
+});
+
+describe("PUT /api/settings: rondas", () => {
+  const put = (s: FastifyInstance, payload: Record<string, unknown>) => s.inject({ method: "PUT", url: "/api/settings", payload });
+
+  it("1 es una pelea suelta y más de 1 una serie; el modo sale de ahí", async () => {
+    const s = await server();
+    expect((await put(s, { rounds: 3 })).json()).toMatchObject({ rounds: 3, mode: "rounds" });
+    expect((await put(s, { rounds: 1 })).json()).toMatchObject({ rounds: 1, mode: "single" });
+    // Con un número de rondas, el modo que venga no manda.
+    expect((await put(s, { rounds: 4, mode: "single" })).json()).toMatchObject({ rounds: 4, mode: "rounds" });
+    expect((await put(s, { mode: "single" })).json()).toMatchObject({ rounds: 1, mode: "single" });
   });
 });

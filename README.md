@@ -291,7 +291,7 @@ El `reason` de cada herramienta y las respuestas sin herramientas también se pi
 
 ## Modo por rondas
 
-En la web, **Formato de la partida** elige entre una sola pelea y una serie de **hasta 5 rondas** (`mode` en `PUT /api/settings`: `single` o `rounds`); vale desde la próxima partida.
+En la web, **Rondas** es un número entero de 1 a 10 (`rounds` en `PUT /api/settings`): 1 es una pelea suelta y 2 o más, una serie; vale desde la próxima partida. `mode` (`single` o `rounds`) se deduce de ese número; un cliente que solo manda `mode: "rounds"` recibe una serie de 5.
 
 - Una ronda termina cuando uno de los dos muere, cuando uno **se rinde** (herramienta `surrender`, que solo existe en este modo) o, con el límite de tiempo encendido, cuando se acaba el tiempo de la ronda: ahí la gana quien tenga más vida, y con la misma vida la ronda queda empatada.
 - La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan (3-0, 3-1…) o después de la quinta. Gana quien haya ganado más rondas; con las mismas, empate.

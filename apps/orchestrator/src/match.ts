@@ -250,9 +250,11 @@ function newSeries(maxRounds: number): Series {
 export function effectiveSettings(settings: MatchSettings): { settings: MatchSettings; notes: string[] } {
   const out = structuredClone(settings);
   const notes: string[] = [];
+  // El formato sale de las rondas: más de 1 es una serie.
+  out.mode = out.rounds > 1 ? "rounds" : "single";
   if (out.scenario !== "duel" && out.mode !== "rounds") {
     out.mode = "rounds";
-    notes.push(`El escenario "${SCENARIOS[out.scenario].name}" se juega por rondas`);
+    notes.push(`El escenario "${SCENARIOS[out.scenario].name}" se juega como serie (aunque sea de 1 ronda) para repartir sus puntos`);
   }
   if (out.scenario === "injection" && out.comms !== "chat") {
     out.comms = "chat";

@@ -7,12 +7,9 @@ import {
   COMMS_MODES,
   DEFAULT_COMMS,
   DEFAULT_KIT,
-  DEFAULT_MODE,
   KITS,
   KIT_LIST,
-  MATCH_MODES,
   MAX_HEALTH,
-  MODE_LABELS,
   TIMER_LABELS,
   VOICE_LABELS,
   DEFAULT_SCENARIO,
@@ -233,12 +230,20 @@ const stats = [
         <div class="match-settings" id="settings-field">
           <div class="comms">
             <label class="field">
-              <span class="field__label">Formato de la partida</span>
-              <select id="mode" aria-describedby="mode-description">
-                {MATCH_MODES.map((mode) => <option value={mode} selected={mode === DEFAULT_MODE}>{MODE_LABELS[mode].name}</option>)}
-              </select>
+              <span class="field__label">Rondas</span>
+              <input
+                id="rounds-count"
+                class="count-input"
+                type="number"
+                min="1"
+                max={MAX_ROUNDS}
+                step="1"
+                value="1"
+                inputmode="numeric"
+                aria-describedby="mode-description"
+              />
             </label>
-            <p class="comms__description" id="mode-description">{MODE_LABELS[DEFAULT_MODE].description}</p>
+            <p class="comms__description" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
           </div>
           <div class="comms">
             <label class="field">
@@ -302,11 +307,7 @@ const stats = [
             <p class="comms__description comms__hint" id="scenario-hint" hidden></p>
           </div>
           <div class="comms" id="series-options">
-            <div class="rounds">
-              <label class="field">
-                <span class="field__label">Rondas</span>
-                <input id="rounds" type="number" min="2" max={MAX_ROUNDS} step="1" value={MAX_ROUNDS} inputmode="numeric" aria-describedby="series-description" />
-              </label>
+            <div class="series-fields">
               <label class="field">
                 <span class="field__label">Horizonte</span>
                 <select id="horizon" aria-describedby="series-description">
