@@ -465,40 +465,91 @@ textarea {
   margin-right: auto;
 }
 
-/* Barra de vida: 10 bloques, como los 10 corazones de Minecraft. */
-.hp {
-  height: 18px;
-  background: rgba(0, 0, 0, 0.55);
-  /* Los cortes entre bloques son transparentes: se ve el video a través. */
-  mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0,
-    #000 calc(10% - 3px),
-    transparent calc(10% - 3px),
-    transparent 10%
-  );
+/*
+ * Vida en corazones, con el dibujo del HUD de Minecraft (9x9 píxeles): una fila de
+ * casilleros y, encima de cada uno, el corazón rojo recortado en la fracción que le toca
+ * (scoreboard.ts). Como en el juego, cada corazón pisa un píxel del anterior. --px es
+ * cuánto mide en pantalla un píxel del dibujo: siempre entero, para que se vea nítido.
+ */
+.hearts {
+  --px: 3px;
+  display: flex;
 }
 
-.hp__fill {
-  width: 0;
-  height: 100%;
-  background: var(--side);
-  /* Corta: la barra baja junto con el golpe que se ve, sin quedarse atrás de la imagen. */
-  transition: width 0.15s ease-out;
+.heart {
+  position: relative;
+  flex: none;
+  width: calc(9 * var(--px));
+  height: calc(9 * var(--px));
 }
 
-/* Azul es el espejo de Rojo: se llena desde la derecha hacia el centro. */
-.hud__side--blue .hp {
+.heart + .heart {
+  margin-left: calc(-1 * var(--px));
+}
+
+/* Azul es el espejo de Rojo: sus corazones parten desde el borde derecho. */
+.hud__side--blue .hearts {
+  flex-direction: row-reverse;
+}
+
+.hud__side--blue .heart + .heart {
+  margin-left: 0;
+  margin-right: calc(-1 * var(--px));
+}
+
+/*
+ * El espejo llega hasta adentro de cada corazón: en Azul el rojo se vacía desde el lado
+ * del centro, así medio corazón conserva la mitad de afuera (la derecha), igual que la
+ * fila entera. El recorte se calcula como en Rojo y aquí solo se da vuelta el dibujo.
+ */
+.hud__side--blue .heart__fill {
   transform: scaleX(-1);
 }
 
-.hud__side.is-hit .hp__fill {
-  animation: hit 0.4s ease-out;
+.heart__sprite {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-@keyframes hit {
+/* El rojo se recorta desde la derecha; el recorte se anima y la vida cambia sin saltos. */
+.heart__fill {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.3s ease-out;
+}
+
+/* Con dos corazones o menos tiemblan, alternados, igual que en el juego. */
+.hearts[data-level="low"] .heart {
+  animation: heart-shake 0.3s steps(2, end) infinite;
+}
+
+.hearts[data-level="low"] .heart:nth-child(even) {
+  animation-delay: -0.15s;
+}
+
+@keyframes heart-shake {
+  50% {
+    transform: translateY(calc(-1 * var(--px)));
+  }
+}
+
+/* Golpe recibido: el rojo se aclara un instante, como el parpadeo del juego. */
+.hud__side.is-hit .heart__fill {
+  animation: heart-hit 0.4s steps(2, end);
+}
+
+@keyframes heart-hit {
   from {
-    background: #fff;
+    filter: brightness(1.5) saturate(0.55);
+  }
+}
+
+/* Desde 1280 px de ancho los 15 corazones caben con píxeles de 4 px. */
+@media (min-width: 1280px) {
+  .hearts {
+    --px: 4px;
   }
 }
 
@@ -1784,14 +1835,12 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   list-style: none;
 }
 
-.history__toggle::-webkit-details-marker,
-.bout__head::-webkit-details-marker {
+.history__toggle::-webkit-details-marker {
   display: none;
 }
 
 /* Flecha de "se despliega", dibujada con bordes: apunta a la derecha y gira al abrir. */
-.history__toggle::before,
-.bout__head::before {
+.history__toggle::before {
   content: "";
   flex: none;
   align-self: center;
@@ -1803,13 +1852,11 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   transition: transform 0.12s ease-out;
 }
 
-.history[open] > .history__toggle::before,
-.bout__fold[open] > .bout__head::before {
+.history[open] > .history__toggle::before {
   transform: rotate(45deg);
 }
 
-.history__toggle:hover::before,
-.bout__head:hover::before {
+.history__toggle:hover::before {
   border-color: var(--text);
 }
 
@@ -1870,55 +1917,188 @@ body:not([data-phase="preparing"]):not([data-phase="running"]) #btn-stop {
   font-size: 14px;
 }
 
-/* Una pelea: plegada es una línea; abierta muestra el prompt de cada lado con su marca. */
+/*
+ * Una pelea es una sola fila: Rojo a la izquierda y Azul a la derecha, como en el
+ * marcador. El que ganó lleva su bloque lleno y la corona; el que perdió queda hueco y
+ * apagado. A la derecha, en íconos, lo marcado y los ajustes; lo escrito va al abrirla.
+ */
 .bout {
   border-top: 1px solid var(--line);
 }
 
-.bout__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 16px;
-  padding: 14px 0;
+.row {
+  display: grid;
+  /* La última columna es fija: así el bloque de Azul queda alineado en todas las filas. */
+  grid-template-columns: 8px minmax(0, 1fr) 64px minmax(0, 1fr) 236px;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 0;
   cursor: pointer;
   list-style: none;
 }
 
-.bout__body {
-  display: grid;
-  gap: 14px;
-  padding: 2px 0 26px 23px;
+.row::-webkit-details-marker {
+  display: none;
 }
 
-.bout__marks {
+.row::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--faint);
+  border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease-out;
+}
+
+.bout__fold[open] > .row::before {
+  transform: rotate(45deg);
+}
+
+.row:hover::before {
+  border-color: var(--text);
+}
+
+.row__side {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Azul es el espejo: su bloque queda pegado al centro por el otro lado. */
+.row__side[data-side="blue"] {
+  flex-direction: row-reverse;
+}
+
+.row__name {
+  flex: none;
+  padding: 4px 8px 5px;
+  background: var(--side);
+  color: #0b0b0d;
+  font: 400 16px/1 var(--pixel);
+}
+
+/* Perdió: hueco y apagado. */
+.row__side[data-outcome="lost"] .row__name {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--faint);
+}
+
+.row__side[data-outcome="lost"] .row__model {
+  opacity: 0.5;
+}
+
+/* Sin ganador (empate, detenida, error o sin resultado): los dos huecos, de su color. */
+.row__side[data-outcome="draw"] .row__name,
+.row__side[data-outcome="none"] .row__name {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--side);
+  color: var(--side);
+}
+
+/* El modelo ocupa lo que sobra y, si no cabe, se corta con puntos suspensivos. */
+.row__model {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+.row__model .model-tag__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Lugar de la corona: mide lo mismo con o sin corona, para que nada se corra entre filas. */
+.row__crown {
+  display: flex;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--amber);
+}
+
+.row__mid {
+  display: flex;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.row__mid--live {
+  align-items: center;
+  gap: 6px;
+  color: var(--ok);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.row__mid--live::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--ok);
+  animation: blink 1.2s steps(2, end) infinite;
+}
+
+/* Íconos, duración y hora, cada uno en su columna. */
+.row__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 78px;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row__icons {
+  display: grid;
+  grid-template-columns: repeat(4, 22px);
+  justify-content: end;
   gap: 6px;
 }
 
-.bout__title {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
+.row__length,
+.row__when {
+  text-align: right;
+  white-space: nowrap;
 }
 
-.bout.is-live .bout__title {
-  color: var(--ok);
+.row__icon {
+  display: flex;
+  width: 22px;
+  height: 22px;
+}
+
+.row__flag {
+  color: var(--side);
+}
+
+.row__when {
+  color: var(--faint);
+}
+
+/* La ayuda de lo que está al borde derecho se abre hacia la izquierda. */
+.row__meta [data-tip]::after,
+.row__side[data-side="blue"] [data-tip]::after {
+  left: auto;
+  right: 0;
+}
+
+/* Lo de adentro parte en la misma columna que los nombres de la fila. */
+.bout__body {
+  display: grid;
+  gap: 14px;
+  padding: 6px 0 26px 56px;
 }
 
 .bout__facts {
   margin: 0;
-  flex: 1 1 240px;
-  min-width: 0;
   color: var(--muted);
   font-size: 14px;
-}
-
-.bout__when {
-  color: var(--faint);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
 }
 
 .bout__transcript {

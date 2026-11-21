@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@phack/llm";
-import { SIDES, kitOf, type MatchRecord, type MatchResult, type Side } from "@phack/protocol";
+import { MAX_HEALTH, SIDES, kitOf, type MatchRecord, type MatchResult, type Side } from "@phack/protocol";
 import { SIDE_LABEL, otherSide } from "./result";
 import { truncate } from "./util";
 
@@ -69,7 +69,7 @@ export function summarizeMatch(record: MatchRecord): string {
     const prompt = truncate(config.prompt.replace(/\s+/g, " ").trim(), PROMPT_EXCERPT) || "(sin prompt)";
     lines.push(
       `${SIDE_LABEL[side]} (${model}, kit ${kitOf(config).name}): prompt "${prompt}". ` +
-        `Vida final ${num(finalHealth(record, side))}/20, daño hecho ${num(agent.damageDealt)}, ` +
+        `Vida final ${num(finalHealth(record, side))}/${MAX_HEALTH}, daño hecho ${num(agent.damageDealt)}, ` +
         `${agent.decisions} decisiones, ${Math.round(agent.avgDecisionMs)} ms promedio por decisión.`,
     );
   }
@@ -140,10 +140,10 @@ export function fallbackExplanation(record: MatchRecord): string {
     const red = record.final.red;
     const blue = record.final.blue;
     if (red.damageDealt <= 0 && blue.damageDealt <= 0) {
-      return `Empate: en ${time} ninguno logró dañar al otro y ambos terminaron con ${num(finalHealth(record, "red"))}/20 de vida.`;
+      return `Empate: en ${time} ninguno logró dañar al otro y ambos terminaron con ${num(finalHealth(record, "red"))}/${MAX_HEALTH} de vida.`;
     }
     return (
-      `Empate: al acabarse el tiempo ambos quedaron con ${num(finalHealth(record, "red"))}/20 de vida ` +
+      `Empate: al acabarse el tiempo ambos quedaron con ${num(finalHealth(record, "red"))}/${MAX_HEALTH} de vida ` +
       `(Rojo hizo ${num(red.damageDealt)} de daño y Azul ${num(blue.damageDealt)}).`
     );
   }
@@ -164,9 +164,9 @@ export function fallbackExplanation(record: MatchRecord): string {
   let sentence =
     result.reason === "kill"
       ? `${W} ganó por KO a los ${time}: hizo ${num(winner.damageDealt)} de daño contra ${num(loser.damageDealt)} de ${L} ` +
-        `y terminó con ${num(finalHealth(record, winnerSide))}/20 de vida`
-      : `Se acabó el tiempo y ${W} ganó por vida: terminó con ${num(finalHealth(record, winnerSide))}/20 ` +
-        `frente a ${num(finalHealth(record, loserSide))}/20 de ${L}, tras hacer ${num(winner.damageDealt)} de daño contra ${num(loser.damageDealt)}`;
+        `y terminó con ${num(finalHealth(record, winnerSide))}/${MAX_HEALTH} de vida`
+      : `Se acabó el tiempo y ${W} ganó por vida: terminó con ${num(finalHealth(record, winnerSide))}/${MAX_HEALTH} ` +
+        `frente a ${num(finalHealth(record, loserSide))}/${MAX_HEALTH} de ${L}, tras hacer ${num(winner.damageDealt)} de daño contra ${num(loser.damageDealt)}`;
 
   // Si el ganador además pensaba claramente más rápido (≥ 25 %), vale la pena decirlo:
   // con decisiones más frecuentes reacciona antes al rival.

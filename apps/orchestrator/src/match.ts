@@ -3,6 +3,7 @@ import type { DecisionReport, Fighter, FighterEvents, FighterOptions } from "@ph
 import type { Env } from "@phack/env";
 import type { ApiKeys, LlmClient } from "@phack/llm";
 import {
+  MAX_HEALTH,
   AGENT_USERNAMES,
   COUNTDOWN_SECONDS,
   DEFAULT_KIT,
@@ -132,7 +133,7 @@ function emptyStatus(side: Side): AgentStatus {
     username: AGENT_USERNAMES[side],
     connected: false,
     alive: false,
-    health: 20,
+    health: MAX_HEALTH,
     food: 20,
     damageDealt: 0,
     decisions: 0,
@@ -350,7 +351,7 @@ export class MatchManager {
       for (const side of SIDES) {
         // Recién curados y teletransportados: se parte con vida completa.
         this.state.agents[side].alive = true;
-        this.state.agents[side].health = 20;
+        this.state.agents[side].health = MAX_HEALTH;
         this.state.agents[side].damageDealt = 0;
         ctx.absorption[side] = 0;
       }
@@ -690,7 +691,7 @@ export class MatchManager {
       this.deps.hub.flushState();
       this.record(ctx, { type: "phase", at: endedAt, phase: "finished" });
 
-      // Foto final ANTES de desconectar (al reaparecer el perdedor vuelve a 20 de vida).
+      // Foto final ANTES de desconectar (al reaparecer el perdedor vuelve a tener la vida completa).
       record = {
         id: ctx.id,
         startedAt,

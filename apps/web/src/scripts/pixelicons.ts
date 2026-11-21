@@ -11,6 +11,9 @@
  *   forward, back, pause   acercarse, alejarse y esperar (para las acciones)
  *   sound-on, sound-off    botón de sonido
  *
+ *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
+ *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
+ *
  *   sword, axe, bow, arrow, steak, gapple, pearl, tile   ítems de los kits (tile = un bloque)
  *   helmet, chestplate, leggings, boots                  las cuatro piezas de armadura
  *
@@ -456,6 +459,119 @@ export const ICONS = {
       "kkabk.kbckk",
       "kabbk.kbbck",
       "kkkkk.kkkkk",
+      "...........",
+      "...........",
+    ],
+  },
+  // Historial: señales de un solo color, que toman el color del texto donde se dibujan.
+  crown: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      ".x...x...x.",
+      ".x..xxx..x.",
+      ".xx.xxx.xx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "...........",
+      ".xxxxxxxxx.",
+      "...........",
+    ],
+  },
+  tie: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      "...........",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "...........",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "...........",
+      "...........",
+      "...........",
+    ],
+  },
+  halt: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "...........",
+      "...........",
+    ],
+  },
+  alert: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "....xxx....",
+      "....xxx....",
+      "....xxx....",
+      "....xxx....",
+      "....xxx....",
+      "....xxx....",
+      "...........",
+      "....xxx....",
+      "....xxx....",
+      "...........",
+    ],
+  },
+  flag: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "..x........",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..xxxxxxx..",
+      "..x........",
+      "..x........",
+      "..x........",
+      "..x........",
+      "...........",
+    ],
+  },
+  talk: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      ".xxxxxxxxx.",
+      "...xx......",
+      "...x.......",
+      "...........",
+      "...........",
+    ],
+  },
+  endless: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      "...........",
+      ".xxx...xxx.",
+      "x...x.x...x",
+      "x....x....x",
+      "x...x.x...x",
+      ".xxx...xxx.",
+      "...........",
       "...........",
       "...........",
     ],

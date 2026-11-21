@@ -1,4 +1,4 @@
-import { SIDES, type AgentStatus, type MatchResult, type MatchState, type Side } from "@phack/protocol";
+import { MAX_HEALTH, SIDES, type AgentStatus, type MatchResult, type MatchState, type Side } from "@phack/protocol";
 import { costOf, onCatalogReady } from "./catalog";
 import { byId, el, setText } from "./dom";
 import { formatClock, formatNumber, phaseLabel, resultDetail, resultTitle } from "./format";
@@ -8,7 +8,6 @@ import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
 import type { IconRef } from "./pixelicons";
 import { videoServerNow } from "./player";
 
-const MAX_HEALTH = 20;
 const URGENT_MS = 10_000;
 
 type SideElements = {
@@ -17,7 +16,8 @@ type SideElements = {
   status: HTMLElement;
   model: HTMLElement;
   hp: HTMLElement;
-  hpFill: HTMLElement;
+  /** El corazón lleno de cada casillero, del primero (el último en perderse) al último. */
+  hearts: HTMLElement[];
   hpValue: HTMLElement;
   food: HTMLElement;
   damage: HTMLElement;
@@ -52,7 +52,7 @@ function sideElements(side: Side): SideElements {
     status: byId(`fighter-state-${side}`),
     model: byId(`fighter-model-${side}`),
     hp: byId(`hp-${side}`),
-    hpFill: byId(`hp-fill-${side}`),
+    hearts: Array.from(byId(`hp-${side}`).querySelectorAll<HTMLElement>(".heart__fill")),
     hpValue: byId(`hp-value-${side}`),
     food: byId(`food-${side}`),
     damage: byId(`damage-${side}`),
@@ -84,11 +84,29 @@ export function initScoreboard(): void {
   onCatalogReady(redraw);
 }
 
+/** Con esta vida o menos los corazones tiemblan, como en el juego (dos corazones). */
+const LOW_HEALTH = 4;
+/**
+ * El rojo del corazón empieza en la columna 1 de las 9 del dibujo. Con este recorte, medio
+ * corazón deja visibles las columnas 1 a 4, igual que el medio corazón del juego.
+ */
+const HEART_LEFT = 1 / 9;
+const HEART_WIDTH = 8 / 9;
+
+/**
+ * Llena los corazones con la vida exacta: cada uno vale 2 puntos y se recorta en la
+ * fracción que le toca (13,6 de vida son 6 corazones llenos y el séptimo al 80 %). El
+ * recorte se anima en global.css, así la vida sube y baja sin saltos.
+ */
 function setHealth(side: SideElements, health: number): void {
   const clamped = Math.min(MAX_HEALTH, Math.max(0, health));
-  side.hpFill.style.width = `${(clamped / MAX_HEALTH) * 100}%`;
+  side.hearts.forEach((fill, index) => {
+    const part = Math.min(1, Math.max(0, (clamped - index * 2) / 2));
+    const visible = part <= 0 ? 0 : HEART_LEFT + HEART_WIDTH * part;
+    fill.style.clipPath = `inset(0 ${((1 - visible) * 100).toFixed(2)}% 0 0)`;
+  });
   side.hp.setAttribute("aria-valuenow", String(Math.round(clamped)));
-  side.hp.dataset.level = clamped <= 6 ? "low" : clamped <= 12 ? "mid" : "high";
+  side.hp.dataset.level = clamped > 0 && clamped <= LOW_HEALTH ? "low" : "ok";
   setText(side.hpValue, formatNumber(clamped));
 }
 

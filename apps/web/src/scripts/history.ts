@@ -27,8 +27,10 @@ import {
 import { ApiError, describeError, fetchFlags, fetchMatches, removeFlag, saveFlag } from "./api";
 import { MOCK, apiUrl } from "./config";
 import { byId, el } from "./dom";
-import { SIDE_LABEL, formatDateTime, formatDuration, formatNumber, resultDetail } from "./format";
+import { SIDE_LABEL, formatClock, formatDateTime, formatDuration, formatNumber, resultDetail } from "./format";
+import { pixelIcon } from "./icons";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
+import type { IconName } from "./pixelicons";
 import { loadIntoEditor } from "./prompts";
 import { showToast } from "./toast";
 
@@ -350,15 +352,64 @@ function sideCell(bout: Bout, side: Side): HTMLElement {
   return cell;
 }
 
+/** Un ícono de la fila, con su ayuda al pasar el mouse. */
+function rowIcon(name: IconName, tip: string, className: string): HTMLElement {
+  const holder = el("span", className);
+  holder.dataset.tip = tip;
+  holder.append(pixelIcon({ name }));
+  return holder;
+}
+
 /**
- * Una pelea, plegada en una línea: qué pasó, las etiquetas de lo marcado y cuándo. Al
- * abrirla aparecen el prompt de cada lado, su marca y los botones.
+ * Un lado en la fila: su nombre en un bloque y su modelo. El bloque va lleno, del color
+ * del lado y con la corona si ganó; hueco y apagado si perdió.
+ */
+function rowSide(bout: Bout, side: Side): HTMLElement {
+  const outcome = outcomeOf(bout.result, side);
+  const cell = el("span", "row__side");
+  cell.dataset.side = side;
+  cell.dataset.outcome = bout.live ? "live" : outcome;
+  // El lugar de la corona existe siempre, aunque vaya vacío: así los nombres y los modelos
+  // quedan en la misma columna en todas las filas.
+  cell.append(
+    outcome === "won" ? rowIcon("crown", `Ganó ${SIDE_LABEL[side]}`, "row__crown") : el("span", "row__crown"),
+    el("span", "row__name", SIDE_LABEL[side]),
+  );
+  const model = el("span", "model-tag row__model");
+  renderModelTag(model, resolveModel(bout.configs[side]));
+  cell.append(model);
+  return cell;
+}
+
+/** Entre los dos lados: "vs", o el ícono de cómo terminó cuando nadie ganó. */
+function rowMiddle(bout: Bout): HTMLElement {
+  if (bout.live) return el("span", "row__mid row__mid--live", "En vivo");
+  const result = bout.result;
+  if (!result || result.winner) return el("span", "row__mid", "vs");
+  const icon: IconName = result.reason === "draw" ? "tie" : result.reason === "stopped" ? "halt" : "alert";
+  return rowIcon(icon, `${headline(bout)}. ${resultDetail(result)}`, "row__mid");
+}
+
+/** Todo lo que se sabe de la pelea, en una frase: va dentro, al abrirla. */
+function factsLine(bout: Bout): string {
+  const facts = [`${headline(bout)}.`];
+  if (bout.result && !bout.live) facts.push(resultDetail(bout.result));
+  if (bout.durationMs !== null) facts.push(`Duró ${formatDuration(bout.durationMs)}.`);
+  facts.push(`${COMMS_LABELS[bout.settings.comms].name}.`);
+  facts.push(bout.settings.timer ? "Con límite de tiempo." : "Sin límite de tiempo.");
+  return facts.join(" ");
+}
+
+/**
+ * Una pelea en una sola fila: quién contra quién, quién ganó (corona y color lleno) y, en
+ * íconos, lo marcado y los ajustes. Al abrirla aparecen los datos escritos, el prompt de
+ * cada lado, su marca y los botones.
  */
 function boutNode(bout: Bout): HTMLElement {
   const node = el("li", "bout");
   if (bout.live) node.classList.add("is-live");
   const fold = el("details", "bout__fold");
-  // La pelea en curso y la que tiene una marca a medio escribir se ven abiertas.
+  // La pelea que tiene una marca a medio escribir se ve abierta.
   const drafting = draft !== null && draft.key.startsWith(`${bout.id}:`);
   fold.open = openBouts.has(bout.id) || drafting;
   fold.addEventListener("toggle", () => {
@@ -366,33 +417,40 @@ function boutNode(bout: Bout): HTMLElement {
     else openBouts.delete(bout.id);
   });
 
-  const head = el("summary", "bout__head");
-  head.append(el("h3", "bout__title", headline(bout)));
-  const facts: string[] = [];
-  if (bout.result && !bout.live) facts.push(resultDetail(bout.result));
-  if (bout.durationMs !== null) facts.push(`Duró ${formatDuration(bout.durationMs)}.`);
-  if (bout.settings.comms !== "none") facts.push(`${COMMS_LABELS[bout.settings.comms].name}.`);
-  if (!bout.settings.timer) facts.push("Sin límite de tiempo.");
-  head.append(el("p", "bout__facts", facts.join(" ")));
-  // Plegada, las etiquetas dicen qué se marcó en esta pelea y de qué lado.
-  const marked = SIDES.flatMap((side) => {
+  const head = el("summary", "row");
+  // Los íconos no se leen: la frase completa va para lectores de pantalla.
+  head.append(el("span", "sr-only", factsLine(bout)), rowSide(bout, "red"), rowMiddle(bout), rowSide(bout, "blue"));
+
+  // Tres columnas fijas (íconos, duración y hora), existan o no: todo queda alineado entre filas.
+  const meta = el("span", "row__meta");
+  // Cada ícono tiene su casillero (marca de Rojo, marca de Azul, se hablaban, sin límite):
+  // el que no aplica queda vacío, y el mismo ícono cae siempre en la misma columna.
+  const icons = el("span", "row__icons");
+  for (const side of SIDES) {
     const flag = bout.flags[side];
-    if (!flag) return [];
-    const tags = el("ul", "tags");
-    tags.dataset.side = side;
-    if (flag.tags.length === 0) tags.append(el("li", "tags__item tags__item--plain", "Marcado"));
-    for (const tag of flag.tags) tags.append(el("li", "tags__item", tag));
-    return [tags];
-  });
-  if (marked.length > 0) {
-    const holder = el("div", "bout__marks");
-    holder.append(...marked);
-    head.append(holder);
+    if (!flag) {
+      icons.append(el("span", "row__icon"));
+      continue;
+    }
+    const tags = flag.tags.length > 0 ? flag.tags.join(", ") : "sin etiquetas";
+    const mark = rowIcon("flag", `Prompt ${SIDE_LABEL[side]} marcado: ${tags}`, "row__icon row__flag");
+    mark.dataset.side = side;
+    icons.append(mark);
   }
-  if (!bout.live) head.append(el("time", "bout__when", formatDateTime(bout.at)));
+  icons.append(
+    bout.settings.comms !== "none"
+      ? rowIcon("talk", COMMS_LABELS[bout.settings.comms].name, "row__icon")
+      : el("span", "row__icon"),
+    bout.settings.timer ? el("span", "row__icon") : rowIcon("endless", "Sin límite de tiempo", "row__icon"),
+  );
+  const length = el("span", "row__length", bout.durationMs !== null ? formatClock(bout.durationMs) : "");
+  if (bout.durationMs !== null) length.dataset.tip = `Duró ${formatDuration(bout.durationMs)}`;
+  meta.append(icons, length, el("time", "row__when", bout.live ? "" : formatDateTime(bout.at)));
+  head.append(meta);
   fold.append(head);
 
   const body = el("div", "bout__body");
+  body.append(el("p", "bout__facts", factsLine(bout)));
   if (bout.result?.explanation) body.append(el("p", "bout__why", bout.result.explanation));
   if (!MOCK) {
     const link = el("a", "bout__transcript", "Ver transcripción");

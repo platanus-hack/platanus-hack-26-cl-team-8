@@ -23,6 +23,7 @@
 import {
   AGENT_USERNAMES,
   API_ROUTES,
+  MAX_HEALTH,
   COUNTDOWN_SECONDS,
   MatchPhaseSchema,
   UpdatePromptBodySchema,
@@ -169,7 +170,7 @@ function agent(side: Side, patch: Partial<AgentStatus>): AgentStatus {
     username: AGENT_USERNAMES[side],
     connected: true,
     alive: true,
-    health: 20,
+    health: MAX_HEALTH,
     food: 20,
     damageDealt: 0,
     decisions: 0,
@@ -507,9 +508,9 @@ function hit(attacker: Side, amount: number): void {
   const victim: Side = attacker === "red" ? "blue" : "red";
   // La maqueta nunca termina la pelea: con poca vida, ambos vuelven a 20.
   if (running[victim].health - amount <= 2) {
-    running.red.health = 20;
-    running.blue.health = 20;
-    send({ type: "log", level: "info", text: "Maqueta: la vida vuelve a 20 para seguir mostrando golpes." });
+    running.red.health = MAX_HEALTH;
+    running.blue.health = MAX_HEALTH;
+    send({ type: "log", level: "info", text: "Maqueta: la vida vuelve al máximo para seguir mostrando golpes." });
     return;
   }
   running[victim].health -= amount;
@@ -671,8 +672,8 @@ const HISTORY: MatchRecord[] = [
     { winner: null, reason: "stopped" },
     TRUCE,
     {
-      red: { health: 20, damageDealt: 0, decisions: 58, heldItem: "" },
-      blue: { health: 20, damageDealt: 0, decisions: 49, heldItem: "bow" },
+      red: { health: MAX_HEALTH, damageDealt: 0, decisions: 58, heldItem: "" },
+      blue: { health: MAX_HEALTH, damageDealt: 0, decisions: 49, heldItem: "bow" },
     },
     { comms: "chat", timer: false },
   ),

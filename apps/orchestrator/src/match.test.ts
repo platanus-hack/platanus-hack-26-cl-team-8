@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DecisionReport, FighterEvents, FighterOptions, Observation } from "@phack/agent";
 import type { LlmClient, LlmRequest, LlmResponse, TokenUsage } from "@phack/llm";
 import {
+  MAX_HEALTH,
   COUNTDOWN_SECONDS,
   MAX_AGENT_MESSAGE_LENGTH,
   type AgentConfig,
@@ -417,6 +418,24 @@ describe("MatchManager: corazones amarillos al acabarse el tiempo", () => {
     t.ev("blue").onStatus({ connected: true, alive: true, health: 14, absorption: 4, food: 20, heldItem: "iron_sword" });
     await t.manager["onTimeout"](t.manager["ctx"]!);
     expect(t.manager.getState().result).toMatchObject({ winner: "blue", reason: "timeout_health" });
+  });
+});
+
+describe("MatchManager: vida máxima", () => {
+  it("le da a cada agente la vida máxima antes de curarlo, y la pelea parte con ella", async () => {
+    const t = setup();
+    await startRunning(t);
+    for (const username of ["AgenteRojo", "AgenteAzul"]) {
+      const attribute = t.rconCommands.indexOf(`attribute ${username} minecraft:generic.max_health base set ${MAX_HEALTH}`);
+      const heal = t.rconCommands.indexOf(`effect give ${username} minecraft:instant_health 1 10 true`);
+      expect(attribute).toBeGreaterThanOrEqual(0);
+      // Curar antes de subir el máximo lo dejaría con la vida de antes.
+      expect(heal).toBeGreaterThan(attribute);
+    }
+    expect(MAX_HEALTH).toBe(30);
+    expect(t.manager.getState().agents.red.health).toBe(MAX_HEALTH);
+    expect(t.manager.getState().agents.blue.health).toBe(MAX_HEALTH);
+    await t.manager.stop();
   });
 });
 
