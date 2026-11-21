@@ -10,7 +10,11 @@ export type ChatMessage =
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; toolCallId: string; name: string; content: string };
 
-export type LlmResponse = { text: string; toolCalls: ToolCall[] };
+/** Tokens que consumió UNA llamada al modelo, según el proveedor. */
+export type TokenUsage = { inputTokens: number; outputTokens: number };
+
+/** `usage` falta si el proveedor no informó el consumo (o lo informó con basura). */
+export type LlmResponse = { text: string; toolCalls: ToolCall[]; usage?: TokenUsage };
 
 export type LlmRequest = { messages: ChatMessage[]; tools: ToolDef[]; signal?: AbortSignal };
 

@@ -1,3 +1,5 @@
+import type { TokenUsage } from "./types";
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -35,4 +37,20 @@ export function parseToolArgs(raw: unknown): Record<string, unknown> {
   if (isRecord(raw)) return raw;
   if (typeof raw === "string") return extractJsonObject(raw) ?? {};
   return {};
+}
+
+/** Un contador de tokens válido (entero >= 0) o null. */
+export function tokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+}
+
+/**
+ * Arma el consumo de tokens a partir de los campos crudos del proveedor. Si alguno
+ * falta o no es un número válido devuelve undefined: mejor no informar que informar mal.
+ */
+export function toTokenUsage(input: unknown, output: unknown): TokenUsage | undefined {
+  const inputTokens = tokenCount(input);
+  const outputTokens = tokenCount(output);
+  if (inputTokens === null || outputTokens === null) return undefined;
+  return { inputTokens, outputTokens };
 }

@@ -21,6 +21,7 @@ import { extractJsonObject, isRecord } from "./util";
  *   pelea a distancia; si no, cuerpo a cuerpo. Las reglas fijas que el agente agregue
  *   al system prompt deberían evitar esas frases para no forzar el estilo.
  *   Así dos prompts distintos producen peleas distintas incluso sin LLM real.
+ * - No informa `usage`: no hay tokens reales que contar.
  * - "Turno" = el mayor entre la cantidad de mensajes "assistant" del historial y el número
  *   de llamadas previas a ESTE cliente; se usa para alternar acciones. El contador propio
  *   existe porque el agente recorta el historial y la cuenta de mensajes se estanca.

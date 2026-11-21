@@ -1,6 +1,6 @@
 import { LlmError, postJson } from "./http";
-import type { ChatMessage, LlmClient, LlmRequest, LlmResponse, ToolCall, ToolDef } from "./types";
-import { isRecord, parseToolArgs } from "./util";
+import type { ChatMessage, LlmClient, LlmRequest, LlmResponse, TokenUsage, ToolCall, ToolDef } from "./types";
+import { isRecord, parseToolArgs, tokenCount, toTokenUsage } from "./util";
 
 /** Adaptador para la Messages API de Anthropic (POST /v1/messages). */
 
@@ -103,7 +103,23 @@ export function fromAnthropicResponse(data: unknown): LlmResponse {
     // Se gastó todo el presupuesto (normalmente pensando) antes de elegir una acción.
     text = "(respuesta cortada por max_tokens antes de elegir una acción)";
   }
-  return { text, toolCalls };
+  const response: LlmResponse = { text, toolCalls };
+  const usage = isRecord(data) && isRecord(data.usage) ? anthropicUsage(data.usage) : undefined;
+  if (usage) response.usage = usage;
+  return response;
+}
+
+/**
+ * En Anthropic, input_tokens NO incluye los tokens leídos o escritos en caché: van
+ * aparte (cache_read_input_tokens / cache_creation_input_tokens) y se suman si vienen.
+ */
+function anthropicUsage(raw: Record<string, unknown>): TokenUsage | undefined {
+  const usage = toTokenUsage(raw.input_tokens, raw.output_tokens);
+  if (!usage) return undefined;
+  for (const extra of [raw.cache_read_input_tokens, raw.cache_creation_input_tokens]) {
+    usage.inputTokens += tokenCount(extra) ?? 0;
+  }
+  return usage;
 }
 
 export function createAnthropicClient(opts: { apiKey: string; model: string }): LlmClient {

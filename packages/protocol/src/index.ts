@@ -78,6 +78,15 @@ export const AgentStatusSchema = z.object({
   decisions: z.number(),
   lastThought: z.string(),
   lastAction: z.string(),
+  // Los campos de abajo llevan valor por defecto: los registros guardados antes de que
+  // existieran (y un servidor más viejo que la web) siguen siendo válidos.
+  /** Ítem que tiene en la mano, con el nombre de Minecraft ("iron_sword", "bow", "cooked_beef"); "" = nada. */
+  heldItem: z.string().default(""),
+  /** Tokens que el LLM de este agente consumió en esta pelea (entrada y salida). */
+  tokensIn: z.number().default(0),
+  tokensOut: z.number().default(0),
+  /** Promedio de lo que tarda el LLM en responder una decisión, en ms; 0 si aún no decide. */
+  avgDecisionMs: z.number().default(0),
 });
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
@@ -87,6 +96,11 @@ export type WinReason = z.infer<typeof WinReasonSchema>;
 export const MatchResultSchema = z.object({
   winner: SideSchema.nullable(),
   reason: WinReasonSchema,
+  /**
+   * "Por qué ganó": una frase que explica el resultado. La escribe el orquestador unos
+   * segundos DESPUÉS de terminar la pelea, así que al principio no viene.
+   */
+  explanation: z.string().max(400).optional(),
 });
 export type MatchResult = z.infer<typeof MatchResultSchema>;
 

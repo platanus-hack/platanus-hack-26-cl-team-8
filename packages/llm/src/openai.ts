@@ -1,6 +1,6 @@
 import { LlmError, postJson } from "./http";
 import type { ChatMessage, LlmClient, LlmRequest, LlmResponse, ToolCall, ToolDef } from "./types";
-import { isRecord, parseToolArgs } from "./util";
+import { isRecord, parseToolArgs, toTokenUsage } from "./util";
 
 /**
  * Adaptador para el formato "chat completions" de OpenAI.
@@ -72,7 +72,14 @@ export function fromOpenAiResponse(provider: string, data: unknown): LlmResponse
     });
   });
 
-  return { text: contentToText(message.content), toolCalls };
+  const response: LlmResponse = { text: contentToText(message.content), toolCalls };
+  // OpenAI, OpenRouter y el AI Gateway informan el consumo en usage.prompt_tokens /
+  // usage.completion_tokens; algunos modelos de OpenRouter no lo mandan.
+  const usage = isRecord(data) && isRecord(data.usage)
+    ? toTokenUsage(data.usage.prompt_tokens, data.usage.completion_tokens)
+    : undefined;
+  if (usage) response.usage = usage;
+  return response;
 }
 
 export type OpenAiCompatibleOptions = {

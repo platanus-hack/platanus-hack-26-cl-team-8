@@ -1,8 +1,18 @@
 import type { Side } from "@phack/protocol";
-import type { LlmClient } from "@phack/llm";
+import type { LlmClient, TokenUsage } from "@phack/llm";
+
+/** Una llamada al LLM que terminó con respuesta (las fallidas o cortadas no se informan). */
+export type DecisionReport = {
+  /** Lo que tardó la llamada al LLM, en ms (reloj de pared). */
+  ms: number;
+  /** Tokens de esa llamada; falta si el proveedor no los informó. */
+  usage?: TokenUsage;
+};
 
 export type FighterEvents = {
-  onStatus(s: { connected: boolean; alive: boolean; health: number; food: number }): void;
+  /** `heldItem`: nombre de Minecraft del ítem en la mano principal ("" = mano vacía). */
+  onStatus(s: { connected: boolean; alive: boolean; health: number; food: number; heldItem: string }): void;
+  onDecision(d: DecisionReport): void;
   onThought(text: string): void;
   onAction(tool: string, args: Record<string, unknown>, result: string): void;
   onDamageTaken(amount: number, health: number): void;

@@ -92,6 +92,22 @@ describe("createVercelClient", () => {
     expect(options?.messages).toHaveLength(4);
   });
 
+  it("lee result.usage (inputTokens / outputTokens) del AI SDK", async () => {
+    const stub = stubGenerate({ text: "", toolCalls: [], usage: { inputTokens: 640, outputTokens: 21 } });
+    const client = createVercelClient({ apiKey: "vck_test", model: "m", generate: stub.generate });
+    const response = await client.complete({ messages: HISTORY, tools: TOOLS });
+    expect(response.usage).toEqual({ inputTokens: 640, outputTokens: 21 });
+  });
+
+  it("omite usage si el proveedor no lo informa", async () => {
+    for (const usage of [undefined, { inputTokens: undefined, outputTokens: undefined }, { inputTokens: 3 }]) {
+      const stub = stubGenerate({ text: "", toolCalls: [], usage });
+      const client = createVercelClient({ apiKey: "vck_test", model: "m", generate: stub.generate });
+      const response = await client.complete({ messages: HISTORY, tools: TOOLS });
+      expect("usage" in response).toBe(false);
+    }
+  });
+
   it("omite tools e instructions cuando no hay", async () => {
     const stub = stubGenerate({ text: "hola", toolCalls: [] });
     const client = createVercelClient({ apiKey: "vck_test", model: "m", generate: stub.generate });

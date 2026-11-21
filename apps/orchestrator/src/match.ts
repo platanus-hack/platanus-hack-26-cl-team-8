@@ -14,6 +14,7 @@ import {
   type Side,
 } from "@phack/protocol";
 import { announce, buildArena, prepareFighter, runCountdown } from "./arena";
+import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
 import { SIDE_LABEL, decideTimeoutResult, describeResult, otherSide, resultForDeath } from "./result";
@@ -23,6 +24,8 @@ const CONNECT_TIMEOUT_MS = 45_000;
 const STOP_TIMEOUT_MS = 10_000;
 /** Tiempo que el resultado queda en fase "finished" antes de volver a "idle". */
 const FINISHED_HOLD_MS = 5_000;
+/** Máximo que se espera al LLM que escribe el "por qué ganó"; después se usa la plantilla. */
+const EXPLAIN_TIMEOUT_MS = 15_000;
 
 export type MatchEnv = Pick<
   Env,
@@ -45,7 +48,11 @@ export type MatchDeps = {
   rcon: RconLike;
   hub: EventSink;
   prompts: { get(): PromptsResponse };
-  history: { append(record: MatchRecord): Promise<void> };
+  history: {
+    append(record: MatchRecord): Promise<void>;
+    /** Corrige una pelea ya guardada; false si ya no está. */
+    update(id: string, change: (record: MatchRecord) => MatchRecord): Promise<boolean>;
+  };
   createFighter: (opts: FighterOptions) => Fighter;
   createLlmClient: (opts: { provider: Provider; model?: string; apiKeys: ApiKeys }) => LlmClient;
   /** Registro para humanos (consola del servidor). */
@@ -75,6 +82,8 @@ type MatchContext = {
   timer: ReturnType<typeof setTimeout> | null;
   /** Para contar una decisión por respuesta del LLM (pensamiento + sus acciones). */
   thoughtPending: Record<Side, boolean>;
+  /** Suma y cantidad de las latencias del LLM, para el promedio (avgDecisionMs). */
+  latency: Record<Side, { totalMs: number; count: number }>;
 };
 
 function emptyStatus(side: Side): AgentStatus {
@@ -89,7 +98,16 @@ function emptyStatus(side: Side): AgentStatus {
     decisions: 0,
     lastThought: "",
     lastAction: "",
+    heldItem: "",
+    tokensIn: 0,
+    tokensOut: 0,
+    avgDecisionMs: 0,
   };
+}
+
+/** Un contador que llega de afuera: entero >= 0 o 0 si es basura. */
+function count(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
 function formatAction(tool: string, args: Record<string, unknown>, result: string): string {
@@ -152,6 +170,7 @@ export class MatchManager {
       fighters: {},
       timer: null,
       thoughtPending: { red: false, blue: false },
+      latency: { red: { totalMs: 0, count: 0 }, blue: { totalMs: 0, count: 0 } },
     };
     this.ctx = ctx;
     this.state = {
@@ -278,14 +297,18 @@ export class MatchManager {
     const provider: Provider = config.provider ?? env.LLM_PROVIDER;
     // LLM_MODEL solo aplica si el lado usa el mismo proveedor que el entorno.
     const model = config.model || (provider === env.LLM_PROVIDER ? env.LLM_MODEL : "") || undefined;
-    const apiKeys: ApiKeys = {
+    return this.deps.createLlmClient({ provider, model, apiKeys: this.apiKeys() });
+  }
+
+  private apiKeys(): ApiKeys {
+    const { env } = this.deps;
+    return {
       vercel: env.VERCEL_API_KEY || undefined,
       openai: env.OPENAI_API_KEY || undefined,
       anthropic: env.ANTHROPIC_API_KEY || undefined,
       openrouter: env.OPENROUTER_API_KEY || undefined,
       gateway: env.AI_GATEWAY_API_KEY || undefined,
     };
-    return this.deps.createLlmClient({ provider, model, apiKeys });
   }
 
   private makeEvents(ctx: MatchContext, side: Side): FighterEvents {
@@ -308,6 +331,7 @@ export class MatchManager {
         a.alive = s.alive;
         a.health = s.health;
         a.food = s.food;
+        a.heldItem = s.heldItem;
         hub.markStateDirty();
         if (this.state.phase !== "running") return;
         if (!s.connected) {
@@ -335,6 +359,22 @@ export class MatchManager {
         else a.decisions += 1;
         a.lastAction = formatAction(tool, args, result);
         hub.broadcast({ type: "action", at: Date.now(), side, tool, args, result: truncate(result, 1000) });
+        hub.markStateDirty();
+      },
+      onDecision: (d) => {
+        // Igual que el daño: solo cuenta lo que el LLM gastó durante el duelo.
+        if (!fighting()) return;
+        const a = agent();
+        if (d.usage) {
+          a.tokensIn += count(d.usage.inputTokens);
+          a.tokensOut += count(d.usage.outputTokens);
+        }
+        if (Number.isFinite(d.ms) && d.ms >= 0) {
+          const latency = ctx.latency[side];
+          latency.totalMs += d.ms;
+          latency.count += 1;
+          a.avgDecisionMs = Math.round(latency.totalMs / latency.count);
+        }
         hub.markStateDirty();
       },
       onDamageTaken: (amount, health) => {
@@ -397,6 +437,10 @@ export class MatchManager {
         result,
       };
 
+      // "Por qué ganó": se pide ya (en paralelo con la desconexión) y se adjunta después,
+      // así nunca retrasa el cierre de la pelea.
+      const explanation = reachedRunning && shouldExplain(result) ? this.explain(record) : null;
+
       const stops = SIDES.map(async (side) => {
         const fighter = ctx.fighters[side];
         if (fighter) await withTimeout(fighter.stop(), STOP_TIMEOUT_MS, "El agente no se detuvo a tiempo");
@@ -415,6 +459,7 @@ export class MatchManager {
       if (reachedRunning) {
         await this.deps.history.append(record);
         this.deps.hub.broadcast({ type: "match_end", at: Date.now(), record });
+        if (explanation) void this.attachExplanation(record.id, explanation);
       }
       this.log(result.reason === "error" ? "error" : "info", describeResult(result));
 
@@ -439,6 +484,54 @@ export class MatchManager {
           }
         }, FINISHED_HOLD_MS);
       }
+    }
+  }
+
+  /**
+   * Escribe la frase del "por qué ganó" con el proveedor y modelo por defecto del servidor
+   * (LLM_PROVIDER / LLM_MODEL). Nunca lanza: con "mock", o si el LLM falla, se demora o
+   * responde vacío, usa la plantilla armada con las estadísticas.
+   */
+  private async explain(record: MatchRecord): Promise<string> {
+    const { env } = this.deps;
+    if (env.LLM_PROVIDER === "mock") return fallbackExplanation(record);
+    const abort = new AbortController();
+    try {
+      const llm = this.deps.createLlmClient({
+        provider: env.LLM_PROVIDER,
+        model: env.LLM_MODEL || undefined,
+        apiKeys: this.apiKeys(),
+      });
+      const response = await withTimeout(
+        llm.complete({ messages: buildExplanationMessages(record), tools: [], signal: abort.signal }),
+        EXPLAIN_TIMEOUT_MS,
+        "el LLM no respondió a tiempo",
+      );
+      const text = cleanExplanation(typeof response.text === "string" ? response.text : "");
+      if (text !== "") return text;
+      this.deps.log("warn", "El LLM respondió vacío al explicar el resultado; se usa la plantilla");
+    } catch (err) {
+      this.deps.log("warn", `No se pudo explicar el resultado con el LLM (se usa la plantilla): ${errorMessage(err)}`);
+    } finally {
+      // Si se agotó el tiempo, corta la solicitud que sigue en vuelo.
+      abort.abort();
+    }
+    return fallbackExplanation(record);
+  }
+
+  /** Adjunta la explicación al resultado en vivo (si sigue siendo esa pelea) y al historial. */
+  private async attachExplanation(id: string, pending: Promise<string>): Promise<void> {
+    try {
+      const explanation = await pending;
+      // Si ya empezó otra pelea, el estado en vivo es de esa: solo se corrige el historial.
+      if (this.state.id === id && this.state.result) {
+        this.state.result = { ...this.state.result, explanation };
+        this.deps.hub.flushState();
+      }
+      await this.deps.history.update(id, (record) => ({ ...record, result: { ...record.result, explanation } }));
+      this.deps.log("info", `Por qué terminó así: ${explanation}`);
+    } catch (err) {
+      this.deps.log("warn", `No se pudo guardar la explicación del resultado: ${errorMessage(err)}`);
     }
   }
 
