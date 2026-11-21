@@ -2,31 +2,35 @@ import { parseArenaEvent, type ArenaEvent, type MatchPhase, type MatchState } fr
 import { actionLine, describeAction } from "./actions";
 import { fetchDefaults, fetchMatches, fetchState } from "./api";
 import { initControls, setPhase } from "./controls";
+import { initCountdown, updateCountdown } from "./countdown";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
 import { setDefaults } from "./models";
-import { initPlayer, setServerClockOffset, videoDelayMs } from "./player";
+import { PIPELINE_MS, initPlayer, noteServerTime, serverNow, streamClock, videoServerNow } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";
 import { applyRemoteSettings, initSettings, loadSettings } from "./settings";
-import {
-  applyAction,
-  applyDamage,
-  applyDeath,
-  applyThought,
-  initScoreboard,
-  renderState,
-  showExplanation,
-  showResult,
-  syncClock,
-} from "./scoreboard";
+import { applyDamage, applyDeath, initScoreboard, renderState, showExplanation, showResult } from "./scoreboard";
 import { connectSocket, type SocketStatus } from "./socket";
 import { initSound, playEnd, playHit, playKnockout, playStart } from "./sound";
+import { initThoughts, markFallen, pushAction, pushThought, syncThoughts } from "./thoughts";
 
 const STATE_POLL_MS = 5000;
 
 let socketStatus: SocketStatus = "connecting";
 let lastPhase: MatchPhase | null = null;
+/** El sonido de inicio ya sonó para la pelea que está partiendo. */
+let startAnnounced = false;
+
+/**
+ * Suena el inicio de la pelea, una sola vez por pelea: en el cero de la cuenta regresiva
+ * o, si no hubo cuenta (servidor antiguo, pestaña en segundo plano), al pasar a "running".
+ */
+function announceStart(): void {
+  if (startAnnounced) return;
+  startAnnounced = true;
+  playStart();
+}
 
 /**
  * El "por qué ganó" lo escribe el servidor unos segundos después del final y lo guarda
@@ -52,13 +56,16 @@ async function awaitExplanation(matchId: string): Promise<void> {
 
 function applyState(state: MatchState): void {
   renderState(state);
+  syncThoughts(state);
   setPhase(state.phase);
+  updateCountdown(state);
 
   if (lastPhase !== null && lastPhase !== state.phase) {
     if (state.phase === "preparing") {
+      startAnnounced = false;
       addFeed({ at: Date.now(), kind: "system", text: "Preparando la arena para una nueva pelea…" });
     } else if (state.phase === "running") {
-      playStart();
+      announceStart();
       addFeed({ at: Date.now(), kind: "system", text: "¡Comienza la pelea!" });
     }
   }
@@ -66,8 +73,6 @@ function applyState(state: MatchState): void {
 }
 
 function handleEvent(event: ArenaEvent): void {
-  syncClock(event.at);
-
   switch (event.type) {
     case "state":
       applyState(event.state);
@@ -82,12 +87,12 @@ function handleEvent(event: ArenaEvent): void {
       addFeed({ at: event.at, kind: "message", side: event.side, text: event.text });
       break;
     case "thought":
-      applyThought(event.side, event.text);
+      pushThought(event.side, event.text, event.at);
       addFeed({ at: event.at, kind: "thought", side: event.side, text: event.text });
       break;
     case "action": {
       const view = describeAction(event.tool, event.args, event.result);
-      applyAction(event.side, view);
+      pushAction(event.side, view, event.at);
       addFeed({ at: event.at, kind: "action", side: event.side, text: actionLine(view), title: view.raw });
       break;
     }
@@ -104,6 +109,7 @@ function handleEvent(event: ArenaEvent): void {
     case "death":
       playKnockout();
       applyDeath(event.side);
+      markFallen(event.side);
       addFeed({ at: event.at, kind: "death", side: event.side, text: `${SIDE_LABEL[event.side]} ha caído en combate.` });
       break;
     case "match_end":
@@ -129,23 +135,28 @@ function handleEvent(event: ArenaEvent): void {
 
 // ---------- Telemetría sincronizada con el video ----------
 //
-// Los eventos llegan por websocket al instante, pero la imagen (HLS) va varios segundos
-// atrás. Para que el marcador no "adelante" lo que se ve, cada evento espera en una cola
-// el mismo tiempo que lleva de atraso el video, y recién entonces se aplica.
+// Los eventos llegan por websocket al instante, pero la imagen (HLS) va más de un segundo
+// atrás. Cada evento trae la hora en que ocurrió (`at`): espera en una cola, en orden de
+// llegada, y se aplica cuando la imagen llega a ese instante (videoServerNow, en
+// player.ts). Así el marcador nunca adelanta lo que se ve.
 
-type Pending = { dueAt: number; event: ArenaEvent };
+type Pending = { event: ArenaEvent; arrivedAt: number };
 
-const DRAIN_MS = 50;
-/** Saltos de atraso menores que esto se suavizan; mayores (cambió la señal) se toman de una vez. */
-const DELAY_SNAP_MS = 1500;
+const DRAIN_MS = 40;
+/** Un evento nunca espera más que esto desde que llegó, aunque el video esté detenido o recargando. */
+const MAX_WAIT_MS = 6000;
 
 const pending: Pending[] = [];
-let lastDueAt = 0;
-let delay = 0;
+/** Cuándo llegó el último evento de la pelea por el websocket (reloj del navegador). */
+let lastLiveEventAt = 0;
+
+function enqueue(event: ArenaEvent): void {
+  pending.push({ event, arrivedAt: Date.now() });
+  drainPending();
+}
 
 function receiveEvent(event: ArenaEvent): void {
-  const now = Date.now();
-  setServerClockOffset(event.at - now);
+  noteServerTime(event.at);
 
   // Los prompts y ajustes pendientes no son parte de la imagen: se aplican al tiro.
   if (event.type === "prompts" || event.type === "settings") {
@@ -153,23 +164,43 @@ function receiveEvent(event: ArenaEvent): void {
     return;
   }
 
-  const target = videoDelayMs();
-  delay = Math.abs(target - delay) > DELAY_SNAP_MS ? target : delay + (target - delay) * 0.2;
-  // Nunca antes que el evento anterior: el orden de llegada se respeta siempre.
-  const dueAt = Math.max(lastDueAt, now + delay);
-  lastDueAt = dueAt;
-  pending.push({ dueAt, event });
-  drainPending();
+  lastLiveEventAt = Date.now();
+  enqueue(event);
 }
 
+/** Aplica, en orden de llegada, los eventos que la imagen ya alcanzó; con `force`, todos. */
 function drainPending(force = false): void {
+  if (pending.length === 0) return;
   const now = Date.now();
+  const videoNow = videoServerNow();
   while (pending.length > 0) {
     const next = pending[0]!;
-    if (!force && next.dueAt > now) break;
+    // El primero de la fila manda: si le falta, los que llegaron después también esperan.
+    if (!force && next.event.at > videoNow && now - next.arrivedAt < MAX_WAIT_MS) break;
     pending.shift();
     handleEvent(next.event);
   }
+}
+
+/**
+ * Para medir la sincronía desde la consola: `__arenaSync()` dice qué hora cree la página
+ * que es en el servidor, qué instante se ve en pantalla, de dónde lo sacó y cuántos
+ * eventos esperan. Solo lee; no cambia nada.
+ */
+function exposeSyncProbe(): void {
+  Object.assign(window, {
+    __arenaSync: () => {
+      const clock = streamClock();
+      return {
+        serverNow: clock.serverNow,
+        videoNow: clock.videoNow,
+        delayMs: clock.serverNow - clock.videoNow,
+        source: clock.source,
+        queued: pending.length,
+        pipelineMs: PIPELINE_MS,
+      };
+    },
+  });
 }
 
 function renderConnection(status: SocketStatus): void {
@@ -187,9 +218,18 @@ function renderConnection(status: SocketStatus): void {
   document.body.dataset.conn = status;
 }
 
+/**
+ * Estado por HTTP: entra a la misma cola que los eventos del websocket, con la hora del
+ * servidor en que llegó. Así no se adelanta a la imagen ni pisa datos más nuevos.
+ */
 function pollState(): void {
+  const sentAt = Date.now();
   fetchState()
-    .then(applyState)
+    .then((state) => {
+      // Mientras se esperaba la respuesta llegó algo por el websocket: esto ya es más viejo.
+      if (lastLiveEventAt >= sentAt) return;
+      enqueue({ type: "state", at: serverNow(), state });
+    })
     .catch(() => {
       // Silencioso: el indicador de conexión ya informa el problema.
     });
@@ -197,6 +237,8 @@ function pollState(): void {
 
 function init(): void {
   initScoreboard();
+  initThoughts();
+  initCountdown(announceStart);
   initFeed();
   initPrompts();
   initSettings();
@@ -207,6 +249,7 @@ function init(): void {
     applyState(state);
   });
   window.setInterval(drainPending, DRAIN_MS);
+  exposeSyncProbe();
   initPlayer();
   initSound();
 

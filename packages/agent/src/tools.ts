@@ -1,6 +1,6 @@
 import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
-import { isArrow, isBow, isBuildBlock, isFoodName, isPearl } from "./items";
+import { ALWAYS_EDIBLE, isArrow, isBow, isBuildBlock, isFoodName, isPearl } from "./items";
 
 export const TOOL_NAMES = ["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "wait"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -24,6 +24,44 @@ export const PEARL_MIN_HEALTH = 4;
 export const BUILD_COOLDOWN_MS = 4000;
 /** Bloques que gasta un muro completo (3 de ancho por 2 de alto). */
 export const WALL_BLOCKS = 6;
+/**
+ * Con el rival más cerca que esto no se construye: el muro va 3 bloques por delante y el
+ * rival quedaría encima de las celdas o ya del lado propio.
+ */
+export const BUILD_MIN_DISTANCE = 4.5;
+
+/**
+ * Por qué no se puede disparar con ese inventario (nombres de ítems), o null si se puede.
+ * Igual que con la perla y el muro, una herramienta que no se puede usar no cambia nada:
+ * el cuerpo sigue con la acción que tenía (ver `refusalText`).
+ */
+export function shootRefusal(itemNames: readonly string[]): string | null {
+  if (!itemNames.some(isBow)) return "no puedes disparar: no tienes arco";
+  if (!itemNames.some(isArrow)) return "no puedes disparar: no te quedan flechas";
+  return null;
+}
+
+/**
+ * Por qué no se puede comer con ese inventario y esa barra de comida, o null si se puede.
+ * `isFood` deja usar la tabla de comidas del servidor; por defecto, la lista conocida.
+ */
+export function eatRefusal(
+  itemNames: readonly string[],
+  food: number,
+  isFood: (name: string) => boolean = isFoodName,
+): string | null {
+  if (!itemNames.some(isFood)) return "no puedes comer: no tienes comida";
+  // Con la barra llena el servidor solo deja comer ciertas comidas (la manzana dorada).
+  if (food >= 20 && !itemNames.some((name) => ALWAYS_EDIBLE.has(name))) {
+    return "no puedes comer: no tienes hambre (comida 20/20)";
+  }
+  return null;
+}
+
+/** Resultado de una herramienta que no se pudo usar: dice por qué y qué acción sigue en curso. */
+export function refusalText(reason: string, mode: ToolName): string {
+  return `${reason}; sigues con "${mode}"`;
+}
 
 /**
  * Herramientas que se ofrecen con un kit. Salen de los ítems del kit, así la lista no
@@ -84,11 +122,11 @@ export const TOOL_DEFS: ToolDef[] = [
   ),
   simpleTool(
     "eat",
-    "Come para recuperar vida: filete (solo si tu barra de comida no está llena) o manzana dorada (siempre; da 4 de vida extra y regeneración). Tarda cerca de 2 segundos y te deja quieto.",
+    "Come para recuperar vida: filete (solo si tu barra de comida no está llena) o manzana dorada (siempre; da regeneración y 4 de vida extra en corazones amarillos, que no se acumulan: no comas otra mientras tengas corazones amarillos). Tarda cerca de 2 segundos y te deja quieto.",
   ),
   {
     name: "pearl",
-    description: `Lanza una perla de ender y te teletransporta donde cae. target='rival': caes junto al rival y pasas a atacar automáticamente. target='away': caes lejos del rival, al otro lado de la arena, y quedas en espera (buen momento para comer). Cada perla te quita unos 2.5 de vida al caer. Recarga de ${PEARL_COOLDOWN_MS / 1000} segundos. Tienes pocas: tu inventario dice cuántas te quedan.`,
+    description: `Lanza una perla de ender y te teletransporta donde cae. target='rival': caes junto al rival y pasas a atacar automáticamente. target='away': caes lejos del rival, al otro lado de la arena, y empiezas a comer de inmediato si tienes comida y tu barra de comida no está llena (si no, quedas en espera). Cada perla te quita unos 2.5 de vida al caer. Recarga de ${PEARL_COOLDOWN_MS / 1000} segundos. Tienes pocas: tu inventario dice cuántas te quedan.`,
     parameters: {
       type: "object",
       properties: {
@@ -104,7 +142,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   simpleTool(
     "build",
-    `Coloca bloques: levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás). Gasta hasta ${WALL_BLOCKS} bloques. Tarda 1 a 2 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos.`,
+    `Coloca bloques: levanta un muro de 3 de ancho y 2 de alto entre tú y el rival; frena las flechas y lo obliga a rodearlo (útil para comer detrás). Gasta hasta ${WALL_BLOCKS} bloques. Tarda 1 a 2 segundos, te deja quieto y al terminar quedas en espera. Recarga de ${BUILD_COOLDOWN_MS / 1000} segundos. Solo funciona con el rival a ${BUILD_MIN_DISTANCE} bloques o más y contigo parado en el piso de la arena.`,
   ),
   simpleTool("wait", "Quédate quieto mirando al rival."),
 ];

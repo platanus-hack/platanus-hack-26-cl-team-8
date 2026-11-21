@@ -1,6 +1,6 @@
 /**
- * Íconos de píxeles creados en el navegador (ítem en la mano, última acción, inventario
- * del kit). Arma el mismo SVG que components/PixelIcon.astro, con los mismos datos de
+ * Íconos de píxeles creados en el navegador (ítem en la mano, fichas de las acciones,
+ * inventario del kit). Arma el mismo SVG que components/PixelIcon.astro, con los mismos datos de
  * pixelicons.ts.
  */
 import { ICON_SIZE, iconRuns, type IconRef } from "./pixelicons";

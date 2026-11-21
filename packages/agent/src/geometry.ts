@@ -94,8 +94,12 @@ export function retreatTarget(input: RetreatInput): Vec3Like {
   return distanceXZ(left, opponent) >= distanceXZ(right, opponent) ? left : right;
 }
 
-/** Cuántos bloques por delante de la celda propia va el centro del muro. */
-const WALL_GAP = 2;
+/**
+ * Cuántos bloques por delante de la celda propia va el centro del muro. Son 3 y no 2
+ * porque el servidor no revisa la línea de visión de un golpe: con el muro a 2, un rival
+ * pegado al otro lado queda a ~2.8 bloques y alcanza a pegar a través; a 3 queda a ~3.8.
+ */
+export const WALL_GAP = 3;
 
 /**
  * Celdas (coordenadas enteras de bloque) de un muro de 3 de ancho y 2 de alto entre

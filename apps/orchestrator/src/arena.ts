@@ -79,7 +79,9 @@ export function arenaBuildCommands(): string[] {
     `setblock ${c.x} ${FLOOR_Y} ${c.z} minecraft:sea_lantern`,
     `setblock ${red.x} ${FLOOR_Y} ${red.z} minecraft:red_concrete`,
     `setblock ${blue.x} ${FLOOR_Y} ${blue.z} minecraft:blue_concrete`,
-    // Tapa invisible justo sobre los muros: nadie sale de la arena con una perla o apilando bloques.
+    // Tapa invisible justo sobre los muros. Es obligatoria: el mundo es plano y la arena flota
+    // unos 125 bloques sobre el suelo, así que quien saliera por arriba (con una perla o
+    // apilando bloques) caería al vacío.
     `fill ${MIN_X} ${WALL_TOP_Y + 1} ${MIN_Z} ${MAX_X} ${WALL_TOP_Y + 1} ${MAX_Z} minecraft:barrier`,
   ];
 }
@@ -151,8 +153,25 @@ export async function clearPlacedBlocks(rcon: RconLike): Promise<void> {
   await rcon.send(clearPlacedBlocksCommand());
 }
 
-/** Deja a un peleador listo: supervivencia, limpio, curado, en su spawn y con su kit. */
-export async function prepareFighter(rcon: RconLike, side: Side, kit: Kit): Promise<void> {
+/**
+ * Lo que responde el servidor cuando un comando de kit funcionó:
+ * "Replaced a slot on AgenteRojo with [Iron Sword]" o "Applied effect Speed to AgenteRojo".
+ */
+const KIT_COMMAND_OK = /Replaced a slot|Applied effect/i;
+
+/**
+ * Deja a un peleador listo: supervivencia, limpio, curado, en su spawn y con su kit.
+ *
+ * Un slot o un NBT mal escrito no hace fallar el comando por RCON: el servidor solo responde
+ * con un texto de error y el peleador queda sin ese objeto. Por eso se revisa la respuesta de
+ * cada comando del kit y se avisa por `warn`; la pelea sigue igual.
+ */
+export async function prepareFighter(
+  rcon: RconLike,
+  side: Side,
+  kit: Kit,
+  warn: (text: string) => void = () => {},
+): Promise<void> {
   const username = AGENT_USERNAMES[side];
   await sendAll(rcon, [`gamemode survival ${username}`, `clear ${username}`, `effect clear ${username}`]);
 
@@ -164,21 +183,43 @@ export async function prepareFighter(rcon: RconLike, side: Side, kit: Kit): Prom
   await sendAll(rcon, [
     `effect give ${username} minecraft:instant_health 1 10 true`,
     `effect give ${username} minecraft:saturation 1 10 true`,
-    ...fighterKitCommands(username, kit),
   ]);
+
+  for (const command of fighterKitCommands(username, kit)) {
+    const reply = (await rcon.send(command)).trim();
+    if (!KIT_COMMAND_OK.test(reply)) {
+      warn(
+        `El servidor no confirmó un comando del kit de ${username}: "${command}" respondió "${reply || "(sin respuesta)"}"`,
+      );
+    }
+  }
 }
 
-/** Segundos de pausa antes de que empiece la pelea. */
-const COUNTDOWN_SECONDS = 3;
+/** Cada cuánto se revisa, durante la cuenta regresiva, si la pelea se canceló. */
+const COUNTDOWN_STEP_MS = 250;
 
 /**
- * Pausa previa a la pelea; se corta si la pelea se canceló. No muestra nada dentro del
- * juego: la cuenta regresiva, el resultado y cualquier otro aviso los muestra el sitio web.
- * La pausa sigue existiendo porque cubre la invulnerabilidad inicial al entrar al mundo.
+ * Espera hasta el instante `endsAt` (epoch ms), el final de la cuenta regresiva; se corta si
+ * la pelea se canceló. No muestra nada dentro del juego: la cuenta regresiva la dibuja el
+ * sitio web a partir de `countdownEndsAt` del estado. La pausa cubre además la
+ * invulnerabilidad inicial al entrar al mundo.
  */
-export async function runCountdown(sleep: SleepFn, isCancelled: () => boolean): Promise<void> {
-  for (let n = COUNTDOWN_SECONDS; n > 0; n -= 1) {
+export async function runCountdown(
+  sleep: SleepFn,
+  endsAt: number,
+  isCancelled: () => boolean,
+  now: () => number = Date.now,
+): Promise<void> {
+  // Tope de lo que se pide dormir en total: así también termina con un `sleep` que no hace
+  // avanzar el reloj (los tests).
+  let budget = endsAt - now();
+  while (budget > 0) {
     if (isCancelled()) return;
-    await sleep(1_000);
+    // Se mira el reloj en cada paso: los temporizadores se atrasan un poco y ese atraso no se acumula.
+    const left = endsAt - now();
+    if (left <= 0) return;
+    const step = Math.min(left, budget, COUNTDOWN_STEP_MS);
+    await sleep(step);
+    budget -= step;
   }
 }

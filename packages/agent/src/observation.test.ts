@@ -92,6 +92,21 @@ describe("buildObservation", () => {
     });
     expect(obs.inventory).toEqual({ ender_pearl: 3, oak_planks: 10, golden_apple: 2 });
   });
+
+  it("informa los corazones amarillos solo mientras queda alguno", () => {
+    expect("absorption" in buildObservation(base)).toBe(false);
+    const none = buildObservation({ ...base, self: { ...base.self, absorption: 0 } });
+    expect("absorption" in none).toBe(false);
+    const broken = buildObservation({ ...base, self: { ...base.self, absorption: Number.NaN } });
+    expect("absorption" in broken).toBe(false);
+
+    const fresh = buildObservation({ ...base, self: { ...base.self, absorption: 4 } });
+    expect(fresh.absorption).toBe(4);
+    // No se suman a la vida: son un campo aparte.
+    expect(fresh.health).toBe(17.5);
+    const almostGone = buildObservation({ ...base, self: { ...base.self, absorption: 0.04 } });
+    expect(almostGone.absorption).toBe(0.1);
+  });
 });
 
 describe("summarizeInventory", () => {

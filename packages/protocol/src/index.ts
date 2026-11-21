@@ -37,6 +37,27 @@ export type KitId = z.infer<typeof KitIdSchema>;
 export const DEFAULT_KIT: KitId = "classic";
 
 type HotbarIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** Las tres filas del inventario principal: 27 casillas, de `inventory.0` a `inventory.26`. */
+type InventoryIndex =
+  | HotbarIndex
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15
+  | 16
+  | 17
+  | 18
+  | 19
+  | 20
+  | 21
+  | 22
+  | 23
+  | 24
+  | 25
+  | 26;
 /** Nombres de slot del comando `item replace entity` de Minecraft Java 1.20.4. */
 export type KitSlot =
   | "armor.head"
@@ -45,7 +66,7 @@ export type KitSlot =
   | "armor.feet"
   | "weapon.offhand"
   | `hotbar.${HotbarIndex}`
-  | `inventory.${number}`;
+  | `inventory.${InventoryIndex}`;
 
 /** `id` sin el prefijo "minecraft:" (ids de 1.20.4: "punch", "feather_falling", "sharpness"...). */
 export type KitEnchantment = { id: string; level: number };
@@ -122,7 +143,7 @@ export const KITS: Record<KitId, Kit> = {
     id: "archer",
     name: "Arquero",
     description:
-      "Armadura de malla, arco con Empuje I y 32 flechas, espada de piedra y Velocidad I. Fuerte de lejos, débil cuerpo a cuerpo.",
+      "Armadura de malla, espada de piedra y arco con Empuje I y 32 flechas. Su fuerza es que cada flecha empuja lejos al rival y que le sobra munición; cuerpo a cuerpo es débil.",
     items: [
       ...armor(["chainmail", "chainmail", "chainmail", "chainmail"]),
       item("hotbar.0", "stone_sword", "Espada de piedra"),
@@ -130,7 +151,8 @@ export const KITS: Record<KitId, Kit> = {
       item("hotbar.2", "cooked_beef", "Filete", 4),
       item("hotbar.8", "arrow", "Flechas", 32),
     ],
-    effects: [SPEED_I],
+    // Sin Velocidad I: el Empuje de sus flechas ya le basta para sacarse al rival de encima.
+    effects: [],
   },
   tank: {
     id: "tank",
@@ -160,9 +182,9 @@ export const KITS: Record<KitId, Kit> = {
     id: "ender",
     name: "Enderman",
     description:
-      "Espada de diamante, armadura de malla y 4 perlas de ender para caerle encima al rival o escapar al otro lado de la arena.",
+      "Espada de diamante, armadura mixta de hierro y malla, y 4 perlas de ender para caerle encima al rival o escapar al otro lado de la arena.",
     items: [
-      ...armor(["chainmail", "chainmail", "chainmail", "chainmail"], [{ id: "feather_falling", level: 4 }]),
+      ...armor(["chainmail", "iron", "iron", "chainmail"], [{ id: "feather_falling", level: 4 }]),
       item("hotbar.0", "diamond_sword", "Espada de diamante"),
       item("hotbar.1", "ender_pearl", "Perla de ender", 4),
       item("hotbar.2", "cooked_beef", "Filete", 4),
@@ -173,12 +195,12 @@ export const KITS: Record<KitId, Kit> = {
     id: "builder",
     name: "Constructor",
     description:
-      "Estilo UHC: armadura y espada de hierro, arco con 8 flechas, 3 manzanas doradas y 16 bloques para levantar muros.",
+      "Estilo UHC: armadura y espada de hierro, arco con 8 flechas, 2 manzanas doradas y 16 bloques para levantar muros.",
     items: [
       ...armor(["iron", "iron", "iron", "iron"]),
       item("hotbar.0", "iron_sword", "Espada de hierro"),
       item("hotbar.1", "bow", "Arco"),
-      item("hotbar.2", "golden_apple", "Manzana dorada", 3),
+      item("hotbar.2", "golden_apple", "Manzana dorada", 2),
       item("hotbar.3", "oak_planks", "Tablones de roble", 16),
       item("hotbar.8", "arrow", "Flechas", 8),
     ],
@@ -605,6 +627,9 @@ export const MatchResultSchema = z.object({
 });
 export type MatchResult = z.infer<typeof MatchResultSchema>;
 
+/** Segundos de cuenta regresiva entre que los dos peleadores quedan listos y empieza la pelea. */
+export const COUNTDOWN_SECONDS = 3;
+
 export const MatchStateSchema = z.object({
   id: z.string(),
   phase: MatchPhaseSchema,
@@ -612,6 +637,11 @@ export const MatchStateSchema = z.object({
   startedAt: z.number().nullable(),
   /** Epoch ms en que termina por tiempo; null si no ha partido. */
   endsAt: z.number().nullable(),
+  /**
+   * Epoch ms en que termina la cuenta regresiva y empieza la pelea. Solo tiene valor durante la
+   * fase "preparing", desde que los dos peleadores están listos; null el resto del tiempo.
+   */
+  countdownEndsAt: z.number().nullable().default(null),
   agents: z.object({ red: AgentStatusSchema, blue: AgentStatusSchema }),
   /** Prompts congelados con los que se está peleando (o se peleó). */
   configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),

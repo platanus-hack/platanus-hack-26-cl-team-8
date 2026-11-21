@@ -4,6 +4,7 @@ import type { Env } from "@phack/env";
 import type { ApiKeys, LlmClient } from "@phack/llm";
 import {
   AGENT_USERNAMES,
+  COUNTDOWN_SECONDS,
   DEFAULT_KIT,
   KITS,
   MAX_AGENT_MESSAGE_LENGTH,
@@ -147,6 +148,7 @@ export class MatchManager {
       phase: "idle",
       startedAt: null,
       endsAt: null,
+      countdownEndsAt: null,
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       configs: deps.prompts.get(),
       settings: deps.settings.get(),
@@ -188,6 +190,7 @@ export class MatchManager {
       phase: "preparing",
       startedAt: null,
       endsAt: null,
+      countdownEndsAt: null,
       agents: { red: emptyStatus("red"), blue: emptyStatus("blue") },
       // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
       configs: this.deps.prompts.get(),
@@ -251,7 +254,8 @@ export class MatchManager {
           events: this.makeEvents(ctx, side),
         });
       }
-      this.deps.hub.flushState();
+      // El kit ya resuelto (también el personalizado) llega a la web con el próximo estado.
+      this.deps.hub.markStateDirty();
       this.assertNotEnded(ctx);
 
       await buildArena(rcon, this.sleep);
@@ -274,18 +278,25 @@ export class MatchManager {
       this.assertNotEnded(ctx);
 
       for (const side of SIDES) {
-        await prepareFighter(rcon, side, kitOf(this.state.configs[side]));
+        await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log("warn", text));
         this.assertNotEnded(ctx);
       }
 
-      // La pausa cubre la invulnerabilidad inicial al entrar al mundo. Dentro del juego no
-      // se muestra nada: la cuenta regresiva y los avisos son cosa del sitio web.
-      await runCountdown(this.sleep, () => ctx.ended);
+      // Cuenta regresiva: los dos peleadores ya están listos. Dentro del juego no se muestra
+      // nada; el sitio web la dibuja a partir de countdownEndsAt, así que el estado se envía
+      // ya, sin esperar el throttle. La pausa cubre además la invulnerabilidad inicial al
+      // entrar al mundo.
+      const countdownEndsAt = Date.now() + COUNTDOWN_SECONDS * 1000;
+      this.state.countdownEndsAt = countdownEndsAt;
+      this.deps.hub.flushState();
+      await runCountdown(this.sleep, countdownEndsAt, () => ctx.ended);
       this.assertNotEnded(ctx);
 
       const now = Date.now();
       const durationMs = env.MATCH_DURATION_SECONDS * 1000;
+      // La cuenta regresiva se borra en la misma actualización que cambia la fase.
       this.state.phase = "running";
+      this.state.countdownEndsAt = null;
       this.state.startedAt = now;
       this.state.endsAt = now + durationMs;
       for (const side of SIDES) {
@@ -492,6 +503,8 @@ export class MatchManager {
       const reachedRunning = this.state.startedAt !== null;
       const startedAt = this.state.startedAt ?? ctx.createdAt;
       this.state.phase = "finished";
+      // Si la pelea se canceló o falló en plena cuenta regresiva, ya no hay nada que contar.
+      this.state.countdownEndsAt = null;
       this.state.result = result;
       this.deps.hub.flushState();
 

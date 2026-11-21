@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_TOOL_NAMES } from "@phack/llm";
 import { KIT_LIST, KITS, type Kit } from "@phack/protocol";
-import { isToolName, kitToolDefs, kitToolNames, parseToolArgs, TOOL_DEFS, TOOL_NAMES } from "./tools";
+import {
+  eatRefusal,
+  isToolName,
+  kitToolDefs,
+  kitToolNames,
+  parseToolArgs,
+  refusalText,
+  shootRefusal,
+  TOOL_DEFS,
+  TOOL_NAMES,
+} from "./tools";
 
 describe("TOOL_NAMES y TOOL_DEFS", () => {
   it("hay una definición por herramienta, en el mismo orden", () => {
@@ -29,7 +39,58 @@ describe("TOOL_NAMES y TOOL_DEFS", () => {
     expect(build?.description).toContain("muro de 3 de ancho y 2 de alto");
     expect(build?.description).toContain("Gasta hasta 6 bloques");
     expect(build?.description).toContain("Recarga de 4 segundos");
+    expect(build?.description).toContain("rival a 4.5 bloques o más");
     expect(pearl?.description).toContain("Recarga de 5 segundos");
+  });
+
+  it("eat avisa que los corazones amarillos de la manzana dorada no se acumulan", () => {
+    const eat = TOOL_DEFS.find((def) => def.name === "eat");
+    expect(eat?.description).toContain("corazones amarillos, que no se acumulan");
+    expect(eat?.description).toContain("no comas otra mientras tengas corazones amarillos");
+  });
+
+  it("pearl explica que al escapar se pasa a comer si se puede", () => {
+    const pearl = TOOL_DEFS.find((def) => def.name === "pearl");
+    expect(pearl?.description).toContain("empiezas a comer de inmediato");
+    expect(pearl?.description).not.toContain("buen momento para comer");
+  });
+});
+
+describe("herramientas que no se pueden usar", () => {
+  const classic = ["iron_sword", "bow", "cooked_beef", "arrow"];
+
+  it("shootRefusal pide arco y flechas", () => {
+    expect(shootRefusal(classic)).toBeNull();
+    expect(shootRefusal(["iron_sword", "arrow"])).toBe("no puedes disparar: no tienes arco");
+    expect(shootRefusal(["iron_sword", "bow"])).toBe("no puedes disparar: no te quedan flechas");
+    expect(shootRefusal(["bow", "spectral_arrow"])).toBeNull();
+  });
+
+  it("eatRefusal pide comida y, para el filete, hambre", () => {
+    expect(eatRefusal(classic, 17)).toBeNull();
+    expect(eatRefusal(classic, 20)).toBe("no puedes comer: no tienes hambre (comida 20/20)");
+    expect(eatRefusal(["iron_sword", "bow", "arrow"], 10)).toBe("no puedes comer: no tienes comida");
+  });
+
+  it("eatRefusal deja comer la manzana dorada con la barra llena", () => {
+    expect(eatRefusal(["iron_sword", "golden_apple"], 20)).toBeNull();
+    expect(eatRefusal(["cooked_beef", "golden_apple"], 20)).toBeNull();
+  });
+
+  it("eatRefusal acepta otra tabla de comidas (la del servidor)", () => {
+    const isFood = (name: string): boolean => name === "rabbit_stew";
+    expect(eatRefusal(["rabbit_stew"], 12)).toBe("no puedes comer: no tienes comida");
+    expect(eatRefusal(["rabbit_stew"], 12, isFood)).toBeNull();
+    expect(eatRefusal(["cooked_beef"], 12, isFood)).toBe("no puedes comer: no tienes comida");
+  });
+
+  it("refusalText conserva el motivo y dice qué acción sigue en curso", () => {
+    // Un eat o un shoot que no se puede no deja al luchador en espera: sigue con lo que hacía.
+    const text = refusalText(eatRefusal(classic, 20) ?? "", "attack");
+    expect(text).toBe('no puedes comer: no tienes hambre (comida 20/20); sigues con "attack"');
+    expect(refusalText("no puedes disparar: no tienes arco", "retreat")).toBe(
+      'no puedes disparar: no tienes arco; sigues con "retreat"',
+    );
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Acciones de los agentes en palabras. El agente llama herramientas como
- * `attack({"reason":"..."})`; en pantalla se muestra un ícono y una frase corta, y la
- * llamada tal cual queda en el tooltip.
+ * `attack({"reason":"..."})`; en pantalla se muestra un ícono y una frase corta (la ficha
+ * de cada pensamiento, en scripts/thoughts.ts), y la llamada tal cual queda en el tooltip.
  */
 import type { IconRef } from "./pixelicons";
 

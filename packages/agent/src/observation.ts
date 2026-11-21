@@ -11,6 +11,8 @@ export type ObservationInput = {
     food: number;
     heldItem: string | null;
     inventory: { name: string; count: number }[];
+    /** Vida extra en corazones amarillos (ausente o 0 = no tiene). */
+    absorption?: number;
   };
   /** null si el rival no está a la vista. */
   opponent: { position: Vec3Like; health: number | null } | null;
@@ -54,6 +56,11 @@ export type Observation = {
   rivalThoughts?: string[];
   /** Modo "chat": mensajes que te mandó el rival desde tu decisión anterior (el más nuevo al final). */
   rivalMessages?: string[];
+  /**
+   * Vida extra en corazones amarillos (la da la manzana dorada y no cuenta en `health`).
+   * Solo aparece mientras queda alguna: comer otra manzana no la suma, solo la renueva.
+   */
+  absorption?: number;
 };
 
 function roundVec(v: Vec3Like): Vec3Like {
@@ -106,5 +113,11 @@ export function buildObservation(input: ObservationInput): Observation {
   // Igual que las recargas: solo aparecen cuando traen algo nuevo.
   if (input.rivalThoughts && input.rivalThoughts.length > 0) observation.rivalThoughts = [...input.rivalThoughts];
   if (input.rivalMessages && input.rivalMessages.length > 0) observation.rivalMessages = [...input.rivalMessages];
+  // Igual con los corazones amarillos: solo los tiene quien acaba de comer una manzana dorada.
+  const absorption = self.absorption;
+  if (absorption !== undefined && Number.isFinite(absorption) && absorption > 0) {
+    // Nunca 0 mientras quede algo, para que "aparece el campo" siempre signifique "tienes".
+    observation.absorption = Math.max(0.1, round1(absorption));
+  }
   return observation;
 }

@@ -4,6 +4,7 @@ import {
   ARROW_SPEED,
   computeAim,
   estimateVelocity,
+  MAX_TRACKED_SPEED,
   PEARL_LAUNCH_HEIGHT,
   PEARL_MAX_PITCH,
   PEARL_MIN_PITCH,
@@ -62,6 +63,16 @@ describe("estimateVelocity", () => {
     const before = { x: 0, y: 65, z: 0, at: 1000 };
     const after = { x: 9, y: 65, z: 0, at: 1100 };
     expect(estimateVelocity(before, after, { x: 4, y: 0, z: 0 })).toEqual(zero);
+  });
+
+  it("el corte está en 15 bloques por segundo: correr pasa, un salto mayor no", () => {
+    expect(MAX_TRACKED_SPEED).toBe(15);
+    const before = { x: 0, y: 65, z: 0, at: 1000 };
+    // 1.4 bloques en 100 ms = 14 b/s: todavía es movimiento (un empujón fuerte).
+    const pushed = estimateVelocity(before, { x: 1.4, y: 65, z: 0, at: 1100 }, zero);
+    expect(pushed.x).toBeCloseTo(7);
+    // 1.6 bloques en 100 ms = 16 b/s: se toma como teletransporte y no arrastra la estimación anterior.
+    expect(estimateVelocity(before, { x: 1.6, y: 65, z: 0, at: 1100 }, { x: 4, y: 0, z: 0 })).toEqual(zero);
   });
 });
 

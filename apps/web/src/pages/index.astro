@@ -24,9 +24,10 @@ const stats = [
   { id: "cost", icon: "emerald", label: "Costo del modelo", tip: "Lo que ha costado el modelo en esta pelea." },
 ] as const;
 
-// El ítem en la mano y el ícono de la última acción cambian en vivo: sus casilleros van
-// vacíos aquí y los dibuja scripts/scoreboard.ts. Lo mismo el inventario del kit de cada
-// editor (scripts/inventory.ts), que cambia con el desplegable.
+// El ítem en la mano cambia en vivo: su casillero va vacío aquí y lo dibuja
+// scripts/scoreboard.ts. Lo mismo el inventario del kit de cada editor
+// (scripts/inventory.ts), que cambia con el desplegable, y las columnas de pensamientos
+// (scripts/thoughts.ts).
 ---
 
 <!doctype html>
@@ -140,31 +141,42 @@ const stats = [
         <p class="winner__why" id="winner-why" hidden></p>
       </div>
 
-      <!-- Qué piensa cada agente, como subtítulos que aparecen con cada novedad, y el botón de la pelea al centro. -->
-      <div class="minds">
+      <!-- Cuenta regresiva antes de la pelea ("3", "2", "1", "¡Pelea!"): la escribe scripts/countdown.ts. -->
+      <div class="countdown" id="countdown" data-step="count" aria-hidden="true" hidden></div>
+
+      <!--
+        Pensamientos en vivo: una columna por agente a cada lado del video, con sus últimos
+        pensamientos (el más nuevo abajo) y la acción que eligió con cada uno. Las llena
+        scripts/thoughts.ts. La lista cambia varias veces por segundo, así que los lectores
+        de pantalla leen solo el resumen oculto de cada columna.
+      -->
+      <div class="thoughts">
         {
           sides.map((side) => (
-            <article
-              class={`mind mind--${side.id} is-stale`}
-              id={`mind-${side.id}`}
+            <section
+              class={`thoughts__col thoughts__col--${side.id}`}
               data-side={side.id}
-              aria-label={`Agente ${side.label}`}
+              aria-label={`Pensamientos de ${side.label}`}
             >
-              <span class="sr-only">Último pensamiento</span>
-              <p class="mind__thought" id={`thought-${side.id}`}>—</p>
-              <span class="sr-only">Última acción</span>
-              <p class="mind__action" id={`action-${side.id}`} data-tool="">
-                <span class="mind__icon" id={`action-icon-${side.id}`} />
-                <span id={`action-label-${side.id}`}>—</span>
-                <span class="mind__result" id={`action-result-${side.id}`}></span>
+              <p class="sr-only">
+                Último pensamiento: <span id={`last-thought-${side.id}`}>—</span>
               </p>
-            </article>
+              <p class="sr-only">
+                Última acción: <span id={`last-action-${side.id}`}>—</span>
+              </p>
+              <ol class="thoughts__list" id={`thoughts-list-${side.id}`} aria-hidden="true" />
+              <div class="thoughts__thinking" id={`thinking-${side.id}`} aria-hidden="true">
+                <i /><i /><i />
+              </div>
+            </section>
           ))
         }
-        <div class="controls">
-          <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
-          <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
-        </div>
+      </div>
+
+      <!-- El botón de la pelea, abajo al centro: uno solo a la vez (iniciar o detener). -->
+      <div class="controls">
+        <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
+        <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
       </div>
     </section>
 

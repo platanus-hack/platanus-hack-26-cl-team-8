@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCustomKit, KIT_LIST, KITS, type CommsMode, type Kit } from "@phack/protocol";
+import { buildCustomKit, KIT_LIST, kitItemTitle, KITS, type CommsMode, type Kit } from "@phack/protocol";
 import { buildSystemPrompt } from "./prompt";
 import { kitToolNames, TOOL_NAMES } from "./tools";
 
@@ -14,6 +14,13 @@ function promptFor(kit: Kit, strategy = "Pega fuerte y no retrocedas.", comms: C
     durationSeconds: 120,
     comms,
   });
+}
+
+/** Texto con que el prompt nombra un ítem del kit ("Manzana dorada x2"), sin fijar aquí la cantidad. */
+function titleOf(kit: Kit, itemId: string): string {
+  const found = kit.items.find((i) => i.item === itemId);
+  if (!found) throw new Error(`El kit ${kit.id} no tiene ${itemId}`);
+  return kitItemTitle(found);
 }
 
 /** Líneas entre un título de sección y la siguiente línea en blanco. */
@@ -131,14 +138,18 @@ describe("buildSystemPrompt", () => {
     const archer = section(promptFor(KITS.archer), "TU KIT").join("\n");
     expect(archer).toContain("Arco (Empuje I)");
     expect(archer).toContain("Flechas x32");
-    expect(archer).toContain("- Efectos permanentes: Velocidad I");
+    // El arquero ya no tiene Velocidad I: el único kit con efecto es el berserker.
+    expect(archer).not.toContain("Efectos permanentes");
+
+    const berserker = section(promptFor(KITS.berserker), "TU KIT").join("\n");
+    expect(berserker).toContain("- Efectos permanentes: Velocidad I (caminas más rápido");
 
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
     expect(ender).toContain("Botas de malla (Caída de pluma IV)");
     expect(ender).toContain("Perla de ender x4");
 
     const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
-    expect(builder).toContain("Manzana dorada x3");
+    expect(builder).toContain(titleOf(KITS.builder, "golden_apple"));
     expect(builder).toContain("Tablones de roble x16");
   });
 
@@ -158,19 +169,30 @@ describe("buildSystemPrompt", () => {
 
   it("da los datos que el modelo no puede adivinar", () => {
     const berserker = section(promptFor(KITS.berserker), "TU KIT").join("\n");
-    expect(berserker).toContain("- attack: tu arma es Hacha de diamante; da un golpe cada ~1 s.");
+    expect(berserker).toContain("- attack: tu arma es Hacha de diamante; da un golpe cada ~1.1 s.");
     const classic = section(promptFor(KITS.classic), "TU KIT").join("\n");
-    expect(classic).toContain("- attack: tu arma es Espada de hierro; da un golpe cada ~0.6 s.");
+    expect(classic).toContain("- attack: tu arma es Espada de hierro; da un golpe cada ~0.7 s.");
     expect(classic).toContain("Filete x4 (solo se puede comer con la comida bajo 20");
     const ender = section(promptFor(KITS.ender), "TU KIT").join("\n");
     expect(ender).toContain("no se puede lanzar con 4 de vida o menos");
+    expect(ender).toContain('Con target "away", al caer empiezas a comer solo si tienes comida y tu comida está bajo 20.');
     expect(ender).toContain("5 segundos de recarga");
     expect(ender).toContain('"pearlCooldown"');
     const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
-    expect(builder).toContain("Manzana dorada x3 (se puede comer siempre");
+    expect(builder).toContain(`${titleOf(KITS.builder, "golden_apple")} (se puede comer siempre`);
     expect(builder).toContain("cada muro gasta hasta 6");
+    expect(builder).toContain("con el rival a 4.5 bloques o más y contigo parado en el piso de la arena");
     expect(builder).toContain("4 segundos de recarga");
     expect(builder).toContain('"buildCooldown"');
+  });
+
+  it("avisa que los corazones amarillos no se acumulan solo a quien lleva manzanas doradas", () => {
+    const builder = section(promptFor(KITS.builder), "TU KIT").join("\n");
+    expect(builder).toContain("corazones amarillos, que no se acumulan");
+    expect(builder).toContain('no comas otra mientras la observación traiga "absorption"');
+    for (const kit of KIT_LIST.filter((k) => !k.items.some((i) => i.item === "golden_apple"))) {
+      expect(promptFor(kit)).not.toContain("absorption");
+    }
   });
 
   it("no incluye el nombre ni la descripción del kit", () => {
