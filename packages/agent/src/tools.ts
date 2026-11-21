@@ -1,6 +1,6 @@
 import { MAX_AGENT_MESSAGE_LENGTH, type CommsMode, type Kit } from "@phack/protocol";
 import type { ToolDef } from "@phack/llm";
-import { cleanMessage } from "./comms";
+import { cleanMessage, MESSAGE_INTERVAL_MS, RESPONSE_MAX_WORDS } from "./comms";
 import {
   ALWAYS_EDIBLE,
   isArrow,
@@ -144,7 +144,7 @@ export function kitToolNames(kit: Kit): ToolName[] {
 
 const reasonProperty = {
   type: "string",
-  description: "Opcional: lo que piensas al elegir esta acción. Texto libre; el público lo ve.",
+  description: `Opcional: una frase de hasta ${RESPONSE_MAX_WORDS} palabras con tu decisión. Omítela si repite lo anterior; el público la ve.`,
 };
 
 /**
@@ -347,7 +347,7 @@ export const TOOL_DEFS: ToolDef[] = [
 
 const sayProperty = {
   type: "string",
-  description: `Opcional: texto libre para el otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
+  description: `Opcional: una frase natural de hasta ${RESPONSE_MAX_WORDS} palabras para el otro agente (máximo ${MAX_AGENT_MESSAGE_LENGTH} caracteres). Habla solo si aportas algo nuevo y deja al menos ${MESSAGE_INTERVAL_MS / 1000} segundos entre mensajes. Omite say si aparece sayCooldown. Le llega tal cual en su próxima observación; la acción se ejecuta igual.`,
 };
 
 /**

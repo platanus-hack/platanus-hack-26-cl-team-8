@@ -3,13 +3,17 @@ import { MAX_AGENT_MESSAGE_LENGTH } from "@phack/protocol";
 /**
  * Lo que se dicen los agentes (modo "chat") y lo que uno lee del otro (modo "thoughts").
  * El sistema solo hace limpieza técnica: no corrige, no resume, no filtra por contenido y
- * no descarta repetidos. Qué decir, cómo y cuándo lo decide cada agente.
+ * no descarta repetidos. El luchador espacia los mensajes salientes con MESSAGE_INTERVAL_MS.
  */
 
 /** Máximo de razonamientos o mensajes del rival que se juntan entre dos decisiones. */
 export const INBOX_MAX = 12;
 /** Mensajes de la conversación (de los dos lados) que se repiten en cada observación. */
 export const CONVERSATION_MAX = 12;
+/** Brevedad pedida al modelo; no se corta su texto a mitad de una idea. */
+export const RESPONSE_MAX_WORDS = 10;
+/** Pausa mínima entre mensajes de un mismo agente; las acciones siguen a su ritmo. */
+export const MESSAGE_INTERVAL_MS = 4000;
 
 /** Caracteres de control salvo el salto de línea (incluye DEL y los C1). */
 const CONTROL_EXCEPT_NEWLINE = /(?!\n)\p{Cc}/gu;

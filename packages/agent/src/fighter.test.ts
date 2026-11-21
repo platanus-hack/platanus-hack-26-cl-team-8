@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KITS } from "@phack/protocol";
+import { KITS, type CommsMode } from "@phack/protocol";
 import type { LlmRequest } from "@phack/llm";
 import type { Fighter, FighterOptions } from "./types";
 
@@ -61,7 +61,7 @@ afterEach(async () => {
 
 type ScriptedAction = { name: string; args: Record<string, unknown> };
 
-async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 1000) {
+async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 1000, comms: CommsMode = "none") {
   vi.useFakeTimers();
   const bot = new SimulatedBot();
   driver.createBot.mockReturnValue(bot);
@@ -70,7 +70,7 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
   let turn = 0;
   const options: FighterOptions = {
     side: "red", username: "Red", opponentUsername: "Blue", prompt: "Explora tus recursos", kit: KITS.builder,
-    comms: "none", durationSeconds: 120, tickMs, observationRadius: 8,
+    comms, durationSeconds: 120, tickMs, observationRadius: 8,
     mc: { host: "test", port: 25565, version: "1.20.4" },
     llm: {
       provider: "mock", model: "scripted",
@@ -96,6 +96,43 @@ async function start(actions: (ScriptedAction | ScriptedAction[])[], tickMs = 10
 }
 
 describe("agente: observar, decidir y construir", () => {
+  it("espacia el chat sin frenar decisiones ni guardar mensajes descartados", async () => {
+    const { received, events } = await start([
+      { name: "wait", args: { say: "Hola." } },
+      { name: "wait", args: { say: "Demasiado pronto." } },
+      { name: "wait", args: {} },
+      { name: "wait", args: { say: "Todavía pronto." } },
+      { name: "wait", args: { say: "Ahora sí." } },
+      { name: "wait", args: {} },
+    ], 1000, "chat");
+    expect(events.onMessage).toHaveBeenCalledWith("Hola.");
+    expect(received[0]).not.toHaveProperty("sayCooldown");
+    await vi.advanceTimersByTimeAsync(3999);
+    expect(events.onMessage).toHaveBeenCalledTimes(1);
+    expect(events.onAction).toHaveBeenCalledTimes(4);
+    expect(events.onDecision).toHaveBeenCalledTimes(4);
+    expect(received[1]?.sayCooldown).toBe(3);
+    expect(events.onAction).toHaveBeenCalledWith("wait", { say: "Demasiado pronto." }, expect.stringContaining("mensaje no enviado"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events.onMessage).toHaveBeenCalledTimes(2);
+    expect(events.onMessage).toHaveBeenLastCalledWith("Ahora sí.");
+    expect(received[4]).not.toHaveProperty("sayCooldown");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(received[5]?.conversation).toEqual([{ from: "tú", text: "Hola." }, { from: "tú", text: "Ahora sí." }]);
+  });
+
+  it("aplica la pausa a los mensajes de acciones en cola", async () => {
+    const { events } = await start([[
+      { name: "wait", args: { seconds: 1, say: "Primero." } },
+      { name: "wait", args: { say: "Segundo." } },
+    ]], 10_000, "chat");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(events.onDecision).toHaveBeenCalledTimes(1);
+    expect(events.onAction).toHaveBeenCalledTimes(2);
+    expect(events.onMessage).toHaveBeenCalledTimes(1);
+    expect(events.onMessage).toHaveBeenCalledWith("Primero.");
+  });
+
   it("el request real mantiene el mapa actual y resúmenes acotados de turnos anteriores", async () => {
     const { requests } = await start(Array.from({ length: 15 }, () => []), 100);
     await vi.advanceTimersByTimeAsync(1200);

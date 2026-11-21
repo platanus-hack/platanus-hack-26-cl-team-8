@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
 import { ARENA, MAX_HEALTH } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage, ToolDef } from "@phack/llm";
-import { CommsInbox, type InboxSnapshot } from "./comms";
+import { CommsInbox, MESSAGE_INTERVAL_MS, type InboxSnapshot } from "./comms";
 import { computeAim, estimateVelocity, PEARL_LAUNCH_HEIGHT, pearlPitch, type VelocitySample } from "./aim";
 import { clampToArena, distance3, distanceXZ, retreatTarget, round1, type Vec3Like } from "./geometry";
 import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history";
@@ -295,6 +295,7 @@ class MineflayerFighter implements Fighter {
   private loopPromise: Promise<void> | null = null;
   private wakeSleep: (() => void) | null = null;
   private startedAt = Date.now();
+  private sayReadyAt = 0;
   /**
    * Lo que llegó del rival y la conversación. Una línea sale de la bandeja recién cuando
    * responde el LLM que la vio: si la llamada falla, va de nuevo en la próxima observación.
@@ -917,7 +918,9 @@ class MineflayerFighter implements Fighter {
     const thought = parsed.reason ?? fallbackThought;
     if (thought.length > 0) this.safe(() => this.opts.events.onThought(thought));
     const said = this.opts.comms === "chat" ? parsed.say : null;
-    if (said) {
+    const canSay = Date.now() >= this.sayReadyAt;
+    if (said && canSay) {
+      this.sayReadyAt = Date.now() + MESSAGE_INTERVAL_MS;
       this.inbox.said(said);
       this.safe(() => this.opts.events.onMessage(said));
     }
@@ -932,6 +935,7 @@ class MineflayerFighter implements Fighter {
     }
     // Si el cuerpo quedó en esa acción, empezó (o continúa); si no, no se pudo usar.
     const started = this.mode === step.name;
+    if (said && !canSay) result += "; mensaje no enviado: espera a que termine sayCooldown";
     this.safe(() => this.opts.events.onAction(step.name, step.args, result));
     return { result, started };
   }
@@ -985,6 +989,7 @@ class MineflayerFighter implements Fighter {
       rivalMessages: heard.rivalMessages,
       // La conversación solo existe en modo "chat".
       conversation: this.opts.comms === "chat" ? heard.conversation : [],
+      sayReadyAt: this.opts.comms === "chat" ? this.sayReadyAt : undefined,
     });
   }
 

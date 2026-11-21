@@ -585,7 +585,7 @@ export class MatchManager {
         if (!live() || this.state.settings.comms !== "chat") return;
         // Solo el tope de largo, por si acaso: el agente ya lo entrega limpio y recortado
         // igual (por punto de código), así que un mensaje nunca se corta dos veces. Sin
-        // filtros por contenido, por frecuencia ni por repetición.
+        // filtros por contenido ni por repetición; el luchador ya espacia los mensajes.
         const message = cutCodePoints(text, MAX_AGENT_MESSAGE_LENGTH);
         this.emit(ctx, { type: "message", at: Date.now(), side, text: message });
         ctx.fighters[otherSide(side)]?.hear("message", message);
