@@ -174,7 +174,7 @@ fi
 STREAM_NOTE=""
 case "$CHANGED" in
   *infra/stream/*)
-    if remote_docker "systemctl cat phack-stream >/dev/null 2>&1"; then
+    if remote "test -f /etc/systemd/system/phack-stream.service"; then
       if remote_docker "systemctl restart phack-stream" >>"$BUILD_LOG" 2>&1; then
         STREAM_NOTE=" Transmisión reiniciada."
       else
