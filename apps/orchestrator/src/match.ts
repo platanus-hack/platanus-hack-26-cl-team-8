@@ -13,7 +13,7 @@ import {
   type Provider,
   type Side,
 } from "@phack/protocol";
-import { announce, buildArena, prepareFighter, runCountdown } from "./arena";
+import { buildArena, prepareFighter, runCountdown } from "./arena";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
 import type { EventSink } from "./hub";
 import type { RconLike } from "./rcon";
@@ -259,8 +259,9 @@ export class MatchManager {
         this.assertNotEnded(ctx);
       }
 
-      // La cuenta regresiva además cubre la invulnerabilidad inicial al entrar al mundo.
-      await runCountdown(rcon, this.sleep, () => ctx.ended);
+      // La pausa cubre la invulnerabilidad inicial al entrar al mundo. Dentro del juego no
+      // se muestra nada: la cuenta regresiva y los avisos son cosa del sitio web.
+      await runCountdown(this.sleep, () => ctx.ended);
       this.assertNotEnded(ctx);
 
       const now = Date.now();
@@ -462,15 +463,6 @@ export class MatchManager {
         if (explanation) void this.attachExplanation(record.id, explanation);
       }
       this.log(result.reason === "error" ? "error" : "info", describeResult(result));
-
-      // El cartel en el juego no debe retrasar el cierre si RCON está caído.
-      const color = result.winner === "red" ? "red" : result.winner === "blue" ? "blue" : "yellow";
-      const title = result.winner
-        ? `Gana ${SIDE_LABEL[result.winner]}`
-        : result.reason === "draw"
-          ? "Empate"
-          : "Pelea terminada";
-      announce(this.deps.rcon, title, color).catch(() => {});
     } catch (err) {
       this.log("error", `Error al cerrar la pelea: ${errorMessage(err)}`);
     } finally {

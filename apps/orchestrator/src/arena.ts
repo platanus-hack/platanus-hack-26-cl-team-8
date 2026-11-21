@@ -19,22 +19,6 @@ const WALL_TOP_Y = c.y + ARENA.wallHeight;
 /** Se limpia un poco más arriba que las paredes. */
 const CLEAR_TOP_Y = WALL_TOP_Y + 6;
 
-/** RCON de Minecraft no siempre respeta UTF-8: los textos van con escapes \uXXXX. */
-export function jsonText(component: Record<string, unknown>): string {
-  return JSON.stringify(component).replace(
-    /[\u0080-￿]/g,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
-
-export function titleCommand(text: string, color: string): string {
-  return `title @a title ${jsonText({ text, color, bold: true })}`;
-}
-
-export function subtitleCommand(text: string, color: string): string {
-  return `title @a subtitle ${jsonText({ text, color })}`;
-}
-
 /** Reglas del mundo: sin mobs, siempre de día, PvP con daño visible. */
 export function worldRuleCommands(): string[] {
   return [
@@ -51,6 +35,8 @@ export function worldRuleCommands(): string[] {
     "gamerule naturalRegeneration true",
     "gamerule doImmediateRespawn true",
     "gamerule announceAdvancements false",
+    // Nada de avisos dentro del juego (muertes, logros): eso lo muestra el sitio web.
+    "gamerule showDeathMessages false",
     "gamerule spawnRadius 0",
     "time set 6000",
     "weather clear",
@@ -161,23 +147,17 @@ export async function prepareFighter(rcon: RconLike, side: Side): Promise<void> 
   ]);
 }
 
-/** Cuenta regresiva en pantalla; se corta si la pelea se canceló. */
-export async function runCountdown(rcon: RconLike, sleep: SleepFn, isCancelled: () => boolean): Promise<void> {
-  await rcon.send("title @a reset");
-  await rcon.send("title @a times 0 25 5");
-  for (const n of [3, 2, 1]) {
+/** Segundos de pausa antes de que empiece la pelea. */
+const COUNTDOWN_SECONDS = 3;
+
+/**
+ * Pausa previa a la pelea; se corta si la pelea se canceló. No muestra nada dentro del
+ * juego: la cuenta regresiva, el resultado y cualquier otro aviso los muestra el sitio web.
+ * La pausa sigue existiendo porque cubre la invulnerabilidad inicial al entrar al mundo.
+ */
+export async function runCountdown(sleep: SleepFn, isCancelled: () => boolean): Promise<void> {
+  for (let n = COUNTDOWN_SECONDS; n > 0; n -= 1) {
     if (isCancelled()) return;
-    await rcon.send(titleCommand(String(n), "gold"));
     await sleep(1_000);
   }
-  if (isCancelled()) return;
-  await rcon.send(subtitleCommand("Rojo vs Azul", "white"));
-  await rcon.send(titleCommand("¡A pelear!", "green"));
-}
-
-export async function announce(rcon: RconLike, title: string, color: string): Promise<void> {
-  // "reset" borra el subtítulo de la cuenta regresiva.
-  await rcon.send("title @a reset");
-  await rcon.send("title @a times 5 60 20");
-  await rcon.send(titleCommand(title, color));
 }
