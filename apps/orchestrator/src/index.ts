@@ -11,6 +11,7 @@ import { MatchManager } from "./match";
 import { ModelCatalog } from "./models";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
+import { SpeechService } from "./speech";
 import { MatchStore, PromptStore, SettingsStore } from "./store";
 import { TranscriptStore } from "./transcript";
 import { errorMessage, sleep, type LogFn } from "./util";
@@ -49,10 +50,29 @@ async function main(): Promise<void> {
     log,
   });
 
+  // Voz de los agentes (ElevenLabs). Sin clave o sin las dos voces, los mensajes solo se leen.
+  const speech = new SpeechService({
+    config: {
+      apiKey: env.ELEVENLABS_API_KEY,
+      voices: { red: env.ELEVENLABS_VOICE_RED, blue: env.ELEVENLABS_VOICE_BLUE },
+      model: env.ELEVENLABS_MODEL,
+      speed: env.ELEVENLABS_SPEED,
+      outputFormat: env.ELEVENLABS_OUTPUT_FORMAT,
+      language: env.ELEVENLABS_LANGUAGE,
+      maxChars: env.VOICE_MAX_CHARS,
+      minCreditsLeft: env.VOICE_MIN_CREDITS_LEFT,
+    },
+    dataDir,
+    log,
+  });
+  speech.start();
+
   // LLM_MODEL solo reemplaza el modelo por defecto del proveedor elegido en LLM_PROVIDER.
   const defaults: ServerDefaults = {
     provider: env.LLM_PROVIDER,
     models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
+    matchDurationSeconds: env.MATCH_DURATION_SECONDS,
+    voice: { available: speech.configured() },
   };
 
   // Modelos permitidos: el catálogo se baja en segundo plano; mientras tanto vale la lista fija.
@@ -72,6 +92,7 @@ async function main(): Promise<void> {
     createFighter,
     createLlmClient,
     models,
+    speech,
     log,
   });
   hub.setProviders({
@@ -92,9 +113,11 @@ async function main(): Promise<void> {
     defaults,
     models,
     vercelKeyConfigured: env.VERCEL_API_KEY.trim() !== "",
+    speech,
   });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
+  log("info", speech.configured() ? "Voz de los agentes: disponible (ElevenLabs)" : "Voz de los agentes: sin configurar (falta ELEVENLABS_API_KEY o una voz)");
 
   // ---------- Apagado ordenado ----------
 

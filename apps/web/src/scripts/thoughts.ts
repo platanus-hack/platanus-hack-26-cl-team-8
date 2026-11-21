@@ -235,11 +235,11 @@ function addThought(target: Column, raw: string, at: number): void {
 }
 
 /** Lo dicho en voz alta siempre suma una entrada: si el agente se repite, se ve repetido. */
-function addMessage(target: Column, raw: string, at: number): void {
+function addMessage(target: Column, raw: string, at: number): HTMLElement | null {
   const text = raw.trim();
-  if (text === "") return;
+  if (text === "") return null;
   target.newsAt = at;
-  addEntry(target, at, text, true);
+  return addEntry(target, at, text, true).node;
 }
 
 function addAction(target: Column, view: ActionView, at: number): void {
@@ -313,13 +313,17 @@ export function pushThought(side: Side, text: string, at: number): void {
   refreshThinking();
 }
 
-/** Evento "message": `at` es la hora del servidor en que el agente lo dijo. */
-export function pushMessage(side: Side, text: string, at: number): void {
-  if (!columns) return;
+/**
+ * Evento "message": `at` es la hora del servidor en que el agente lo dijo. Devuelve el
+ * globo, para marcarlo mientras se oye su voz (voice.ts); null si no se dibujó.
+ */
+export function pushMessage(side: Side, text: string, at: number): HTMLElement | null {
+  if (!columns) return null;
   const target = columns[side];
   target.live = true;
-  addMessage(target, text, at);
+  const bubble = addMessage(target, text, at);
   refreshThinking();
+  return bubble;
 }
 
 /** Evento "action": `at` es la hora del servidor en que el agente la ejecutó. */

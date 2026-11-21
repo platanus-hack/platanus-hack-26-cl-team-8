@@ -302,10 +302,41 @@ En el marcador hay un cuadro por ronda bajo el reloj, del color de quien la gan�
 
 En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.
 
-- **Encendido** (por defecto): la pelea dura `MATCH_DURATION_SECONDS` y, si nadie cae, gana quien tenga más vida.
+- **Encendido** (por defecto): la pelea dura lo que se elija ahí mismo, en minutos u horas (`timerSeconds` en `PUT /api/settings`, entre 1 minuto y 4 horas); sin elegir, vale `MATCH_DURATION_SECONDS` del servidor. Si nadie cae, gana quien tenga más vida. En el modo por rondas esa duración es la de cada ronda.
 - **Apagado**: la pelea no se acaba sola. Sigue hasta que uno caiga o alguien la detenga; el reloj de la web cuenta hacia arriba y al agente se le dice que no hay límite.
 
 Para que una pelea olvidada no gaste tokens toda la noche, el servidor detiene (sin ganador) las peleas sin límite que pasan de `MATCH_MAX_SECONDS` (30 minutos por defecto; `0` quita el tope).
+
+## Voz de los agentes
+
+En el modo `chat`, lo que un agente le dice al otro también se puede **oír**, con una voz distinta por lado. Es un ajuste más de la pelea (`voice` en `PUT /api/settings`, apagado por defecto) y vale desde la próxima. El audio lo genera el servidor con ElevenLabs y lo reproduce la web cuando aparece el mensaje.
+
+- **Qué se necesita.** Una clave de ElevenLabs (si es restringida, con permiso de Text to Speech y de lectura de «User») y el id de una voz para cada lado, en el `.env` del servidor (el mismo que lee docker-compose; en local, el `.env` de la raíz). El id de una voz está en su página en la app de ElevenLabs (Voices → la voz → «Voice ID»). Sin la clave o sin las dos voces el interruptor no hace nada: `GET /api/defaults` responde `voice.available: false` y los mensajes solo se leen.
+- **Ritmo.** El audio se pide en el instante en que el agente habla y el mensaje sale a la web sin esperarlo. La web muestra cada evento con el retraso del video (~1,5 s), así que normalmente el audio ya está listo cuando aparece el mensaje y suena a la par con lo que se ve. El evento `message` trae `speechId`; la web baja el audio de `GET /api/speech/:id` (`audio/mpeg`), que espera lo que falte (hasta 8 s) y responde 404 si esa frase no tiene audio.
+- **Lo que se lee.** El mensaje tal cual, cortado en una palabra a los `VOICE_MAX_CHARS` caracteres (300). El mensaje escrito no cambia. Una frase igual con la misma voz se genera una sola vez: queda en `DATA_DIR/speech/` (hasta 1000 audios; salen primero los más viejos).
+- **Si algo falla, la pelea sigue.** Esa frase queda sin voz y el error se registra en el log del orquestador. Con la clave rechazada o la cuenta sin créditos, la voz se apaga 10 minutos y vuelve a intentar. Una voz que ElevenLabs no reconoce se avisa una vez y solo ese lado queda mudo. Si ElevenLabs está ocupado (429) se reintenta una vez. Nunca hay más de 4 solicitudes a la vez; una frase que esperó su turno más de 8 s ya no se pide (nadie la va a oír ni se gastan créditos en ella).
+- **Tope de créditos.** El orquestador lee los créditos de la cuenta al arrancar y cada 10 minutos mientras se habla, y les suma lo que cuesta cada frase. Si quedan menos de `VOICE_MIN_CREDITS_LEFT` (5000), los agentes dejan de hablar hasta que la cuenta se recargue (queda un aviso en el log). Si la lectura falla, la voz sigue sin ese tope; si es porque la clave no tiene permiso de lectura de «User» (HTTP 401/403), queda un error en el log que lo dice.
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `ELEVENLABS_API_KEY` | vacía | Clave de la API. Sin ella no hay voz. |
+| `ELEVENLABS_VOICE_RED`, `ELEVENLABS_VOICE_BLUE` | vacías | Id de la voz de cada lado. |
+| `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | El modelo rápido (~100 ms); habla español. |
+| `ELEVENLABS_SPEED` | `1.1` | Velocidad del habla, de 0.7 a 1.2. |
+| `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_64` | Formato MP3. Más calidad tarda más. |
+| `ELEVENLABS_LANGUAGE` | vacía | Idioma (`es`, `en`…). Vacía = lo detecta el modelo; cada agente elige el suyo. |
+| `VOICE_MAX_CHARS` | `300` | Largo máximo de lo que se lee en voz alta. |
+| `VOICE_MIN_CREDITS_LEFT` | `5000` | Bajo esto, los agentes dejan de hablar. |
+
+Para probar la clave y las voces sin levantar nada, con Node 22:
+
+```bash
+node scripts/voice-check.mjs
+```
+
+Lee el `.env` de la raíz, dice una frase corta en español con cada voz y muestra cuánto tardó el primer byte y el total, los bytes recibidos, lo que costó (`character-cost`) y los créditos que quedan. Si falta la clave o una voz, o ElevenLabs las rechaza, lo dice. La clave nunca se imprime. Cada prueba gasta unos pocos créditos.
+
+**Primera frase.** Una voz que lleva mucho rato sin usarse puede tardar varios segundos en responder la primera vez (medido: 5 a 6 s, contra medio segundo las siguientes). Por eso, al preparar una pelea con voz y con los agentes en "Pueden hablarse", el servidor despierta las dos voces pidiéndoles una palabra, que se descarta: cuesta un par de créditos por pelea.
 
 ## Prompts marcados
 
@@ -499,6 +530,7 @@ Los kits, las herramientas `pearl` y `build`, la lista de modelos permitidos y l
 - **La cámara fuera de Docker**, y el modo `CAMERA_MODE=viewer` después de agregar el modo `client`.
 - **La transmisión tras un reinicio completo del servidor** (que `phack-stream` parta solo al encender) y en otra distribución que no sea Fedora.
 - **Empates y victorias por tiempo**: todas las peleas de prueba terminaron por KO en menos de 30 segundos.
+- **La voz de los agentes con una clave real de ElevenLabs**: está probada solo con dobles. Falta medir la latencia real, ver que el formato y la velocidad suenen bien y confirmar las respuestas de error y de créditos de la API (`scripts/voice-check.mjs`).
 
 ### Limitaciones conocidas
 

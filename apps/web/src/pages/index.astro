@@ -14,6 +14,7 @@ import {
   MAX_HEALTH,
   MODE_LABELS,
   TIMER_LABELS,
+  VOICE_LABELS,
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
@@ -248,7 +249,34 @@ const stats = [
                 <span class="switch__state" id="timer-state">Encendido</span>
               </span>
             </label>
+            <!-- Cuánto dura, cuando el límite está encendido: una cantidad y su unidad. -->
+            <div class="duration" id="timer-duration">
+              <input
+                type="number"
+                id="timer-amount"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                aria-label="Duración de la pelea"
+                aria-describedby="timer-description"
+              />
+              <select id="timer-unit" aria-label="Unidad de la duración">
+                <option value="60">minutos</option>
+                <option value="3600">horas</option>
+              </select>
+            </div>
             <p class="comms__description" id="timer-description">{TIMER_LABELS.on}</p>
+          </div>
+          <div class="comms">
+            <label class="field switch">
+              <span class="field__label">Voz de los agentes</span>
+              <span class="switch__row">
+                <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />
+                <span class="switch__track" aria-hidden="true"><i></i></span>
+                <span class="switch__state" id="voice-state">Apagado</span>
+              </span>
+            </label>
+            <p class="comms__description" id="voice-description">{VOICE_LABELS.off}</p>
           </div>
         </div>
 

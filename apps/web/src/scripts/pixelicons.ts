@@ -10,6 +10,7 @@
  *   emerald    esmeralda (la moneda del juego): cuánto cuesta el modelo
  *   forward, back, pause   acercarse, alejarse y esperar (para las acciones)
  *   sound-on, sound-off    botón de sonido
+ *   speaking               marca del globo mientras se oye la voz del agente
  *
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
@@ -202,6 +203,23 @@ export const ICONS = {
       ".wwww.w...w",
       "...ww......",
       "....w......",
+      "...........",
+    ],
+  },
+  // Barras de un medidor de voz; toma el color del texto que lo rodea (el del lado).
+  speaking: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      ".....x.....",
+      "...x.x.x...",
+      "...x.x.x...",
+      ".x.x.x.x.x.",
+      ".x.x.x.x.x.",
+      ".x.x.x.x.x.",
+      "...x.x.x...",
+      "...x.x.x...",
+      ".....x.....",
       "...........",
     ],
   },

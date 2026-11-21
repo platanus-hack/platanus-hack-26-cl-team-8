@@ -62,6 +62,8 @@ type SetupOptions = {
   comms?: CommsMode;
   /** Límite de tiempo: encendido si falta. */
   timer?: boolean;
+  /** Duración elegida en la web, en segundos; si falta, la del servidor (600 en estos tests). */
+  timerSeconds?: number | null;
   /** Tope de seguridad de las peleas sin límite de tiempo, en segundos. */
   maxSeconds?: number;
   /** Respuesta del servidor de Minecraft a cada comando; si falta, la de un servidor sano. */
@@ -72,6 +74,10 @@ type SetupOptions = {
   mode?: MatchMode;
   /** Reemplaza ROUNDS_REFILL_KIT. */
   refillKit?: boolean;
+  /** Ajuste de voz de la pelea; apagado si falta. */
+  voice?: boolean;
+  /** Servicio de voz falso; sin esto la pelea no tiene voz. */
+  speech?: MatchDeps["speech"];
 };
 
 /** Lo que responde un servidor 1.20.4 de verdad: prepareFighter revisa la respuesta de los comandos del kit. */
@@ -156,7 +162,15 @@ function setup(opts: SetupOptions = {}) {
     },
     hub,
     prompts: { get: prompts },
-    settings: { get: () => ({ comms: opts.comms ?? "none", timer: opts.timer ?? true, mode: opts.mode ?? "single" }) },
+    settings: {
+      get: () => ({
+        comms: opts.comms ?? "none",
+        timer: opts.timer ?? true,
+        timerSeconds: opts.timerSeconds ?? null,
+        mode: opts.mode ?? "single",
+        voice: opts.voice ?? false,
+      }),
+    },
     history,
     transcripts: {
       append: (matchId, entry) => {
@@ -194,6 +208,7 @@ function setup(opts: SetupOptions = {}) {
     },
     sleep: opts.sleep ?? (async () => {}),
     ...(opts.refillKit !== undefined ? { roundsRefillKit: opts.refillKit } : {}),
+    ...(opts.speech ? { speech: opts.speech } : {}),
   };
   const manager: MatchManager = new MatchManager(deps);
   const ev = (side: Side): FighterEvents => {
@@ -469,6 +484,26 @@ describe("MatchManager: límite de tiempo apagado", () => {
     await t.manager.stop();
   });
 
+  it("con una duración elegida en la web, la pelea dura eso y no lo del servidor", async () => {
+    const t = setup({ timerSeconds: 7200 });
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state.endsAt).toBe((state.startedAt ?? 0) + 7_200_000);
+    expect(state.settings.timerSeconds).toBe(7200);
+    expect(t.fighters.red?.durationSeconds).toBe(7200);
+    const start = t.entries.map((e) => e.entry).find((entry) => entry.type === "start");
+    expect(start).toMatchObject({ durationSeconds: 7200 });
+    await t.manager.stop();
+  });
+
+  it("con el límite apagado la duración elegida no cuenta", async () => {
+    const t = setup({ timer: false, timerSeconds: 7200 });
+    await startRunning(t);
+    expect(t.manager.getState().endsAt).toBeNull();
+    expect(t.fighters.red?.durationSeconds).toBeNull();
+    await t.manager.stop();
+  });
+
   it("apagado, la pelea no tiene hora de término ni se acaba por tiempo", async () => {
     const t = setup({ timer: false });
     await startRunning(t);
@@ -616,7 +651,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     t.ev("blue").onMessage("hola");
     expect(t.heard.blue).toEqual([{ kind: "thought", text: "voy por la espalda" }]);
     expect(t.heard.red).toEqual([]);
-    expect(t.manager.getState().settings).toEqual({ comms: "thoughts", timer: true, mode: "single" });
+    expect(t.manager.getState().settings).toEqual({ comms: "thoughts", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it('en "chat" los mensajes llegan al rival y al público; los razonamientos no', async () => {
@@ -630,13 +665,121 @@ describe("MatchManager: comunicación entre agentes", () => {
     );
     t.ev("red").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
-    expect(t.stored()?.settings).toEqual({ comms: "chat", timer: true, mode: "single" });
+    expect(t.stored()?.settings).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("pasa la duración de la pelea al agente", async () => {
     const t = setup();
     await startRunning(t);
     expect(t.fighters.blue?.durationSeconds).toBe(600);
+  });
+});
+
+describe("MatchManager: voz de los mensajes", () => {
+  /** Servicio de voz falso: anota lo pedido y devuelve ids en orden. */
+  function fakeSpeech(available = true) {
+    const requested: { side: Side; text: string }[] = [];
+    return {
+      requested,
+      speech: {
+        available: () => available,
+        request: (side: Side, text: string) => {
+          requested.push({ side, text });
+          return `00000000-0000-4000-8000-00000000000${requested.length}`;
+        },
+      },
+    };
+  }
+
+  it("despierta las voces al preparar una pelea con voz y chat, y solo entonces", async () => {
+    const cases = [
+      { comms: "chat" as const, voice: true, expected: 1 },
+      { comms: "chat" as const, voice: false, expected: 0 },
+      { comms: "none" as const, voice: true, expected: 0 },
+    ];
+    for (const c of cases) {
+      let warmed = 0;
+      const t = setup({
+        comms: c.comms,
+        voice: c.voice,
+        speech: { ...fakeSpeech().speech, warm: () => void (warmed += 1) },
+      });
+      await startRunning(t);
+      expect(warmed).toBe(c.expected);
+      await t.manager.stop();
+    }
+  });
+
+  it("una falla al despertar las voces no impide la pelea", async () => {
+    const t = setup({
+      comms: "chat",
+      voice: true,
+      speech: {
+        ...fakeSpeech().speech,
+        warm: () => {
+          throw new Error("sin red");
+        },
+      },
+    });
+    await startRunning(t);
+    expect(t.manager.getState().phase).toBe("running");
+    await t.manager.stop();
+  });
+
+  it("con la voz encendida el mensaje trae speechId, también en la transcripción", async () => {
+    const voice = fakeSpeech();
+    const t = setup({ comms: "chat", voice: true, speech: voice.speech });
+    await startRunning(t);
+    t.ev("red").onMessage("ríndete ya");
+    expect(voice.requested).toEqual([{ side: "red", text: "ríndete ya" }]);
+    const message = { type: "message", side: "red", text: "ríndete ya", speechId: "00000000-0000-4000-8000-000000000001" };
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining(message));
+    expect(t.entries.map((e) => e.entry)).toContainEqual(expect.objectContaining(message));
+    expect(t.heard.blue).toEqual([{ kind: "message", text: "ríndete ya" }]);
+  });
+
+  it("con la voz apagada, sin servicio o sin voz disponible el mensaje sale igual, sin speechId", async () => {
+    const cases = [
+      { voice: false, speech: fakeSpeech() },
+      { voice: true, speech: fakeSpeech(false) },
+      { voice: true, speech: null },
+    ];
+    for (const c of cases) {
+      const t = setup({ comms: "chat", voice: c.voice, ...(c.speech ? { speech: c.speech.speech } : {}) });
+      await startRunning(t);
+      t.ev("blue").onMessage("hola");
+      const sent = t.hub.broadcast.mock.calls.map(([event]) => event as { type: string }).filter((e) => e.type === "message");
+      expect(sent).toEqual([expect.objectContaining({ type: "message", side: "blue", text: "hola" })]);
+      expect(sent[0]).not.toHaveProperty("speechId");
+      expect(c.speech?.requested ?? []).toEqual([]);
+      expect(t.heard.red).toEqual([{ kind: "message", text: "hola" }]);
+      await t.manager.shutdown();
+    }
+  });
+
+  it("si el servicio de voz falla, el mensaje sale igual", async () => {
+    const t = setup({
+      comms: "chat",
+      voice: true,
+      speech: {
+        available: () => true,
+        request: () => {
+          throw new Error("se cayó");
+        },
+      },
+    });
+    await startRunning(t);
+    t.ev("red").onMessage("hola");
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "message", side: "red", text: "hola" }));
+    expect(t.logs.some((l) => l.level === "warn" && /voz/.test(l.text))).toBe(true);
+  });
+
+  it("sin modo chat no se pide voz", async () => {
+    const voice = fakeSpeech();
+    const t = setup({ comms: "thoughts", voice: true, speech: voice.speech });
+    await startRunning(t);
+    t.ev("red").onMessage("hola");
+    expect(voice.requested).toEqual([]);
   });
 });
 
@@ -748,7 +891,7 @@ describe("MatchManager: transcripción", () => {
     if (start?.type === "start") {
       expect(start.matchId).toBe(id);
       expect(start.configs.red).toMatchObject({ provider: "vercel", kit: "classic" });
-      expect(start.settings).toEqual({ comms: "chat", timer: true, mode: "single" });
+      expect(start.settings).toEqual({ comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
       expect(start.systemPrompts.red).toMatch(/^sistema red:/);
       expect(start.systemPrompts.blue).toMatch(/^sistema blue:/);
       expect(start.tickMs).toBe(1500);

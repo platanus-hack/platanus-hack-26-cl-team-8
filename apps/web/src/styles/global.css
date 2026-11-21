@@ -972,6 +972,35 @@ textarea {
 }
 
 /*
+ * Mientras se oye la voz de un mensaje (voice.ts), el globo lleva una marca: un medidor
+ * de voz de píxeles en una pestaña de papel montada sobre su borde, al lado contrario de
+ * la cola. Late mientras suena y se va cuando la frase termina.
+ */
+.thought__voice {
+  position: absolute;
+  top: -14px;
+  right: 8px;
+  display: flex;
+  background: var(--text);
+  color: var(--side);
+}
+
+.thoughts__col--blue .thought__voice {
+  right: auto;
+  left: 8px;
+}
+
+.thought--speaking .thought__voice .pixel-icon {
+  animation: speaking 0.6s steps(1) infinite;
+}
+
+@keyframes speaking {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
  * Mientras un pensamiento se escribe letra a letra, lo que falta ya está en la página
  * pero invisible: el pensamiento ocupa su alto final desde el principio.
  */
@@ -1626,6 +1655,47 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
 
 .switch__state {
   font-size: 15px;
+}
+
+/* Duración de la pelea: cantidad y unidad, en una línea, con el mismo aspecto que los desplegables. */
+.duration {
+  display: flex;
+  gap: 8px;
+}
+
+.duration[hidden] {
+  display: none;
+}
+
+.duration input,
+.duration select {
+  height: 38px;
+  border: 1px solid transparent;
+  background-color: var(--surface);
+  font-size: 14px;
+}
+
+.duration input {
+  width: 84px;
+  padding: 0 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.duration select {
+  padding: 0 34px 0 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238d9098' stroke-width='2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  appearance: none;
+  cursor: pointer;
+}
+
+.duration input:hover,
+.duration select:hover,
+.duration input:focus,
+.duration select:focus {
+  outline: none;
+  border-color: var(--text);
 }
 
 .comms__description {
