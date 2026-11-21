@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import type { Bot } from "mineflayer";
 import { SIDES, type Side } from "@phack/protocol";
-import { activeArena } from "./arena";
+import { currentArena } from "./arena";
 import type { Vec } from "./director";
 import { errorText, FatalError, log } from "./log";
 
@@ -190,8 +190,11 @@ export function createStage(opts: { width: number; height: number; viewDistance:
     markers[side] = mesh;
   }
 
-  const ARENA = activeArena();
-  const center = new Vec3(ARENA.center.x, ARENA.center.y, ARENA.center.z);
+  /** Centro del mapa de la pelea: se lee en cada carga, así un cambio de mapa recentra la escena. */
+  const arenaCenter = (): any => {
+    const { center } = currentArena();
+    return new Vec3(center.x, center.y, center.z);
+  };
   let ready = false;
 
   return {
@@ -216,12 +219,13 @@ export function createStage(opts: { width: number; height: number; viewDistance:
       ready = true;
 
       // Centrado en la arena (no en el bot): solo se dibujan los chunks cercanos al centro.
-      const worldView = new WorldView(bot.world, viewDistance, center);
+      const worldView = new WorldView(bot.world, viewDistance, arenaCenter());
       viewer.listen(worldView);
       // Primero los listeners y después la carga inicial, para no perder chunks que
       // lleguen entremedio (cargar un chunk dos veces es inofensivo).
       worldView.listenToBot(bot);
       const loadAll = (force: boolean): void => {
+        const center = arenaCenter();
         const pending: Promise<unknown> = force ? worldView.updatePosition(center, true) : worldView.init(center);
         Promise.resolve(pending).catch((err: unknown) => {
           log("warn", `No se pudieron cargar los chunks: ${errorText(err)}`);

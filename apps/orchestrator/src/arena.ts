@@ -1,4 +1,19 @@
-import { AGENT_USERNAMES, MAX_HEALTH, arenaFor, type ArenaScenario, type Side } from "@phack/protocol";
+import {
+  AGENT_USERNAMES,
+  MAX_HEALTH,
+  arenaFor,
+  type ArenaScenario,
+  type ArenaScenarioId,
+  type ArenaSpawn,
+  type Side,
+} from "@phack/protocol";
+import {
+  chunkBattleBuildCommands,
+  chunkBattleLayout,
+  placeTemplateFailed,
+  randomChunkBattleSeed,
+  type ChunkBattleLayout,
+} from "./chunkbattle";
 import { floorBounds, platanusBuildCommands } from "./platanus";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
@@ -8,8 +23,10 @@ import type { Kit, KitItem } from "@phack/protocol";
  * Preparación de la arena y de los peleadores por RCON.
  * Sintaxis de comandos de Minecraft Java 1.20.4.
  *
- * El escenario sale de ARENA_SCENARIO (ver ARENAS en @phack/protocol). Todas las
- * funciones aceptan el escenario como último argumento; si falta, usan el activo.
+ * El escenario es por pelea: `planArena(escenario, semilla)` arma el plan (`ArenaSetup`)
+ * y las funciones de abajo lo reciben. También aceptan un `ArenaScenario` suelto (se usa
+ * el último plan construido de ese escenario o uno sin semilla) y, si falta, usan el de
+ * ARENA_SCENARIO (compatibilidad).
  */
 
 /** Escenario configurado en ARENA_SCENARIO (vacío = el por defecto, "platanus"). */
@@ -17,9 +34,68 @@ export function activeArena(): ArenaScenario {
   return arenaFor(process.env.ARENA_SCENARIO);
 }
 
-/** Caja que ocupa la arena en planta (piso, plantilla y su destino). */
+/**
+ * Plan concreto de una pelea: escenario, semilla y spawns reales. En Chunk Battle la
+ * semilla decide las islas (sin semilla se sortea una); en los demás escenarios no cambia
+ * nada y queda registrada tal cual (o null).
+ */
+export type ArenaSetup = {
+  arena: ArenaScenario;
+  seed: number | null;
+  spawns: Record<Side, ArenaSpawn>;
+  /** Solo Chunk Battle: islas que salieron por semilla. */
+  chunkBattle: ChunkBattleLayout | null;
+};
+
+export type ArenaTarget = ArenaScenario | ArenaSetup;
+
+/** Arma el plan de una pelea para un escenario EXPLÍCITO (objeto o id) y una semilla opcional. */
+export function planArena(
+  scenario: ArenaScenario | ArenaScenarioId | string,
+  seed?: number | null,
+  random: () => number = Math.random,
+): ArenaSetup {
+  const arena = typeof scenario === "string" ? arenaFor(scenario) : scenario;
+  if (arena.kind === "islands") {
+    const chunkBattle = chunkBattleLayout(arena, seed ?? randomChunkBattleSeed(random));
+    return {
+      arena,
+      seed: chunkBattle.seed,
+      spawns: { red: chunkBattle.red.spawn, blue: chunkBattle.blue.spawn },
+      chunkBattle,
+    };
+  }
+  return { arena, seed: seed ?? null, spawns: { ...arena.spawns }, chunkBattle: null };
+}
+
+function isSetup(target: ArenaTarget): target is ArenaSetup {
+  return "spawns" in target && "chunkBattle" in target;
+}
+
+/** Último plan construido por escenario: lo usan las llamadas que pasan un escenario suelto. */
+const lastBuilt = new Map<ArenaScenarioId, ArenaSetup>();
+
+/**
+ * Plan de un objetivo. Con un escenario suelto se usa el último plan construido de ese
+ * escenario (así el teletransporte calza con las islas que armó `buildArena`); si nunca
+ * se construyó, se planifica sin semilla. Lo correcto es pasar el plan de la pelea.
+ */
+export function toSetup(target: ArenaTarget = activeArena()): ArenaSetup {
+  if (isSetup(target)) return target;
+  return lastBuilt.get(target.id) ?? planArena(target);
+}
+
+function arenaOf(target: ArenaTarget): ArenaScenario {
+  return isSetup(target) ? target.arena : target;
+}
+
+/** Caja que ocupa la arena en planta (piso, plantilla y su destino, o islas). */
 function arenaBounds(arena: ArenaScenario): { minX: number; maxX: number; minZ: number; maxZ: number } {
   if (arena.kind === "built") return floorBounds(arena);
+  if (arena.kind === "islands") {
+    const { from, to } = arena.clearBox;
+    return { minX: from.x, maxX: to.x, minZ: from.z, maxZ: to.z };
+  }
   const { center: c, radius, template } = arena;
   return {
     minX: Math.min(c.x - radius, template.from.x),
@@ -30,8 +106,8 @@ function arenaBounds(arena: ArenaScenario): { minX: number; maxX: number; minZ: 
 }
 
 /** Reglas del mundo: sin mobs, siempre de día, PvP con daño visible. */
-export function worldRuleCommands(arena: ArenaScenario = activeArena()): string[] {
-  const { red } = arena.spawns;
+export function worldRuleCommands(target: ArenaTarget = activeArena()): string[] {
+  const { red } = toSetup(target).spawns;
   return [
     // En "normal" el daño entre jugadores y el hambre funcionan; los mobs se apagan con la regla.
     "difficulty normal",
@@ -60,7 +136,8 @@ export function worldRuleCommands(arena: ArenaScenario = activeArena()): string[
 }
 
 /** Área que debe quedar cargada aunque no haya jugadores (arena + cámaras). */
-export function forceloadCommand(arena: ArenaScenario = activeArena()): string {
+export function forceloadCommand(target: ArenaTarget = activeArena()): string {
+  const arena = arenaOf(target);
   const pad = 8;
   const b = arenaBounds(arena);
   const minX = Math.min(b.minX, arena.camera.x, arena.cameraWide.x) - pad;
@@ -75,10 +152,15 @@ export function forceloadCommand(arena: ArenaScenario = activeArena()): string {
  *  - Pizza Spleef 2 (mapa del ZIP): se restaura su plantilla original y se limpian restos
  *    del combate. Las entidades decorativas y la lógica original del mapa se conservan.
  *  - Platanus (mundo vacío): se reconstruye entera (ver platanus.ts).
- * El primer comando es el que toca chunks: es el que se reintenta si aún no cargaron.
+ *  - Chunk Battle (mundo vacío): islas de la semilla del plan (ver chunkbattle.ts).
+ * El primer comando es el que toca chunks; buildArena reintenta cualquiera que caiga en
+ * un chunk que aún no cargó.
  */
-export function arenaBuildCommands(arena: ArenaScenario = activeArena()): string[] {
+export function arenaBuildCommands(target: ArenaTarget = activeArena()): string[] {
+  const setup = toSetup(target);
+  const { arena } = setup;
   if (arena.kind === "built") return platanusBuildCommands(arena);
+  if (arena.kind === "islands") return chunkBattleBuildCommands(arena, setup.chunkBattle!);
   const { center: c, template } = arena;
   const { from, to, destination } = template;
   const cleanup = ["item", "arrow", "spectral_arrow", "experience_orb"].map(
@@ -128,9 +210,11 @@ export function kitEffectCommands(username: string, kit: Kit): string[] {
  * comando por cosa: `fill ... replace` acepta un solo filtro (que puede ser un tag de bloques).
  * Los filtros de lana y tierra quedan de cuando el catálogo las tenía: hoy no borran nada.
  */
-export function clearPlacedBlocksCommands(arena: ArenaScenario = activeArena()): string[] {
-  // Un mapa de plantilla (Pizza Spleef 2) tiene lana y otros bloques propios sobre el piso:
-  // no se toca aquí, se restaura entero con su plantilla antes de la pelea siguiente.
+export function clearPlacedBlocksCommands(target: ArenaTarget = activeArena()): string[] {
+  const arena = arenaOf(target);
+  // Un mapa de plantilla (Pizza Spleef 2) tiene lana y otros bloques propios sobre el piso,
+  // y las islas de Chunk Battle tienen su propio terreno (roca, tierra, madera): no se
+  // tocan aquí, se reconstruyen enteros antes de la pelea siguiente.
   if (arena.kind !== "built") return [];
   const { minX, maxX, minZ, maxZ } = floorBounds(arena);
   const floorY = arena.center.y;
@@ -149,8 +233,8 @@ export function clearPlacedBlocksCommands(arena: ArenaScenario = activeArena()):
   );
 }
 
-export function teleportCommand(side: Side, arena: ArenaScenario = activeArena()): string {
-  const spawn = arena.spawns[side];
+export function teleportCommand(side: Side, target: ArenaTarget = activeArena()): string {
+  const spawn = toSetup(target).spawns[side];
   // +0.5 para caer al centro del bloque; pitch 0 = mirando al frente.
   return `tp ${AGENT_USERNAMES[side]} ${spawn.x + 0.5} ${spawn.y} ${spawn.z + 0.5} ${spawn.yaw} 0`;
 }
@@ -177,24 +261,82 @@ async function sendWhenLoaded(rcon: RconLike, command: string, sleep: SleepFn, a
   throw new Error("La zona de la arena no terminó de cargar en el servidor de Minecraft");
 }
 
-export async function applyWorldRules(rcon: RconLike, arena: ArenaScenario = activeArena()): Promise<void> {
-  await sendAll(rcon, worldRuleCommands(arena));
+export async function applyWorldRules(rcon: RconLike, target: ArenaTarget = activeArena()): Promise<void> {
+  await sendAll(rcon, worldRuleCommands(target));
 }
 
-export async function buildArena(rcon: RconLike, sleep: SleepFn, arena: ArenaScenario = activeArena()): Promise<void> {
+/**
+ * Construye o restaura la arena del plan. Devuelve el plan usado (útil cuando se pasa un
+ * escenario suelto: trae la semilla sorteada y los spawns reales).
+ */
+export async function buildArena(rcon: RconLike, sleep: SleepFn, target: ArenaTarget = activeArena()): Promise<ArenaSetup> {
+  // Un escenario suelto se reconstruye con un plan nuevo (en Chunk Battle, otra semilla).
+  const setup = isSetup(target) ? target : planArena(target);
+  lastBuilt.set(setup.arena.id, setup);
+  const { arena } = setup;
   await rcon.send(forceloadCommand(arena));
   if (arena.kind === "template") {
     const { at, block } = arena.check;
     await sendWhenLoaded(rcon, `execute if block ${at.x} ${at.y} ${at.z} ${block}`, sleep, arena);
   }
-  const [first, ...rest] = arenaBuildCommands(arena);
+  const [first, ...rest] = arenaBuildCommands(setup);
   if (first !== undefined) await sendWhenLoaded(rcon, first, sleep, arena);
-  await sendAll(rcon, rest);
+  for (const command of rest) {
+    // El forceload carga los chunks de a poco: cualquier comando (no solo el primero) puede
+    // caer en uno que aún no cargó. Sin reintento quedarían restos de la pelea anterior.
+    let response = await rcon.send(command);
+    for (let attempt = 1; attempt < 15 && /not loaded/i.test(response); attempt += 1) {
+      await sleep(1_000);
+      response = await rcon.send(command);
+    }
+    if (/not loaded/i.test(response)) {
+      throw new Error("La zona de la arena no terminó de cargar en el servidor de Minecraft");
+    }
+    if (command.startsWith("place template ") && placeTemplateFailed(response)) {
+      throw new Error(
+        `No se pudo colocar una estructura de ${arena.name} (${command.split(" ")[2]}): "${response.trim()}". ` +
+          `Revisa que el datapack phack-chunkbattle esté instalado en el mundo ${arena.level} del servidor.`,
+      );
+    }
+  }
+  return setup;
 }
 
 /** Al terminar una pelea: que los muros de tablones no sigan en la transmisión hasta la próxima. */
-export async function clearPlacedBlocks(rcon: RconLike, arena: ArenaScenario = activeArena()): Promise<void> {
-  await sendAll(rcon, clearPlacedBlocksCommands(arena));
+export async function clearPlacedBlocks(rcon: RconLike, target: ArenaTarget = activeArena()): Promise<void> {
+  await sendAll(rcon, clearPlacedBlocksCommands(target));
+}
+
+/**
+ * Modo por rondas, entre una ronda y la siguiente: deja la arena como al empezar la serie.
+ * Platanus y la pizza solo borran lo colocado (ver clearPlacedBlocksCommands). Chunk
+ * Battle se reconstruye entera con el MISMO plan (mismas islas, misma semilla): el puente
+ * y lo cavado no deben seguir en la ronda siguiente. Como la reconstrucción vacía primero
+ * todo el volumen, los peleadores esperan arriba, flotando con caída lenta, y la caída
+ * lenta se les quita al terminar (no debe durar en la ronda: cambiaría la pelea).
+ * Después hay que llevarlos a su spawn (resetFighterForRound o prepareFighter).
+ */
+export async function resetArenaForRound(rcon: RconLike, sleep: SleepFn, setup: ArenaSetup): Promise<void> {
+  const { arena } = setup;
+  if (arena.kind !== "islands") {
+    await clearPlacedBlocks(rcon, setup);
+    return;
+  }
+  const above = arena.clearBox.to.y + 2;
+  const users = [AGENT_USERNAMES.red, AGENT_USERNAMES.blue];
+  await sendAll(
+    rcon,
+    (["red", "blue"] as const).flatMap((side) => {
+      const spawn = setup.spawns[side];
+      const username = AGENT_USERNAMES[side];
+      return [
+        `effect give ${username} minecraft:slow_falling 30 0 true`,
+        `tp ${username} ${spawn.x + 0.5} ${above} ${spawn.z + 0.5}`,
+      ];
+    }),
+  );
+  await buildArena(rcon, sleep, setup);
+  await sendAll(rcon, users.map((username) => `effect clear ${username} minecraft:slow_falling`));
 }
 
 /**
@@ -215,12 +357,12 @@ export async function prepareFighter(
   side: Side,
   kit: Kit,
   warn: (text: string) => void = () => {},
-  arena: ArenaScenario = activeArena(),
+  target: ArenaTarget = activeArena(),
 ): Promise<void> {
   const username = AGENT_USERNAMES[side];
   await sendAll(rcon, [`gamemode survival ${username}`, `clear ${username}`, `effect clear ${username}`]);
 
-  const tpResponse = await rcon.send(teleportCommand(side, arena));
+  const tpResponse = await rcon.send(teleportCommand(side, target));
   if (/no (player|entity) was found/i.test(tpResponse)) {
     throw new Error(`${username} no está conectado al servidor de Minecraft`);
   }
@@ -263,10 +405,10 @@ export async function resetFighterForRound(
   rcon: RconLike,
   side: Side,
   kit: Kit,
-  arena: ArenaScenario = activeArena(),
+  target: ArenaTarget = activeArena(),
 ): Promise<void> {
   const username = AGENT_USERNAMES[side];
-  const tpResponse = await rcon.send(teleportCommand(side, arena));
+  const tpResponse = await rcon.send(teleportCommand(side, target));
   if (/no (player|entity) was found/i.test(tpResponse)) {
     throw new Error(`${username} no está conectado al servidor de Minecraft`);
   }

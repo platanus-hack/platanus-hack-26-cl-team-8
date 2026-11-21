@@ -11,29 +11,62 @@ export type ArenaPoint = { x: number; y: number; z: number };
 export type ArenaSpawn = ArenaPoint & { yaw: number };
 
 /**
- * Escenarios de arena. El id es también el nombre del mundo (level-name) del servidor:
- * docker-compose y scripts/local/minecraft.sh lo usan tal cual como LEVEL.
+ * Escenarios de arena (el MAPA de la pelea; no confundir con los escenarios de benchmark,
+ * SCENARIO_IDS, que son reglas de puntaje). Los "construidos" (Platanus, Chunk Battle)
+ * viven en un mismo mundo vacío, `ARENA_WORLD`, en lugares distintos: se construyen por
+ * RCON antes de cada pelea, así que elegir uno no reinicia el servidor. Pizza Spleef 2 es
+ * un mapa importado con su propio mundo y solo se usa vía ARENA_SCENARIO.
  */
-export const ARENA_SCENARIOS = ["platanus", "pizza-spleef-2"] as const;
+export const ARENA_SCENARIOS = ["platanus", "chunk-battle", "pizza-spleef-2"] as const;
 export const ArenaScenarioIdSchema = z.enum(ARENA_SCENARIOS);
 export type ArenaScenarioId = z.infer<typeof ArenaScenarioIdSchema>;
 export const DEFAULT_ARENA_SCENARIO: ArenaScenarioId = "platanus";
+
+/** Mundo (level-name) del servidor donde se construyen los escenarios seleccionables. */
+export const ARENA_WORLD = "arena";
+
+/**
+ * Escenarios que se construyen en `ARENA_WORLD` y que se pueden elegir por pelea (selector
+ * "Mapa" de la web, `--scenario`/`--map` del torneo). Cambiar entre ellos es instantáneo.
+ */
+export const SELECTABLE_ARENA_SCENARIOS = ["platanus", "chunk-battle"] as const;
+export const SelectableArenaScenarioIdSchema = z.enum(SELECTABLE_ARENA_SCENARIOS);
+export type SelectableArenaScenarioId = z.infer<typeof SelectableArenaScenarioIdSchema>;
+
+export function isSelectableArenaScenario(id: string): id is SelectableArenaScenarioId {
+  return (SELECTABLE_ARENA_SCENARIOS as readonly string[]).includes(id);
+}
+
+/**
+ * Escenarios que se pueden pedir por pelea a un servidor cuyo escenario por defecto
+ * (ARENA_SCENARIO) es `defaultId`: los seleccionables si el servidor carga `ARENA_WORLD`;
+ * si carga otro mundo (la pizza), solo ese escenario. El por defecto va primero.
+ */
+export function availableArenaScenarios(defaultId: ArenaScenarioId): ArenaScenarioId[] {
+  if (!isSelectableArenaScenario(defaultId)) return [defaultId];
+  return [defaultId, ...SELECTABLE_ARENA_SCENARIOS.filter((id) => id !== defaultId)];
+}
 
 type ArenaCommon = {
   id: ArenaScenarioId;
   /** Nombre legible. */
   name: string;
-  /** Nombre del mundo en el servidor (= id). */
+  /** Nombre del mundo en el servidor: `ARENA_WORLD` para los construidos. */
   level: string;
-  /** Centro del piso; `center.y` es la altura del bloque del piso. */
+  /** Centro del piso (o del conjunto de islas); `center.y` es la altura del bloque del piso. */
   center: ArenaPoint;
   /**
    * Radio del círculo jugable inscrito (bloques). Es lo que usan los agentes para no
    * retroceder fuera de la arena; en una arena rectangular es la media distancia menor.
+   * Con islas, es el de una isla (el centro del conjunto cae en el vacío).
    */
   radius: number;
   /** Altura sobre el piso que puede usar la arena (muros o límite de construcción). */
   wallHeight: number;
+  /**
+   * Spawns por lado. En Chunk Battle son los nominales (centro de cada isla): los reales
+   * dependen de las islas que salen por semilla (ver apps/orchestrator/src/chunkbattle.ts).
+   */
   spawns: { red: ArenaSpawn; blue: ArenaSpawn };
   /**
    * Posición de la cámara espectadora: elevada, mirando al centro. Va en +Z para que el
@@ -62,14 +95,80 @@ export type BuiltArena = ArenaCommon & {
   floor: { halfX: number; halfZ: number };
 };
 
-export type ArenaScenario = TemplateArena | BuiltArena;
+/** Rectángulo en planta, inclusivo. */
+export type ArenaRect = { minX: number; maxX: number; minZ: number; maxZ: number };
+
+/**
+ * Isla de Chunk Battle: una estructura de `ISLAND_STRUCTURE_SIZE` del mapa original,
+ * colocada con `place template`. Su núcleo de 16×16 se rellena con capas de mineral y
+ * lleva piso de bedrock debajo; la superficie caminable es el núcleo más la cornisa.
+ */
+export type ChunkIsland = {
+  /** Lado que parte en esta isla. */
+  side: "red" | "blue";
+  /** Esquina mínima (x, y, z) de la caja que ocupa la estructura. */
+  origin: ArenaPoint;
+  /**
+   * Rotación con que se coloca (valor de `place template`): la isla azul va girada 180°
+   * (simetría central), así ambos lados ven la misma isla desde el mismo ángulo.
+   */
+  rotation: "none" | "180";
+  /** Núcleo de 16×16 (capas de mineral + piso de bedrock). */
+  core: ArenaRect;
+  /**
+   * Superficie caminable: esquinas inclusivas en planta; `y` es la altura nominal del
+   * suelo (cada isla temática tiene su relieve, ±2 bloques).
+   */
+  from: ArenaPoint;
+  to: ArenaPoint;
+};
+
+/** Tamaño (x, y, z) de las estructuras temáticas de Chunk Battle. */
+export const ISLAND_STRUCTURE_SIZE = { x: 22, y: 48, z: 22 } as const;
+
+/**
+ * Islas flotantes sobre el vacío (mundo `ARENA_WORLD`): sin muros, caer = KO. Qué isla
+ * temática le toca a cada lado lo decide la semilla de la pelea.
+ */
+export type IslandsArena = ArenaCommon & {
+  kind: "islands";
+  /** y de la base de las estructuras; el piso de bedrock va en baseY - 1. */
+  baseY: number;
+  /** Bloques de vacío entre las superficies de ambas islas (eje x). */
+  gap: number;
+  /** [roja (oeste), azul (este)]. */
+  islands: [ChunkIsland, ChunkIsland];
+  /** Volumen que se limpia a aire entre peleas (islas, puentes, pilares). */
+  clearBox: { from: ArenaPoint; to: ArenaPoint };
+};
+
+export type ArenaScenario = TemplateArena | BuiltArena | IslandsArena;
+
+/** Geometría de Chunk Battle: dos islas alineadas en x, centro del conjunto en (1000, 64, 0). */
+const CB = { x: 1000, y: 64, z: 0, baseY: 32, gap: 6 } as const;
+/** Caja de la isla roja: su superficie (relativa 1..20) termina en x = 996; luego 6 de vacío. */
+const CB_RED_X = CB.x - 4 - 20;
+/** Caja de la isla azul: su superficie empieza en x = 1003. */
+const CB_BLUE_X = CB.x + 3 - 1;
+const CB_Z = CB.z - 11;
+
+function chunkIsland(side: "red" | "blue", x: number): ChunkIsland {
+  return {
+    side,
+    origin: { x, y: CB.baseY, z: CB_Z },
+    rotation: side === "red" ? "none" : "180",
+    core: { minX: x + 3, maxX: x + 18, minZ: CB_Z + 3, maxZ: CB_Z + 18 },
+    from: { x: x + 1, y: CB.y, z: CB_Z + 1 },
+    to: { x: x + 20, y: CB.y, z: CB_Z + 20 },
+  };
+}
 
 export const ARENAS: Record<ArenaScenarioId, ArenaScenario> = {
   /** Mundo vacío con piso negro de 57×45, el isotipo de Platanus al centro y muros de vidrio. */
   platanus: {
     id: "platanus",
     name: "Arena Platanus",
-    level: "platanus",
+    level: ARENA_WORLD,
     kind: "built",
     center: { x: 0, y: 64, z: 0 },
     floor: { halfX: 28, halfZ: 22 },
@@ -82,6 +181,35 @@ export const ARENAS: Record<ArenaScenarioId, ArenaScenario> = {
     },
     camera: { x: 0, y: 90, z: 40 },
     cameraWide: { x: 0, y: 104, z: 30 },
+  },
+  /**
+   * Dos islas de 16×16 (más cornisa: superficie de 20×20) del mapa "Chunk Battle",
+   * separadas por 6 bloques de vacío. Roja al oeste, azul al este.
+   */
+  "chunk-battle": {
+    id: "chunk-battle",
+    name: "Chunk Battle",
+    level: ARENA_WORLD,
+    kind: "islands",
+    center: { x: CB.x, y: CB.y, z: CB.z },
+    baseY: CB.baseY,
+    gap: CB.gap,
+    islands: [chunkIsland("red", CB_RED_X), chunkIsland("blue", CB_BLUE_X)],
+    // Media superficie de una isla.
+    radius: 10,
+    /** Límite de construcción sobre el suelo (lo que se limpia entre peleas). */
+    wallHeight: 24,
+    clearBox: {
+      from: { x: CB_RED_X - 6, y: CB.baseY - 1, z: CB_Z - 6 },
+      to: { x: CB_BLUE_X + 21 + 6, y: CB.y + 31, z: CB_Z + 21 + 6 },
+    },
+    spawns: {
+      red: { x: CB_RED_X + 10, y: CB.y + 1, z: CB_Z + 10, yaw: -90 },
+      blue: { x: CB_BLUE_X + 11, y: CB.y + 1, z: CB_Z + 11, yaw: 90 },
+    },
+    // Encuadre de ambas islas (46 bloques de ancho en x) y el hueco, desde +Z.
+    camera: { x: CB.x, y: 86, z: 36 },
+    cameraWide: { x: CB.x, y: 100, z: 28 },
   },
   "pizza-spleef-2": {
     id: "pizza-spleef-2",
@@ -372,6 +500,45 @@ export function kitWindowSlot(slot: KitSlot): number {
 export function kitOf(config: { kit?: KitId | undefined; customKit?: Kit | undefined }): Kit {
   if (config.kit === "custom" && config.customKit) return config.customKit;
   return KITS[config.kit ?? DEFAULT_KIT];
+}
+
+// ---------- Kit según el mapa ----------
+
+/** Bloques que la herramienta "build" acepta (misma regla que isBuildBlock del agente). */
+function isBuildMaterial(id: string): boolean {
+  return id.endsWith("_planks") || id.endsWith("_wool") || id === "cobblestone" || id === "dirt" || id === "obsidian";
+}
+
+/** Lo que Chunk Battle agrega a un kit que no lo trae: bloques para un puente y un pico. */
+export const ISLANDS_KIT_EXTRAS = [
+  { item: "cobblestone", count: 32, label: "Roca", missing: (kit: Kit) => !kit.items.some((i) => isBuildMaterial(i.item)) },
+  { item: "iron_pickaxe", count: 1, label: "Pico de hierro", missing: (kit: Kit) => !kit.items.some((i) => i.item.endsWith("_pickaxe")) },
+] as const;
+
+const FREE_SLOT_ORDER: readonly KitSlot[] = [
+  ...Array.from({ length: 9 }, (_, i) => `hotbar.${i}` as KitSlot),
+  ...Array.from({ length: 27 }, (_, i) => `inventory.${i}` as KitSlot),
+];
+
+/**
+ * Kit con el que de verdad se pelea en un mapa. En Chunk Battle las islas están separadas
+ * por vacío: sin bloques ni pico no hay cómo cruzar (build) ni abrirse paso (dig), así que
+ * a un kit que no los trae se le suman los de ISLANDS_KIT_EXTRAS en casillas libres (la
+ * hotbar primero). Lo que el kit ya tiene no se toca; en los demás mapas el kit va igual.
+ * Es el mismo para ambos lados: la justicia del duelo no cambia.
+ */
+export function kitForArena(kit: Kit, arena: Pick<ArenaScenario, "kind">): Kit {
+  if (arena.kind !== "islands") return kit;
+  const used = new Set<string>(kit.items.map((i) => i.slot));
+  const extras: KitItem[] = [];
+  for (const extra of ISLANDS_KIT_EXTRAS) {
+    if (!extra.missing(kit)) continue;
+    const slot = FREE_SLOT_ORDER.find((candidate) => !used.has(candidate));
+    if (!slot) break;
+    used.add(slot);
+    extras.push({ slot, item: extra.item, count: extra.count, label: extra.label });
+  }
+  return extras.length === 0 ? kit : { ...kit, items: [...kit.items, ...extras] };
 }
 
 // ---------- Kit personalizado ----------
@@ -1123,6 +1290,12 @@ export const MatchSettingsSchema = z.object({
    * efecto si el servidor tiene la clave configurada (ver ServerDefaults.voice).
    */
   voice: z.boolean().catch(false).default(false),
+  /**
+   * Mapa de las próximas peleas (uno de SELECTABLE_ARENA_SCENARIOS); null = el por defecto
+   * del servidor (ServerDefaults.arena). Lo elige el selector "Mapa" de la web. Todas las
+   * rondas de una serie se juegan en el mismo mapa y con la misma semilla (mismas islas).
+   */
+  arena: SelectableArenaScenarioIdSchema.nullable().catch(null).default(null),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
 export const DEFAULT_SETTINGS: MatchSettings = {
@@ -1138,6 +1311,7 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   refillKit: false,
   judge: false,
   rules: { red: [], blue: [] },
+  arena: null,
 };
 
 /**
@@ -1175,6 +1349,8 @@ export const UpdateSettingsBodySchema = z
     refillKit: z.boolean().optional(),
     judge: z.boolean().optional(),
     rules: z.object({ red: RulesSchema, blue: RulesSchema }).partial().optional(),
+    /** Mapa: solo los seleccionables; null vuelve al por defecto del servidor. */
+    arena: SelectableArenaScenarioIdSchema.nullable().optional(),
   })
   .refine((body) => Object.values(body).some((value) => value !== undefined));
 export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBodySchema>;
@@ -1385,6 +1561,14 @@ export type Judgement = z.infer<typeof JudgementSchema>;
 export const MatchStateSchema = z.object({
   id: z.string(),
   phase: MatchPhaseSchema,
+  /**
+   * Mapa de esta pelea (o de la última, si no hay ninguna en curso): el de los ajustes, el
+   * del cuerpo de inicio o el del torneo; si no, ARENA_SCENARIO. Un servidor más viejo no
+   * lo manda. Es el MAPA, no el escenario de benchmark (ese va en settings.scenario).
+   */
+  arena: ArenaScenarioIdSchema.default(DEFAULT_ARENA_SCENARIO),
+  /** Semilla de la pelea: en Chunk Battle decide las islas; null = sin semilla. */
+  seed: z.number().int().nullable().default(null),
   /** Epoch ms; null si no ha partido. */
   startedAt: z.number().nullable(),
   /** Epoch ms en que termina por tiempo; null si no ha partido. */
@@ -1408,6 +1592,9 @@ export type MatchState = z.infer<typeof MatchStateSchema>;
 /** Resumen persistido de una pelea terminada: la "respuesta" del simulador. */
 export const MatchRecordSchema = z.object({
   id: z.string(),
+  /** Mapa y semilla de la pelea (los registros viejos no los traen: eran de Platanus o la pizza). */
+  arena: ArenaScenarioIdSchema.default(DEFAULT_ARENA_SCENARIO),
+  seed: z.number().int().nullable().default(null),
   startedAt: z.number(),
   endedAt: z.number(),
   durationMs: z.number(),
@@ -1580,6 +1767,9 @@ export const TranscriptEntrySchema = z.discriminatedUnion("type", [
     matchId: z.string(),
     configs: z.object({ red: AgentConfigSchema, blue: AgentConfigSchema }),
     settings: MatchSettingsSchema.default(DEFAULT_SETTINGS),
+    /** Mapa y semilla con que se juega (faltan en las transcripciones de antes). */
+    arena: ArenaScenarioIdSchema.optional(),
+    seed: z.number().int().nullable().optional(),
     /** Prompt de sistema completo de cada agente (el mundo + las instrucciones del usuario). */
     systemPrompts: z.object({ red: z.string(), blue: z.string() }),
     tickMs: z.number(),
@@ -1676,8 +1866,10 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit?, customKit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules? } -> MatchSettings
-//   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } -> MatchSettings
+//                                    (400 si arena no es un mapa de este servidor)
+//   POST /api/match/start            body StartMatchBody? { arena? } -> MatchState (409 si ya hay una pelea en curso;
+//                                    400 si el mapa no es de este servidor)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
 //   GET  /api/matches/:id/transcript -> transcripción de esa pelea: JSONL de TranscriptEntry;
@@ -1688,7 +1880,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   DELETE /api/matches/:id/flags/:side -> { ok: true }   (quita la marca)
 //   GET  /api/speech/:id             -> audio/mpeg de una frase dicha por un agente (ver "message").
 //                                       Espera a que el audio esté listo; 404 si no existe o falló.
-//   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
+//   GET  /api/defaults               -> ServerDefaults    (proveedor, modelos y mapas del servidor)
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   GET  /api/bench                  -> BenchReport       (tablero de benchmarks, calculado con todo el historial)
 //   POST /api/matches/:id/judge      -> Judgement         (el LLM juez califica esa pelea; 400 con el LLM simulado)
@@ -1727,6 +1919,26 @@ export const API_ROUTES = {
 export type PromptsResponse = { red: AgentConfig; blue: AgentConfig };
 
 /**
+ * Cuerpo (opcional) de POST /api/match/start. Sin `arena` vale el mapa de los ajustes
+ * (MatchSettings.arena) y, si tampoco hay, el por defecto del servidor. Solo se aceptan
+ * los construidos (seleccionables); el servidor además rechaza los que no estén en su
+ * lista `ServerDefaults.arenas`.
+ */
+export const StartMatchBodySchema = z.object({
+  arena: SelectableArenaScenarioIdSchema.optional(),
+});
+export type StartMatchBody = z.infer<typeof StartMatchBodySchema>;
+
+/** Un mapa que se puede elegir para la próxima pelea. */
+export const ArenaOptionSchema = z.object({ id: ArenaScenarioIdSchema, name: z.string() });
+export type ArenaOption = z.infer<typeof ArenaOptionSchema>;
+
+/** Opciones de mapa para un servidor con ese escenario por defecto (nombres legibles). */
+export function arenaOptions(defaultId: ArenaScenarioId): ArenaOption[] {
+  return availableArenaScenarios(defaultId).map((id) => ({ id, name: ARENAS[id].name }));
+}
+
+/**
  * Qué se usa cuando un agente no elige proveedor o modelo: el proveedor por defecto
  * del servidor y el modelo por defecto de cada proveedor. La web lo usa para mostrar
  * el modelo real de cada agente.
@@ -1741,6 +1953,10 @@ export const ServerDefaultsSchema = z.object({
   matchDurationSeconds: z.number().default(180),
   /** Si el servidor puede dar voz a los agentes (tiene clave de ElevenLabs y una voz por lado). */
   voice: z.object({ available: z.boolean() }).default({ available: false }),
+  /** Mapa por defecto (ARENA_SCENARIO). Un servidor más viejo no lo manda. */
+  arena: ArenaScenarioIdSchema.default(DEFAULT_ARENA_SCENARIO),
+  /** Mapas que aceptan los ajustes y POST /api/match/start, con el por defecto primero. */
+  arenas: z.array(ArenaOptionSchema).default(() => arenaOptions(DEFAULT_ARENA_SCENARIO)),
 });
 export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 

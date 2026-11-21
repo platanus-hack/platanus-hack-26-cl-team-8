@@ -14,7 +14,8 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadEnv, type Env } from "@phack/env";
 import {
-  ARENA_SCENARIOS,
+  SELECTABLE_ARENA_SCENARIOS,
+  availableArenaScenarios,
   type FrozenModel,
   type OmittedLine,
   type TournamentConfig,
@@ -54,6 +55,8 @@ const FLAGS = {
   z: { type: "string", default: "1.645" },
   "prior-sd": { type: "string", default: "400" },
   scenario: { type: "string" },
+  /** Alias de --scenario: el mapa de las partidas. */
+  map: { type: "string" },
   reference: { type: "string", default: DEFAULT_REFERENCE_ID },
   "reference-provider": { type: "string", default: DEFAULT_REFERENCE_PROVIDER },
   /** Catálogo desde un archivo JSON local ({ data: [...] }) en vez de descargarlo. */
@@ -89,7 +92,8 @@ Opciones de plan/create:
   --band 150                   banda de nivel ±Elo respecto de la referencia
   --z 1.645                    z del intervalo de calibración (90 %)
   --prior-sd 400               desviación del prior del Bradley–Terry (Elo)
-  --scenario <id>              escenario (por defecto ARENA_SCENARIO: ${ARENA_SCENARIOS.join(" | ")})
+  --scenario <id>, --map <id>  mapa de todas las partidas: ${SELECTABLE_ARENA_SCENARIOS.join(" | ")}
+                               (por defecto ARENA_SCENARIO, que por defecto es platanus)
   --catalog <archivo.json>     usar un catálogo local en vez de descargarlo
   --simulate                   agentes simulados: sin Minecraft, sin claves, sin endpoints
 `;
@@ -106,7 +110,7 @@ function num(flags: Flags, key: keyof Flags, opts: { min?: number; int?: boolean
   return value;
 }
 
-class UsageError extends Error {}
+export class UsageError extends Error {}
 
 function limitsFrom(flags: Flags): TournamentLimits {
   return {
@@ -167,10 +171,22 @@ async function loadCatalog(flags: Flags): Promise<Prepared["catalog"]> {
   return { ...(await fetchCatalog()), source: CATALOG_URL };
 }
 
-function scenarioFrom(flags: Flags, env: Env): string {
-  const scenario = flags.scenario ?? env.ARENA_SCENARIO;
-  if (!(ARENA_SCENARIOS as readonly string[]).includes(scenario)) {
-    throw new UsageError(`--scenario inválido: "${scenario}" (válidos: ${ARENA_SCENARIOS.join(", ")})`);
+/**
+ * Mapa del torneo. Valen los que el servidor puede construir por partida: Platanus y
+ * Chunk Battle comparten el mundo "arena"; con ARENA_SCENARIO=pizza-spleef-2 (otro
+ * mundo) solo vale la pizza.
+ */
+export function scenarioFrom(
+  flags: { scenario?: string | undefined; map?: string | undefined },
+  env: Pick<Env, "ARENA_SCENARIO">,
+): string {
+  if (flags.scenario !== undefined && flags.map !== undefined && flags.scenario.trim() !== flags.map.trim()) {
+    throw new UsageError(`--scenario "${flags.scenario}" y --map "${flags.map}" no coinciden: usa uno solo`);
+  }
+  const scenario = (flags.scenario ?? flags.map ?? env.ARENA_SCENARIO).trim();
+  const valid: readonly string[] = availableArenaScenarios(env.ARENA_SCENARIO);
+  if (!valid.includes(scenario)) {
+    throw new UsageError(`--scenario inválido: "${scenario}" (válidos con ARENA_SCENARIO=${env.ARENA_SCENARIO}: ${valid.join(", ")})`);
   }
   return scenario;
 }
@@ -365,9 +381,14 @@ async function cmdRun(id: string, env: Env, store: FileTournamentStore, dataDir:
     if (config.limits.concurrency > 1) {
       throw new Error("concurrency > 1 necesita un servidor de Minecraft por partida y por ahora hay uno solo: crea el torneo con --concurrency 1");
     }
-    const wrong = config.scenarios.find((s) => s !== env.ARENA_SCENARIO);
+    // Platanus y Chunk Battle se construyen por partida en el mismo mundo; la pizza es otro.
+    const available: readonly string[] = availableArenaScenarios(env.ARENA_SCENARIO);
+    const wrong = config.scenarios.find((s) => !available.includes(s));
     if (wrong) {
-      throw new Error(`El torneo usa el escenario "${wrong}" pero el servidor carga ARENA_SCENARIO=${env.ARENA_SCENARIO}: cambia el .env y reinicia Minecraft`);
+      throw new Error(
+        `El torneo usa el escenario "${wrong}" pero el servidor carga el mundo de ARENA_SCENARIO=${env.ARENA_SCENARIO} ` +
+          `(mapas posibles: ${available.join(", ")}): cambia el .env y reinicia Minecraft`,
+      );
     }
   }
 

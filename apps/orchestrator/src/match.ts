@@ -24,6 +24,9 @@ import {
   SCENARIOS,
   SIDES,
   formatTranscript,
+  availableArenaScenarios,
+  isSelectableArenaScenario,
+  kitForArena,
   kitOf,
   parseTranscript,
   validateCustomKit,
@@ -34,6 +37,7 @@ import {
   type MatchMetrics,
   type AgentStatus,
   type ArenaEvent,
+  type ArenaScenarioId,
   type Kit,
   type MatchSettings,
   type MatchRecord,
@@ -47,7 +51,17 @@ import {
   type Side,
   type TranscriptEntry,
 } from "@phack/protocol";
-import { buildArena, clearPlacedBlocks, prepareFighter, resetFighterForRound, runCountdown } from "./arena";
+import {
+  applyWorldRules,
+  buildArena,
+  clearPlacedBlocks,
+  planArena,
+  prepareFighter,
+  resetArenaForRound,
+  resetFighterForRound,
+  runCountdown,
+  type ArenaSetup,
+} from "./arena";
 import { Conversation, type ConversationClock } from "./conversation";
 import { extractCustomKit } from "./customkit";
 import { buildExplanationMessages, cleanExplanation, fallbackExplanation, shouldExplain } from "./explain";
@@ -117,6 +131,7 @@ export type MatchEnv = Pick<
   | "MATCH_MAX_SECONDS"
   | "AGENT_TICK_MS"
   | "AGENT_OBSERVATION_RADIUS"
+  | "ARENA_SCENARIO"
 >;
 
 export type MatchDeps = {
@@ -186,6 +201,23 @@ export class MatchActiveError extends Error {
   }
 }
 
+/** Se lanza al pedir un mapa que este servidor no puede construir (HTTP 400). */
+export class ArenaUnavailableError extends Error {
+  constructor(
+    readonly arena: string,
+    readonly available: readonly ArenaScenarioId[],
+  ) {
+    super(`El mapa "${arena}" no está disponible en este servidor (disponibles: ${available.join(", ")})`);
+    this.name = "ArenaUnavailableError";
+  }
+}
+
+/**
+ * Qué pelea iniciar desde la web. `arena`: el mapa (por defecto el de los ajustes y, si
+ * tampoco hay, ARENA_SCENARIO).
+ */
+export type StartOptions = { arena?: ArenaScenarioId };
+
 /** Marca interna: la pelea se terminó (stop/error) mientras se preparaba. */
 class CancelledError extends Error {}
 
@@ -207,6 +239,10 @@ export type RunOnceOptions = {
   explain?: boolean;
   /** Abortar = detener la pelea (resultado "stopped"). */
   signal?: AbortSignal;
+  /** Mapa de la pelea (por defecto, ARENA_SCENARIO). */
+  arena?: ArenaScenarioId;
+  /** Semilla: en Chunk Battle decide las islas. Sin semilla se sortea una. */
+  seed?: number | null;
 };
 
 export type LatencySummary = { count: number; mean: number; p50: number; p95: number };
@@ -237,6 +273,9 @@ export type SideOutcome = {
 
 export type MatchOutcome = {
   id: string;
+  /** Mapa y semilla con que se jugó (la semilla sorteada si no se pidió ninguna). */
+  arena: ArenaScenarioId;
+  seed: number | null;
   /** true si la pelea llegó a la fase "running" (solo entonces hay record). */
   reachedRunning: boolean;
   record: MatchRecord | null;
@@ -303,6 +342,8 @@ export function tournamentSettings(durationSeconds: number): MatchSettings {
 
 type BeginOptions = {
   configs: PromptsResponse;
+  /** Plan de la arena: mapa, semilla, spawns e islas. */
+  setup: ArenaSetup;
   settings: MatchSettings;
   notes: string[];
   explain: boolean;
@@ -313,6 +354,10 @@ type BeginOptions = {
 
 type MatchContext = {
   id: string;
+  /** Plan de la arena de esta pelea (todas las rondas usan el mismo: mismas islas). */
+  setup: ArenaSetup;
+  /** Kit con el que de verdad pelea cada lado, ya ajustado al mapa (ver kitForArena); null antes de resolverlo. */
+  kits: Record<Side, Kit> | null;
   createdAt: number;
   /** true desde que se decidió el final: a partir de ahí se ignoran los eventos de los agentes. */
   ended: boolean;
@@ -457,6 +502,8 @@ export class MatchManager {
     this.state = {
       id: "",
       phase: "idle",
+      arena: deps.env.ARENA_SCENARIO,
+      seed: null,
       startedAt: null,
       endsAt: null,
       countdownEndsAt: null,
@@ -479,12 +526,33 @@ export class MatchManager {
     return this.ctx !== null && !this.ctx.finalized;
   }
 
-  /** Inicia una pelea con los prompts pendientes. Devuelve el estado en fase "preparing". */
-  start(): MatchState {
+  /** Mapas que se pueden pedir (los del mundo que carga el servidor), el por defecto primero. */
+  availableArenas(): ArenaScenarioId[] {
+    return availableArenaScenarios(this.deps.env.ARENA_SCENARIO);
+  }
+
+  /** Plan de la arena para un mapa pedido; lanza ArenaUnavailableError si no se puede. */
+  private plan(arena: ArenaScenarioId | null | undefined, seed: number | null | undefined): ArenaSetup {
+    const id = arena ?? this.deps.env.ARENA_SCENARIO;
+    const available = this.availableArenas();
+    if (!available.includes(id)) throw new ArenaUnavailableError(id, available);
+    return planArena(id, seed);
+  }
+
+  /**
+   * Inicia una pelea con los prompts y ajustes pendientes, en el mapa pedido (`opts.arena`;
+   * si no, el de los ajustes; si no, ARENA_SCENARIO). Devuelve el estado en fase "preparing".
+   */
+  start(opts: StartOptions = {}): MatchState {
+    if (this.shuttingDown || this.isActive()) throw new MatchActiveError();
     const { settings, notes } = effectiveSettings(this.deps.settings.get());
+    const setup = this.plan(opts.arena ?? settings.arena, null);
+    // Los ajustes congelados dicen el mapa con que de verdad se juega.
+    settings.arena = isSelectableArenaScenario(setup.arena.id) ? setup.arena.id : null;
     this.begin({
       // Los prompts quedan congelados: editar la web ya no afecta esta pelea.
       configs: this.deps.prompts.get(),
+      setup,
       settings,
       notes,
       explain: true,
@@ -511,9 +579,14 @@ export class MatchManager {
       const r = opts.configs[side].gatewayRouting;
       if (r) routing[side] = r;
     }
+    if (this.shuttingDown || this.isActive()) throw new MatchActiveError();
+    const setup = this.plan(opts.arena, opts.seed);
+    const settings = tournamentSettings(opts.durationSeconds);
+    settings.arena = isSelectableArenaScenario(setup.arena.id) ? setup.arena.id : null;
     const ctx = this.begin({
       configs,
-      settings: tournamentSettings(opts.durationSeconds),
+      setup,
+      settings,
       notes: [],
       explain: opts.explain ?? false,
       routing,
@@ -547,6 +620,8 @@ export class MatchManager {
     const record = ctx.record ? structuredClone(ctx.record) : null;
     return {
       id: ctx.id,
+      arena: ctx.setup.arena.id,
+      seed: ctx.setup.seed,
       reachedRunning: record !== null,
       record,
       result: ctx.result ?? { winner: null, reason: "error" },
@@ -574,6 +649,8 @@ export class MatchManager {
     const speed = settings.voice ? (this.deps.speechSpeed ?? DEFAULT_SPEECH_SPEED) : 1;
     const ctx: MatchContext = {
       id: randomUUID(),
+      setup: opts.setup,
+      kits: null,
       createdAt: Date.now(),
       ended: false,
       finalized: false,
@@ -611,6 +688,8 @@ export class MatchManager {
     this.state = {
       id: ctx.id,
       phase: "preparing",
+      arena: opts.setup.arena.id,
+      seed: opts.setup.seed,
       startedAt: null,
       endsAt: null,
       countdownEndsAt: null,
@@ -650,7 +729,9 @@ export class MatchManager {
   private async run(ctx: MatchContext): Promise<void> {
     const { rcon, env } = this.deps;
     try {
-      this.log(ctx, "info", "Preparando la pelea…");
+      const { setup } = ctx;
+      const seedText = setup.seed === null ? "" : ` (semilla ${setup.seed})`;
+      this.log(ctx, "info", `Preparando la pelea en ${setup.arena.name}${seedText}…`);
       this.warmVoices(ctx);
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm(ctx, "red"), blue: this.makeLlm(ctx, "blue") };
@@ -663,6 +744,9 @@ export class MatchManager {
       }
       this.assertNotEnded(ctx);
       const kits: Record<Side, Kit> = { red: redKit as Kit, blue: blueKit as Kit };
+      // El mapa puede sumar al kit lo que hace falta para jugarlo (en Chunk Battle, bloques
+      // y pico para cruzar entre islas); es lo que de verdad se entrega y se le cuenta al agente.
+      ctx.kits = { red: kitForArena(kits.red, setup.arena), blue: kitForArena(kits.blue, setup.arena) };
       for (const side of SIDES) {
         // Se anota el proveedor, el modelo y el kit que de verdad se usan (resueltos los
         // valores por defecto): es lo que muestran la web y el historial.
@@ -677,7 +761,8 @@ export class MatchManager {
           username: AGENT_USERNAMES[side],
           opponentUsername: AGENT_USERNAMES[otherSide(side)],
           prompt: config.prompt,
-          kit,
+          kit: ctx.kits[side],
+          arena: setup.arena,
           comms: this.state.settings.comms,
           durationSeconds: this.durationSeconds(),
           rounds: this.state.series
@@ -702,7 +787,10 @@ export class MatchManager {
       this.deps.hub.markStateDirty();
       this.assertNotEnded(ctx);
 
-      await buildArena(rcon, this.sleep);
+      // Las reglas llevan el punto de reaparición del mapa: se aplican en cada pelea.
+      await applyWorldRules(rcon, setup);
+      this.assertNotEnded(ctx);
+      await buildArena(rcon, this.sleep, setup);
       this.assertNotEnded(ctx);
 
       this.log(ctx, "info", "Conectando a los agentes al servidor de Minecraft…");
@@ -722,7 +810,7 @@ export class MatchManager {
       this.assertNotEnded(ctx);
 
       for (const side of SIDES) {
-        await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log(ctx, "warn", text));
+        await prepareFighter(rcon, side, this.kitFor(ctx, side), (text) => this.log(ctx, "warn", text), setup);
         this.assertNotEnded(ctx);
       }
 
@@ -910,14 +998,15 @@ export class MatchManager {
     try {
       await this.waitForRespawn(ctx);
       this.assertNotEnded(ctx);
-      // Primero los bloques: así nadie aparece dentro de un muro que quedó en su spawn.
-      await clearPlacedBlocks(rcon);
+      // Primero los bloques: así nadie aparece dentro de un muro que quedó en su spawn. En
+      // Chunk Battle se rehacen las mismas islas (misma semilla) sin el puente de la ronda.
+      await resetArenaForRound(rcon, this.sleep, ctx.setup);
       this.assertNotEnded(ctx);
       for (const side of SIDES) {
         if (this.deps.roundsRefillKit ?? (this.state.settings.refillKit || ROUNDS_REFILL_KIT)) {
-          await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log(ctx, "warn", text));
+          await prepareFighter(rcon, side, this.kitFor(ctx, side), (text) => this.log(ctx, "warn", text), ctx.setup);
         } else {
-          await resetFighterForRound(rcon, side, kitOf(this.state.configs[side]));
+          await resetFighterForRound(rcon, side, this.kitFor(ctx, side), ctx.setup);
         }
         this.assertNotEnded(ctx);
       }
@@ -954,6 +1043,11 @@ export class MatchManager {
       this.assertNotEnded(ctx);
       await this.sleep(RESPAWN_STEP_MS);
     }
+  }
+
+  /** Kit que se le entrega a un lado: el resuelto y ajustado al mapa o, si aún no hay, el de su configuración. */
+  private kitFor(ctx: MatchContext, side: Side): Kit {
+    return ctx.kits?.[side] ?? kitForArena(kitOf(this.state.configs[side]), ctx.setup.arena);
   }
 
   /**
@@ -1020,6 +1114,8 @@ export class MatchManager {
       matchId: ctx.id,
       configs: structuredClone(this.state.configs),
       settings: structuredClone(this.state.settings),
+      arena: ctx.setup.arena.id,
+      seed: ctx.setup.seed,
       systemPrompts: { red: systemPrompt("red"), blue: systemPrompt("blue") },
       tickMs: env.AGENT_TICK_MS,
       durationSeconds: this.durationSeconds(),
@@ -1406,6 +1502,8 @@ export class MatchManager {
       // Foto final ANTES de desconectar (al reaparecer el perdedor vuelve a tener la vida completa).
       record = {
         id: ctx.id,
+        arena: ctx.setup.arena.id,
+        seed: ctx.setup.seed,
         startedAt,
         endedAt,
         durationMs: endedAt - startedAt,
@@ -1446,7 +1544,7 @@ export class MatchManager {
         if (this.state.settings.judge) void this.autoJudge(final);
         // Los bloques que colocaron los peleadores se borran sin esperar: un RCON lento no
         // debe retrasar el cierre (y la próxima pelea igual reconstruye la arena).
-        void clearPlacedBlocks(this.deps.rcon).catch((err: unknown) => {
+        void clearPlacedBlocks(this.deps.rcon, ctx.setup).catch((err: unknown) => {
           this.deps.log("warn", `No se pudieron borrar los bloques colocados en la arena: ${errorMessage(err)}`);
         });
       }
@@ -1499,7 +1597,7 @@ export class MatchManager {
 
   /** Herramientas que se le ofrecen a un lado (las de su kit y, en una serie, surrender). */
   private offeredTools(side: Side): string[] {
-    const tools: string[] = kitToolNames(kitOf(this.state.configs[side]));
+    const tools: string[] = kitToolNames(this.ctx?.kits?.[side] ?? kitOf(this.state.configs[side]));
     if (this.state.series) tools.push("surrender");
     return tools;
   }

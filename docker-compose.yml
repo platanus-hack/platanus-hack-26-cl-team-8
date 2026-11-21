@@ -48,15 +48,24 @@ services:
     # Java 21 corre Paper 1.20.4 sin problemas (requiere Java 17+).
     image: itzg/minecraft-server:java21
     restart: unless-stopped
-    # El mapa de la pizza se importa SOLO si el escenario es pizza-spleef-2. La imagen
-    # copia WORLD a /data/$LEVEL cuando esa carpeta no existe, y WORLD vacío no importa
-    # nada: con un WORLD fijo, el primer arranque de "platanus" sería la pizza. Compose no
-    # tiene condicionales, por eso se decide aquí antes de llamar al arranque de la imagen.
+    # El mundo sale del escenario por defecto: Platanus y Chunk Battle comparten el mundo
+    # vacío "arena" (se eligen por pelea, sin reiniciar); pizza-spleef-2 tiene el suyo.
+    # La pizza se importa SOLO en ese caso: la imagen copia WORLD a /data/$LEVEL cuando esa
+    # carpeta no existe, y con un WORLD fijo el primer arranque de "arena" sería la pizza.
+    # El datapack de Chunk Battle (estructuras de las islas) solo va al mundo "arena": la
+    # imagen copia DATAPACKS a /data/$LEVEL/datapacks en cada arranque.
+    # Compose no tiene condicionales, por eso se decide aquí antes del arranque de la imagen.
     entrypoint:
       - /bin/bash
       - -c
       - |
-        if [ "$$LEVEL" = pizza-spleef-2 ]; then export WORLD=/worlds/pizza-spleef-2.zip; else unset WORLD; fi
+        if [ "$$ARENA_SCENARIO" = pizza-spleef-2 ]; then
+          export LEVEL=pizza-spleef-2 WORLD=/worlds/pizza-spleef-2.zip
+          unset DATAPACKS
+        else
+          export LEVEL=arena DATAPACKS=/datapacks/phack-chunkbattle
+          unset WORLD
+        fi
         exec /start
     stop_grace_period: 60s
     environment:
@@ -72,10 +81,10 @@ services:
       ENABLE_RCON: "true"
       RCON_PASSWORD: ${RCON_PASSWORD:-phack-rcon}
       BROADCAST_RCON_TO_OPS: "false"
-      # Un mundo por escenario (/data/platanus, /data/pizza-spleef-2): cambiar de escenario
-      # no pisa el otro mundo. El ZIP de la pizza lo decide el entrypoint de arriba.
-      LEVEL: ${ARENA_SCENARIO:-platanus}
-      # Mundo vacío (void): solo aplica al CREAR un mundo nuevo (platanus). Un mundo importado
+      # Escenario por defecto: el entrypoint de arriba deriva de él LEVEL (/data/arena o
+      # /data/pizza-spleef-2; cambiar no pisa el otro mundo), WORLD y DATAPACKS.
+      ARENA_SCENARIO: ${ARENA_SCENARIO:-platanus}
+      # Mundo vacío (void): solo aplica al CREAR un mundo nuevo (arena). Un mundo importado
       # (la pizza) trae sus ajustes en su level.dat y los ignora.
       LEVEL_TYPE: FLAT
       GENERATOR_SETTINGS: '{"layers":[{"block":"minecraft:air","height":1}],"biome":"minecraft:the_void"}'
@@ -102,7 +111,8 @@ services:
       COPY_CONFIG_DEST: /data
       SYNC_SKIP_NEWER_IN_DESTINATION: "false"
       # Se ejecutan por RCON cuando el servidor termina de arrancar. El forceload cubre la
-      # zona central de ambos escenarios; el orquestador agrega la del escenario activo.
+      # zona de Platanus y de la pizza; el orquestador agrega la del escenario de cada pelea
+      # (Chunk Battle está en x ≈ 1000).
       RCON_CMDS_STARTUP: |-
         gamerule doMobSpawning false
         gamerule doDaylightCycle false
@@ -115,6 +125,7 @@ services:
       # ",z": etiqueta SELinux compartida (Fedora/RHEL con SELinux activo); sin efecto en otros hosts.
       - ./infra/minecraft/config:/config:ro,z
       - ./infra/minecraft/worlds:/worlds:ro,z
+      - ./infra/minecraft/datapacks:/datapacks:ro,z
     ports:
       # Solo loopback del servidor: para entrar con un cliente real usa un túnel SSH
       # (ssh -L 25565:127.0.0.1:25565 usuario@servidor). RCON no se publica.
@@ -200,6 +211,9 @@ services:
       CAMERA_VIEW_DISTANCE: ${CAMERA_VIEW_DISTANCE:-4}
       CAMERA_BITRATE_KBPS: ${CAMERA_BITRATE_KBPS:-2500}
       CAMERA_SILENT_AUDIO: ${CAMERA_SILENT_AUDIO:-}
+      # Mapa de la pelea en curso: la cámara lo pregunta a GET /api/state para reencuadrar
+      # desde la preparación (sin esto, recién se entera cuando los bots aparecen).
+      CAMERA_ORCHESTRATOR_URL: http://orchestrator:8787
     # Por si el render usa un navegador headless (Chromium necesita /dev/shm grande).
     shm_size: 512m
     depends_on:

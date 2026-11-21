@@ -19,6 +19,11 @@ export type CameraConfig = {
   wideSeconds: number;
   mc: { host: string; port: number; version: string };
   rcon: { host: string; port: number; password: string };
+  /**
+   * URL base del orquestador (sin /api): de ahí sale el mapa de la pelea en curso para
+   * reencuadrar. En Docker, http://orchestrator:8787.
+   */
+  orchestratorUrl: string;
   username: string;
   /** Siempre par (lo exige yuv420p). */
   width: number;
@@ -70,6 +75,18 @@ function readName(name: string, fallback: string): string {
   return raw;
 }
 
+function readUrl(name: string, fallback: string): string {
+  const raw = (process.env[name] ?? "").trim();
+  const value = raw === "" ? fallback : raw;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("protocolo");
+  } catch {
+    throw new Error(`Variable de entorno inválida: ${name}="${raw}" no es una URL http(s)`);
+  }
+  return value.replace(/\/+$/, "");
+}
+
 function toEven(value: number, min: number): number {
   const clamped = Math.max(min, Math.floor(value));
   return clamped - (clamped % 2);
@@ -97,6 +114,7 @@ export function loadConfig(): CameraConfig {
     wideSeconds: readNumber("CAMERA_WIDE_SECONDS", 6, 0, 3600),
     mc: { host: env.MC_HOST, port: env.MC_PORT, version: env.MC_VERSION },
     rcon: { host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD },
+    orchestratorUrl: readUrl("CAMERA_ORCHESTRATOR_URL", `http://127.0.0.1:${env.ORCHESTRATOR_PORT}`),
     username: env.CAMERA_USERNAME,
     width: toEven(env.CAMERA_WIDTH, 160),
     height: toEven(env.CAMERA_HEIGHT, 90),

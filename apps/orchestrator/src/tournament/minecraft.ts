@@ -13,8 +13,10 @@ import { createFighter } from "@phack/agent";
 import type { Env } from "@phack/env";
 import { createLlmClient, type GatewayRouting } from "@phack/llm";
 import {
+  ArenaScenarioIdSchema,
   BENCHMARK_PROMPT,
   DEFAULT_SETTINGS,
+  arenaFor,
   type FrozenModel,
   type MatchAttempt,
   type MatchSpec,
@@ -148,8 +150,10 @@ export function createMinecraftRunner(manager: OnceRunner, matchSeconds: number)
       const red = models[spec.red];
       const blue = models[spec.blue];
       if (!red || !blue) throw new Error(`Modelo desconocido en ${spec.id}`);
-      // El escenario se lee de forma diferida en arena.ts/prompt.ts.
-      process.env.ARENA_SCENARIO = spec.scenario;
+      // El escenario y la semilla del calendario llegan a la pelea real: en Chunk Battle la
+      // semilla decide las islas (la ida y la vuelta comparten islas, con lados cambiados).
+      const scenario = ArenaScenarioIdSchema.safeParse(spec.scenario);
+      if (!scenario.success) throw new Error(`Escenario desconocido en ${spec.id}: "${spec.scenario}"`);
       const startedAt = Date.now();
       const side = (m: FrozenModel) => ({
         provider: m.clientProvider,
@@ -162,6 +166,8 @@ export function createMinecraftRunner(manager: OnceRunner, matchSeconds: number)
         durationSeconds: matchSeconds,
         explain: false,
         signal,
+        arena: scenario.data,
+        seed: spec.seed,
       });
       return attemptFromOutcome(spec, models, outcome, info?.attempt ?? 1, startedAt, Date.now());
     },
@@ -179,7 +185,8 @@ export async function createRealMatchManager(
 ): Promise<{ manager: MatchManager; close: () => Promise<void> }> {
   const rcon = new RconClient({ host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD, log });
   await rcon.waitUntilReady();
-  await applyWorldRules(rcon);
+  // Cada pelea vuelve a aplicar las reglas con su mapa; esto deja el mundo listo antes.
+  await applyWorldRules(rcon, arenaFor(env.ARENA_SCENARIO));
   const manager = new MatchManager({
     env: { ...env, AGENT_TICK_MS: tickMs },
     rcon,
