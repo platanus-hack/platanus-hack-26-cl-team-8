@@ -162,11 +162,6 @@ export function resolveModel(config: Pick<AgentConfig, "provider" | "model">): M
   return { name: prettyModel(model), detail, brand: brandFor(provider, model) };
 }
 
-/** Los valores por defecto del servidor, si ya llegaron. */
-export function getDefaults(): ServerDefaults | null {
-  return defaults;
-}
-
 /**
  * Proveedor con el que se pide un modelo del catálogo de Vercel AI Gateway (ids
  * "creador/modelo"): el del servidor si ya es de ese tipo; si no, "vercel".

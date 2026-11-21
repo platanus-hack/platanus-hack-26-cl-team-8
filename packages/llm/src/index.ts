@@ -2,11 +2,11 @@ import type { Provider } from "@phack/protocol";
 import { createAnthropicClient } from "./anthropic";
 import { createMockClient } from "./mock";
 import { createOpenAiCompatibleClient } from "./openai";
-import type { ApiKeys, LlmClient } from "./types";
+import type { ApiKeys, GatewayRouting, LlmClient } from "./types";
 import { createVercelClient } from "./vercel";
 
-export type { ApiKeys, ChatMessage, LlmClient, LlmRequest, LlmResponse, TokenUsage, ToolCall, ToolDef } from "./types";
-export { LlmError, httpConfig } from "./http";
+export type { ApiKeys, ChatMessage, GatewayRouting, LlmClient, LlmRequest, LlmResponse, ReasoningLevel, TokenUsage, ToolCall, ToolDef } from "./types";
+export { LlmError, httpConfig, isRetryableStatus } from "./http";
 export { parseToolArgs } from "./util";
 export { MOCK_TOOL_NAMES } from "./mock";
 export type { MockToolName } from "./mock";
@@ -44,14 +44,26 @@ function requireKey(provider: keyof typeof KEY_ENV_NAMES, apiKeys: ApiKeys): str
   return key;
 }
 
-/** Crea el cliente del proveedor pedido. Lanza un error claro si falta su API key. */
-export function createLlmClient(opts: { provider: Provider; model?: string; apiKeys: ApiKeys }): LlmClient {
+/**
+ * Crea el cliente del proveedor pedido. Lanza un error claro si falta su API key.
+ * `gatewayRouting` solo aplica al proveedor "vercel" (los demás lo ignoran).
+ */
+export function createLlmClient(opts: {
+  provider: Provider;
+  model?: string;
+  apiKeys: ApiKeys;
+  gatewayRouting?: GatewayRouting;
+}): LlmClient {
   const model = opts.model?.trim() || DEFAULT_MODELS[opts.provider];
   switch (opts.provider) {
     case "mock":
       return createMockClient(model);
     case "vercel":
-      return createVercelClient({ apiKey: requireKey("vercel", opts.apiKeys), model });
+      return createVercelClient({
+        apiKey: requireKey("vercel", opts.apiKeys),
+        model,
+        ...(opts.gatewayRouting ? { gatewayRouting: opts.gatewayRouting } : {}),
+      });
     case "openai":
       return createOpenAiCompatibleClient({
         provider: "openai",

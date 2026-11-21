@@ -16,6 +16,11 @@ const EnvSchema = z.object({
   RCON_HOST: z.string().default("127.0.0.1"),
   RCON_PORT: z.coerce.number().int().default(25575),
   RCON_PASSWORD: z.string().default("phack-rcon"),
+  /**
+   * Escenario de la arena (= nombre del mundo del servidor). Los valores válidos son los de
+   * ARENA_SCENARIOS en @phack/protocol; este paquete no depende de él, por eso se repiten.
+   */
+  ARENA_SCENARIO: z.enum(["platanus", "pizza-spleef-2"]).default("platanus"),
 
   // LLM
   LLM_PROVIDER: z.enum(["mock", "vercel", "openai", "anthropic", "openrouter", "gateway"]).default("mock"),

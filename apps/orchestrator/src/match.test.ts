@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FighterEvents, FighterOptions } from "@phack/agent";
 import type { LlmClient, LlmRequest, LlmResponse } from "@phack/llm";
 import type { MatchRecord, Provider, Side } from "@phack/protocol";
-import { MatchManager, type MatchDeps, type MatchEnv } from "./match";
+import { MatchActiveError, MatchManager, NOOP_HUB, latencySummary, type MatchDeps, type MatchEnv } from "./match";
 import { defaultPrompts } from "./store";
 
 /**
@@ -73,7 +73,7 @@ function setup(opts: { provider?: Provider; complete?: Complete } = {}) {
     if (!e) throw new Error(`sin eventos para ${side}`);
     return e;
   };
-  return { manager, ev, history, hub, createLlmClient, llmCalls, stored: () => stored };
+  return { manager, ev, history, hub, createLlmClient, llmCalls, env, stored: () => stored };
 }
 
 let current: MatchManager | null = null;
@@ -167,5 +167,173 @@ describe("MatchManager: por qué ganó", () => {
     expect(t.manager.getState().result).toEqual({ winner: null, reason: "stopped" });
     expect(t.history.update).not.toHaveBeenCalled();
     expect(t.llmCalls).toHaveLength(0);
+  });
+});
+
+describe("latencySummary", () => {
+  it("media y percentiles por rango más cercano; vacío = ceros", () => {
+    expect(latencySummary([])).toEqual({ count: 0, mean: 0, p50: 0, p95: 0 });
+    const values = Array.from({ length: 20 }, (_, i) => (i + 1) * 100);
+    expect(latencySummary(values)).toEqual({ count: 20, mean: 1050, p50: 1000, p95: 1900 });
+    expect(latencySummary([300, Number.NaN, -1, 100])).toEqual({ count: 2, mean: 200, p50: 100, p95: 300 });
+  });
+});
+
+describe("MatchManager.runOnce", () => {
+  const configs = {
+    red: {
+      provider: "vercel" as const,
+      model: "deepseek/deepseek-v4.1-flash-1017-fast",
+      prompt: "P fijo",
+      gatewayRouting: { order: ["baseten"], only: ["baseten"] },
+    },
+    blue: { provider: "vercel" as const, model: "openai/gpt-6-luna-fast", prompt: "P fijo" },
+  };
+
+  function setupOnce(opts: { connect?: () => Promise<void> } = {}) {
+    const t = setup();
+    const records: MatchRecord[] = [];
+    const created: FighterOptions[] = [];
+    const deps: MatchDeps = {
+      env: { ...t.env, MATCH_DURATION_SECONDS: 600, VERCEL_API_KEY: "vck" },
+      rcon: { send: async () => "" },
+      hub: NOOP_HUB,
+      // runOnce no usa los prompts de la web.
+      prompts: { get: defaultPrompts },
+      history: {
+        append: async (r) => {
+          records.push(r);
+        },
+        update: async () => false,
+      },
+      createFighter: (o) => {
+        created.push(o);
+        return { connect: opts.connect ?? (async () => {}), start: () => {}, stop: async () => {} };
+      },
+      createLlmClient: t.createLlmClient,
+      log: () => {},
+      sleep: async () => {},
+    };
+    const manager = new MatchManager(deps);
+    current = manager;
+    const ev = (side: Side): FighterEvents => {
+      const o = [...created].reverse().find((c) => c.side === side);
+      if (!o) throw new Error(`sin eventos para ${side}`);
+      return o.events;
+    };
+    return { manager, ev, records, created, createLlmClient: t.createLlmClient, llmCalls: t.llmCalls };
+  }
+
+  it("corre una pelea explícita y devuelve resultado, record y estadísticas por lado", async () => {
+    const t = setupOnce();
+    const pending = t.manager.runOnce({ configs, durationSeconds: 60 });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    expect(t.manager.getState().endsAt! - t.manager.getState().startedAt!).toBe(60_000);
+
+    const red = t.ev("red");
+    red.onDecision({ ms: 400, decisionMs: 450, usage: { inputTokens: 100, outputTokens: 10 }, costUsd: 0.001 });
+    red.onDecision({ ms: 500, invalid: true, usage: { inputTokens: 100, outputTokens: 10 }, costUsd: 0.002 });
+    red.onLlmError?.({ status: 429, retryable: true, message: "limit" });
+    red.onLlmError?.({ status: 503, retryable: true, message: "caído" });
+    red.onDecision({ ms: 700, decisionMs: 750 });
+    red.onLlmError?.({ status: 429, retryable: true, message: "limit" });
+    red.onLlmError?.({ status: 400, retryable: false, message: "malo" });
+    t.ev("blue").onDecision({ ms: 900, decisionMs: 950, usage: { inputTokens: 7, outputTokens: 3 } });
+    t.ev("blue").onDeath();
+
+    const outcome = await pending;
+    expect(outcome.reachedRunning).toBe(true);
+    expect(outcome.result).toEqual({ winner: "red", reason: "kill" });
+    expect(outcome.error).toBeNull();
+    expect(outcome.record?.id).toBe(outcome.id);
+    expect(t.records).toHaveLength(1);
+    expect(outcome.record?.configs.red).toMatchObject({ prompt: "P fijo", model: configs.red.model });
+
+    expect(outcome.sides.red).toMatchObject({
+      provider: "vercel",
+      model: configs.red.model,
+      decisions: 3,
+      invalidActions: 1,
+      tokensIn: 200,
+      tokensOut: 20,
+      costReportedCalls: 2,
+      decisionLatenciesMs: [450, 750],
+      latencyMs: { count: 2, mean: 600, p50: 450, p95: 750 },
+      llmErrors: 4,
+      retryableLlmErrors: 3,
+      maxRetryableStreak: 2,
+      lastLlmError: "malo",
+    });
+    expect(outcome.sides.red.costUsd).toBeCloseTo(0.003, 10);
+    expect(outcome.sides.blue).toMatchObject({ decisions: 1, tokensIn: 7, costUsd: 0, costReportedCalls: 0, llmErrors: 0 });
+
+    // Enrutamiento solo en el lado que lo pidió; sin explicación (no hay tercera llamada).
+    expect(t.createLlmClient.mock.calls[0]?.[0]).toMatchObject({
+      provider: "vercel",
+      model: configs.red.model,
+      gatewayRouting: { order: ["baseten"], only: ["baseten"] },
+    });
+    expect(t.createLlmClient.mock.calls[1]?.[0]).not.toHaveProperty("gatewayRouting");
+    expect(t.createLlmClient).toHaveBeenCalledTimes(2);
+    expect(t.llmCalls).toHaveLength(0);
+    expect(t.created[0]?.prompt).toBe("P fijo");
+
+    // Se puede encadenar otra pelea de inmediato.
+    const second = t.manager.runOnce({ configs, durationSeconds: 60 });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    t.ev("red").onDeath();
+    expect((await second).result).toEqual({ winner: "blue", reason: "kill" });
+  });
+
+  it("una falla al preparar no llega a running ni al historial, y trae el motivo", async () => {
+    const t = setupOnce({
+      connect: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    const outcome = await t.manager.runOnce({ configs, durationSeconds: 60 });
+    expect(outcome.reachedRunning).toBe(false);
+    expect(outcome.record).toBeNull();
+    expect(outcome.result).toEqual({ winner: null, reason: "error" });
+    expect(outcome.error).toMatch(/ECONNREFUSED/);
+    expect(t.records).toHaveLength(0);
+  });
+
+  it("una desconexión en plena pelea queda marcada", async () => {
+    const t = setupOnce();
+    const pending = t.manager.runOnce({ configs, durationSeconds: 60 });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    t.ev("blue").onStatus({ connected: false, alive: false, health: 0, food: 0, heldItem: "" });
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ reachedRunning: true, disconnected: true, result: { reason: "error" } });
+    expect(outcome.error).toMatch(/Azul se desconectó/);
+  });
+
+  it("la señal detiene la pelea; con otra en curso rechaza", async () => {
+    const t = setupOnce();
+    const abort = new AbortController();
+    const pending = t.manager.runOnce({ configs, durationSeconds: 60, signal: abort.signal });
+    await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+    await expect(t.manager.runOnce({ configs, durationSeconds: 60 })).rejects.toBeInstanceOf(MatchActiveError);
+    expect(() => t.manager.start()).toThrow(MatchActiveError);
+    abort.abort();
+    const outcome = await pending;
+    expect(outcome.result).toEqual({ winner: null, reason: "stopped" });
+    expect(outcome.error).toMatch(/detenida/);
+  });
+
+  it("termina por tiempo con la duración pedida", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const t = setupOnce();
+      const pending = t.manager.runOnce({ configs, durationSeconds: 60 });
+      await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+      t.ev("red").onDamageTaken(5, 15);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const outcome = await pending;
+      expect(outcome.result).toMatchObject({ winner: "blue", reason: "timeout_health" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -10,6 +10,7 @@ import { MatchManager } from "./match";
 import { RconClient } from "./rcon";
 import { buildServer } from "./server";
 import { MatchStore, PromptStore } from "./store";
+import { createTournamentReader } from "./tournament";
 import { errorMessage, sleep, type LogFn } from "./util";
 
 const log: LogFn = (level, text) => {
@@ -61,7 +62,8 @@ async function main(): Promise<void> {
     models: { ...DEFAULT_MODELS, ...(env.LLM_MODEL ? { [env.LLM_PROVIDER]: env.LLM_MODEL } : {}) },
   };
 
-  const app = await buildServer({ hub, match, prompts, history, defaults });
+  const tournaments = createTournamentReader(dataDir);
+  const app = await buildServer({ hub, match, prompts, history, defaults, tournaments });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
 

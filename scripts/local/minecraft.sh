@@ -10,10 +10,13 @@
 #
 # Variables (las mismas de .env.example):
 #   MC_VERSION     versión de Paper (por defecto 1.20.4)
-#   MC_MEMORY      heap de la JVM (por defecto 1G: sobra para un mundo plano con 3 bots)
+#   MC_MEMORY      heap de la JVM (por defecto 1G)
 #   MC_PORT        puerto del juego (25565)
 #   RCON_PORT      puerto de RCON (25575)
 #   RCON_PASSWORD  contraseña de RCON (phack-rcon)
+#   ARENA_SCENARIO platanus (mundo vacío, por defecto) o pizza-spleef-2 (mapa del ZIP).
+#                  Si no está en el entorno se toma del .env de la raíz, igual que el
+#                  orquestador; es también el nombre del mundo (level-name).
 #   JAVA_BIN       ruta a `java` si no es la de Homebrew (openjdk@21) ni la del PATH
 
 set -euo pipefail
@@ -26,6 +29,19 @@ MC_MEMORY="${MC_MEMORY:-1G}"
 MC_PORT="${MC_PORT:-25565}"
 RCON_PORT="${RCON_PORT:-25575}"
 RCON_PASSWORD="${RCON_PASSWORD:-phack-rcon}"
+
+# El escenario debe coincidir con el del orquestador, que lee el .env: se toma de ahí si falta.
+if [ -z "${ARENA_SCENARIO:-}" ] && [ -f "$ROOT/.env" ]; then
+  ARENA_SCENARIO="$(sed -n 's/^ARENA_SCENARIO=//p' "$ROOT/.env" | tail -n 1 | tr -d "\"' \r")"
+fi
+ARENA_SCENARIO="${ARENA_SCENARIO:-platanus}"
+case "$ARENA_SCENARIO" in
+  platanus | pizza-spleef-2) ;;
+  *)
+    echo "ARENA_SCENARIO inválido: \"$ARENA_SCENARIO\" (usa platanus o pizza-spleef-2)" >&2
+    exit 1
+    ;;
+esac
 
 # ---------- Java ----------
 
@@ -59,6 +75,21 @@ fi
 
 mkdir -p "$SERVER_DIR"
 cd "$SERVER_DIR"
+
+# ---------- Mundo compartido con Docker ----------
+
+# Un mundo por escenario: platanus/ (vacío, lo crea el servidor) y pizza-spleef-2/.
+# La pizza se importa una sola vez y solo si es el escenario activo; el mundo anterior
+# (world/) se conserva para poder volver atrás.
+if [ "$ARENA_SCENARIO" = pizza-spleef-2 ] && [ ! -f "$SERVER_DIR/pizza-spleef-2/level.dat" ]; then
+  WORLD_STAGING="$(mktemp -d "$SERVER_DIR/.world-import.XXXXXX")"
+  trap 'rm -rf "$WORLD_STAGING"' EXIT
+  unzip -q "$ROOT/infra/minecraft/worlds/pizza-spleef-2.zip" -d "$WORLD_STAGING"
+  mv "$WORLD_STAGING/Pizza Spleef 2" "$SERVER_DIR/pizza-spleef-2"
+  rm -rf "$WORLD_STAGING"
+  trap - EXIT
+  echo "[minecraft] Mapa Pizza Spleef 2 importado."
+fi
 
 # ---------- Paper ----------
 
@@ -98,6 +129,10 @@ echo "eula=true" > eula.txt
 # bukkit.yml del repo: desactiva el connection-throttle (los bots salen todos de la misma IP).
 cp "$ROOT/infra/minecraft/config/bukkit.yml" bukkit.yml
 
+# Mundo vacío (void). Solo aplica al crear un mundo nuevo (platanus): el mapa importado de
+# la pizza trae sus ajustes en su level.dat.
+GENERATOR_SETTINGS='{"layers"\:[{"block"\:"minecraft\:air","height"\:1}],"biome"\:"minecraft\:the_void"}'
+
 # server-ip=127.0.0.1: el servidor está en modo offline (sin cuentas de Mojang), así que
 # NO debe quedar expuesto a la red. Juego y RCON escuchan solo en loopback.
 cat > server.properties <<EOF
@@ -110,8 +145,9 @@ enable-rcon=true
 rcon.port=$RCON_PORT
 rcon.password=$RCON_PASSWORD
 broadcast-rcon-to-ops=false
-level-name=world
+level-name=$ARENA_SCENARIO
 level-type=minecraft\:flat
+generator-settings=$GENERATOR_SETTINGS
 generate-structures=false
 spawn-animals=false
 spawn-monsters=false
@@ -129,6 +165,7 @@ enable-command-block=false
 EOF
 
 echo "[minecraft] Paper $MC_VERSION con $("$JAVA" -version 2>&1 | head -n 1) (heap $MC_MEMORY)"
+echo "[minecraft] Escenario $ARENA_SCENARIO (mundo $SERVER_DIR/$ARENA_SCENARIO)"
 echo "[minecraft] Juego en 127.0.0.1:$MC_PORT, RCON en 127.0.0.1:$RCON_PORT"
 
 # exec: las señales (Ctrl+C, SIGTERM) llegan directo a la JVM, que guarda el mundo y sale.

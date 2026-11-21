@@ -7,22 +7,126 @@ import { z } from "zod";
 
 // ---------- Arena ----------
 
-export const ARENA = {
-  center: { x: 0, y: 64, z: 0 },
-  /** Radio interior del piso (bloques). */
-  radius: 12,
-  /** Altura de los muros. */
-  wallHeight: 6,
-  spawns: {
-    red: { x: -8, y: 65, z: 0, yaw: -90 },
-    blue: { x: 8, y: 65, z: 0, yaw: 90 },
-  },
+export type ArenaPoint = { x: number; y: number; z: number };
+export type ArenaSpawn = ArenaPoint & { yaw: number };
+
+/**
+ * Escenarios de arena. El id es también el nombre del mundo (level-name) del servidor:
+ * docker-compose y scripts/local/minecraft.sh lo usan tal cual como LEVEL.
+ */
+export const ARENA_SCENARIOS = ["platanus", "pizza-spleef-2"] as const;
+export const ArenaScenarioIdSchema = z.enum(ARENA_SCENARIOS);
+export type ArenaScenarioId = z.infer<typeof ArenaScenarioIdSchema>;
+export const DEFAULT_ARENA_SCENARIO: ArenaScenarioId = "platanus";
+
+type ArenaCommon = {
+  id: ArenaScenarioId;
+  /** Nombre legible. */
+  name: string;
+  /** Nombre del mundo en el servidor (= id). */
+  level: string;
+  /** Centro del piso; `center.y` es la altura del bloque del piso. */
+  center: ArenaPoint;
+  /**
+   * Radio del círculo jugable inscrito (bloques). Es lo que usan los agentes para no
+   * retroceder fuera de la arena; en una arena rectangular es la media distancia menor.
+   */
+  radius: number;
+  /** Altura sobre el piso que puede usar la arena (muros o límite de construcción). */
+  wallHeight: number;
+  spawns: { red: ArenaSpawn; blue: ArenaSpawn };
   /**
    * Posición de la cámara espectadora: elevada, mirando al centro. Va en +Z para que el
    * lado rojo (x negativo) quede a la izquierda de la imagen, igual que en la web.
    */
-  camera: { x: 0, y: 78, z: 18 },
-} as const;
+  camera: ArenaPoint;
+  /** Cámara general: estática, más alta, ve toda la arena. */
+  cameraWide: ArenaPoint;
+};
+
+/** Mapa importado de un ZIP: entre peleas se restaura copiando su plantilla original. */
+export type TemplateArena = ArenaCommon & {
+  kind: "template";
+  template: { from: ArenaPoint; to: ArenaPoint; destination: ArenaPoint };
+  /** Bloque que solo está en el mapa correcto: sirve para detectar un mundo equivocado. */
+  check: { at: ArenaPoint; block: string };
+};
+
+/**
+ * Mundo vacío (void): la arena entera se construye por RCON antes de cada pelea.
+ * `floor` son las medias longitudes del piso desde el centro, incluyendo la fila de
+ * los muros: el piso va de center.x - halfX a center.x + halfX (ídem en z).
+ */
+export type BuiltArena = ArenaCommon & {
+  kind: "built";
+  floor: { halfX: number; halfZ: number };
+};
+
+export type ArenaScenario = TemplateArena | BuiltArena;
+
+export const ARENAS: Record<ArenaScenarioId, ArenaScenario> = {
+  /** Mundo vacío con piso negro de 57×45, el isotipo de Platanus al centro y muros de vidrio. */
+  platanus: {
+    id: "platanus",
+    name: "Arena Platanus",
+    level: "platanus",
+    kind: "built",
+    center: { x: 0, y: 64, z: 0 },
+    floor: { halfX: 28, halfZ: 22 },
+    // Interior caminable: |x| <= 27, |z| <= 21.
+    radius: 21,
+    wallHeight: 5,
+    spawns: {
+      red: { x: -16, y: 65, z: 0, yaw: -90 },
+      blue: { x: 16, y: 65, z: 0, yaw: 90 },
+    },
+    camera: { x: 0, y: 90, z: 40 },
+    cameraWide: { x: 0, y: 104, z: 30 },
+  },
+  "pizza-spleef-2": {
+    id: "pizza-spleef-2",
+    name: "Pizza Spleef 2",
+    level: "pizza-spleef-2",
+    kind: "template",
+    /** Disco jugable del mundo importado (no las plantillas del norte). */
+    center: { x: 8, y: 3, z: 8 },
+    /** Radio del piso (bloques). El borde da al vacío. */
+    radius: 25,
+    /** Límite de altura para kits de construcción; la pizza no tiene muros físicos. */
+    wallHeight: 12,
+    /** Plantilla mediana original del mapa; se copia al disco jugable entre peleas. */
+    template: {
+      from: { x: -25, y: 6, z: -135 },
+      to: { x: 37, y: 8, z: -73 },
+      destination: { x: -23, y: 3, z: -23 },
+    },
+    /** Bajo el spawn rojo hay masa de pizza (terracota amarilla). */
+    check: { at: { x: -8, y: 3, z: 8 }, block: "minecraft:yellow_terracotta" },
+    spawns: {
+      red: { x: -8, y: 4, z: 8, yaw: -90 },
+      blue: { x: 24, y: 4, z: 8, yaw: 90 },
+    },
+    camera: { x: 8, y: 33, z: 50 },
+    cameraWide: { x: 8, y: 48, z: 38 },
+  },
+};
+
+/**
+ * Escenario por id. Vacío o ausente = el escenario por defecto; un id desconocido es un
+ * error de configuración (mejor fallar al arrancar que pelear en el mapa equivocado).
+ */
+export function arenaFor(id?: string | null): ArenaScenario {
+  const key = (id ?? "").trim();
+  if (key === "") return ARENAS[DEFAULT_ARENA_SCENARIO];
+  const parsed = ArenaScenarioIdSchema.safeParse(key);
+  if (!parsed.success) {
+    throw new Error(`Escenario de arena desconocido: "${key}" (válidos: ${ARENA_SCENARIOS.join(", ")})`);
+  }
+  return ARENAS[parsed.data];
+}
+
+/** Escenario por defecto. Quien conozca ARENA_SCENARIO debe usar arenaFor(...) en su lugar. */
+export const ARENA: ArenaScenario = ARENAS[DEFAULT_ARENA_SCENARIO];
 
 // ---------- Agentes ----------
 
@@ -217,3 +321,5 @@ export function parseArenaEvent(raw: string): ArenaEvent | null {
     return null;
   }
 }
+
+export * from "./tournament";

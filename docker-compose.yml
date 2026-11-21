@@ -21,6 +21,7 @@ x-node-env: &node-env
   RCON_HOST: minecraft
   RCON_PORT: "25575"
   RCON_PASSWORD: ${RCON_PASSWORD:-phack-rcon}
+  ARENA_SCENARIO: ${ARENA_SCENARIO:-platanus}
   LLM_PROVIDER: ${LLM_PROVIDER:-mock}
   LLM_MODEL: ${LLM_MODEL:-}
   VERCEL_API_KEY: ${VERCEL_API_KEY:-}
@@ -49,6 +50,16 @@ services:
     # Java 21 corre Paper 1.20.4 sin problemas (requiere Java 17+).
     image: itzg/minecraft-server:java21
     restart: unless-stopped
+    # El mapa de la pizza se importa SOLO si el escenario es pizza-spleef-2. La imagen
+    # copia WORLD a /data/$LEVEL cuando esa carpeta no existe, y WORLD vacío no importa
+    # nada: con un WORLD fijo, el primer arranque de "platanus" sería la pizza. Compose no
+    # tiene condicionales, por eso se decide aquí antes de llamar al arranque de la imagen.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        if [ "$$LEVEL" = pizza-spleef-2 ]; then export WORLD=/worlds/pizza-spleef-2.zip; else unset WORLD; fi
+        exec /start
     stop_grace_period: 60s
     environment:
       EULA: "TRUE"
@@ -63,8 +74,13 @@ services:
       ENABLE_RCON: "true"
       RCON_PASSWORD: ${RCON_PASSWORD:-phack-rcon}
       BROADCAST_RCON_TO_OPS: "false"
-      # Mundo plano, sin estructuras ni criaturas.
+      # Un mundo por escenario (/data/platanus, /data/pizza-spleef-2): cambiar de escenario
+      # no pisa el otro mundo. El ZIP de la pizza lo decide el entrypoint de arriba.
+      LEVEL: ${ARENA_SCENARIO:-platanus}
+      # Mundo vacío (void): solo aplica al CREAR un mundo nuevo (platanus). Un mundo importado
+      # (la pizza) trae sus ajustes en su level.dat y los ignora.
       LEVEL_TYPE: FLAT
+      GENERATOR_SETTINGS: '{"layers":[{"block":"minecraft:air","height":1}],"biome":"minecraft:the_void"}'
       GENERATE_STRUCTURES: "false"
       SPAWN_ANIMALS: "false"
       SPAWN_MONSTERS: "false"
@@ -87,18 +103,20 @@ services:
       # (bukkit.yml con connection-throttle desactivado: ver ese archivo).
       COPY_CONFIG_DEST: /data
       SYNC_SKIP_NEWER_IN_DESTINATION: "false"
-      # Se ejecutan por RCON cuando el servidor termina de arrancar.
+      # Se ejecutan por RCON cuando el servidor termina de arrancar. El forceload cubre la
+      # zona central de ambos escenarios; el orquestador agrega la del escenario activo.
       RCON_CMDS_STARTUP: |-
         gamerule doMobSpawning false
         gamerule doDaylightCycle false
         gamerule doWeatherCycle false
         time set noon
         weather clear
-        forceload add -32 -32 31 31
+        forceload add -40 -32 47 63
     volumes:
       - minecraft-data:/data
       # ",z": etiqueta SELinux compartida (Fedora/RHEL con SELinux activo); sin efecto en otros hosts.
       - ./infra/minecraft/config:/config:ro,z
+      - ./infra/minecraft/worlds:/worlds:ro,z
     ports:
       # Solo loopback del servidor: para entrar con un cliente real usa un túnel SSH
       # (ssh -L 25565:127.0.0.1:25565 usuario@servidor). RCON no se publica.

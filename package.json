@@ -21,6 +21,7 @@
     "dev:web": "pnpm --filter @phack/web dev",
     "dev:orchestrator": "pnpm --filter @phack/orchestrator dev",
     "dev:camera": "pnpm --filter @phack/camera dev",
+    "tournament": "pnpm --filter @phack/orchestrator tournament",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test"

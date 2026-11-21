@@ -1,0 +1,164 @@
+---
+// Leaderboard del torneo de modelos. Los ids de esta página son el contrato con
+// src/scripts/arena/*.ts. Todo el contenido dinámico se escribe con textContent.
+import "@fontsource-variable/instrument-sans";
+import "@fontsource/silkscreen/400.css";
+import "../styles/global.css";
+import "../styles/arena.css";
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#101113" />
+    <title>Leaderboard de modelos</title>
+    <meta
+      name="description"
+      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelos juegan parecido a DeepSeek V4.1 Flash, su ranking y quién le gana a quién."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body class="arena-page">
+    <header class="arena-top">
+      <a class="brand arena-top__brand" href="/">
+        <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
+        <span class="brand__title">Arena de prompts</span>
+      </a>
+      <span class="arena-top__crumb" aria-hidden="true">/</span>
+      <h1 class="arena-top__title">Leaderboard</h1>
+      <a class="arena-top__back" href="/">Pelea en vivo</a>
+    </header>
+
+    <main class="arena">
+      <div class="arena-pick">
+        <label class="field arena-pick__field">
+          <span class="field__label">Torneo</span>
+          <select id="arena-select" disabled>
+            <option>Cargando…</option>
+          </select>
+        </label>
+        <span class="arena-pick__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
+      </div>
+
+      <p class="arena-status" id="arena-status" role="status" data-kind="info">Cargando…</p>
+
+      <div id="arena-content" hidden>
+        <!-- (1) Cabecera: nombre, estado y progreso del torneo. -->
+        <section class="summary" aria-labelledby="t-name">
+          <h2 class="summary__name" id="t-name"></h2>
+          <div class="summary__meta" id="t-meta"></div>
+          <div class="summary__progress" id="t-progress"></div>
+          <p class="summary__stop" id="t-stop" hidden></p>
+          <aside class="provisional" id="t-provisional" hidden>
+            <strong class="provisional__title">Provisional</strong>
+            <ul class="provisional__why" id="t-provisional-why"></ul>
+          </aside>
+        </section>
+
+        <!-- (2) Tabla de posiciones. -->
+        <section class="section arena-section" aria-labelledby="standings-title">
+          <header class="section__head">
+            <h2 class="section__title" id="standings-title">Posiciones</h2>
+            <p class="section__hint">
+              Rating Bradley–Terry en escala Elo, solo con partidas válidas de la liga (victoria 1, empate ½,
+              derrota 0). DeepSeek V4.1 Flash es la referencia, fija en 1000.
+            </p>
+          </header>
+          <div class="scroll-x">
+            <table class="board standings">
+              <thead>
+                <tr>
+                  <th scope="col" class="num">#</th>
+                  <th scope="col">Modelo</th>
+                  <th scope="col" class="num">Rating</th>
+                  <th scope="col" class="num">Intervalo</th>
+                  <th scope="col" class="num">Partidas</th>
+                  <th scope="col" class="num"><abbr title="Victorias / empates / derrotas">V / E / D</abbr></th>
+                  <th scope="col" class="num">Costo</th>
+                  <th scope="col" class="num">
+                    <abbr title="Latencia por decisión: mediana / percentil 95">Latencia p50 / p95</abbr>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="standings-body"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="standings-empty" hidden>La liga todavía no tiene partidas válidas.</p>
+        </section>
+
+        <!-- (3) Matriz fila vs columna; (4) clic en una celda abre sus partidas. -->
+        <section class="section arena-section" aria-labelledby="matrix-title">
+          <header class="section__head">
+            <h2 class="section__title" id="matrix-title">Quién le gana a quién</h2>
+            <p class="section__hint">
+              Puntaje de la fila contra la columna en la liga: (victorias + ½ empates) / partidas válidas. Haz clic en
+              una celda para ver sus partidas.
+            </p>
+          </header>
+          <div class="legend" aria-hidden="true">
+            <span class="legend__end">0 %</span>
+            <span class="legend__ramp"></span>
+            <span class="legend__end">100 %</span>
+            <span class="legend__empty"><span class="legend__swatch"></span>Sin partidas</span>
+          </div>
+          <div class="matrix-wrap" id="matrix-wrap">
+            <table class="matrix" id="matrix"></table>
+          </div>
+          <p class="empty" id="matrix-empty" hidden>Hacen falta al menos dos modelos en la liga.</p>
+
+          <section class="pair" id="pair" aria-labelledby="pair-title" hidden>
+            <header class="pair__head">
+              <div>
+                <h3 class="pair__title" id="pair-title" tabindex="-1"></h3>
+                <p class="section__hint" id="pair-summary"></p>
+              </div>
+              <button type="button" class="btn btn--small" id="pair-close">Cerrar</button>
+            </header>
+            <div class="pair__body scroll-x" id="pair-body"></div>
+          </section>
+        </section>
+
+        <!-- (5) Calibración y catálogo. -->
+        <section class="section arena-section" aria-labelledby="calibration-title">
+          <header class="section__head">
+            <h2 class="section__title" id="calibration-title">Calibración</h2>
+            <p class="section__hint" id="calibration-rule"></p>
+          </header>
+          <div class="scroll-x">
+            <table class="board calib">
+              <thead>
+                <tr>
+                  <th scope="col">Modelo</th>
+                  <th scope="col">Veredicto</th>
+                  <th scope="col">Liga</th>
+                  <th scope="col" class="num"><abbr title="Diferencia con DeepSeek ± error estándar (Elo)">Dif. ± ee</abbr></th>
+                  <th scope="col" class="num"><abbr title="Intervalo de decisión de la diferencia con DeepSeek (dif. ± z·ee)">Intervalo dif.</abbr></th>
+                  <th scope="col" class="num"><abbr title="Partidas · rivales distintos">Partidas · rivales</abbr></th>
+                  <th scope="col">Por qué</th>
+                </tr>
+              </thead>
+              <tbody id="calibration-body"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="calibration-empty" hidden>Todavía no hay resultados de calibración.</p>
+
+          <h3 class="omitted__title">Líneas omitidas del catálogo</h3>
+          <p class="section__hint" id="catalog-meta"></p>
+          <ul class="omitted" id="omitted-list"></ul>
+          <p class="empty" id="omitted-empty" hidden>Ninguna línea quedó fuera por incompatibilidad.</p>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <p>Hecho para la Platanus Hackathon 2026, track Simulaciones. Minecraft y agentes LLM.</p>
+    </footer>
+
+    <script>
+      import "../scripts/arena/main";
+    </script>
+  </body>
+</html>

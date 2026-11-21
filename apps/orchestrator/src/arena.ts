@@ -1,26 +1,36 @@
-import { AGENT_USERNAMES, ARENA, type Side } from "@phack/protocol";
+import { AGENT_USERNAMES, arenaFor, type ArenaScenario, type Side } from "@phack/protocol";
+import { floorBounds, platanusBuildCommands } from "./platanus";
 import type { RconLike } from "./rcon";
 import type { SleepFn } from "./util";
 
 /**
- * Construcción de la arena y preparación de los peleadores por RCON.
+ * Preparación de la arena y de los peleadores por RCON.
  * Sintaxis de comandos de Minecraft Java 1.20.4.
+ *
+ * El escenario sale de ARENA_SCENARIO (ver ARENAS en @phack/protocol). Todas las
+ * funciones aceptan el escenario como último argumento; si falta, usan el activo.
  */
 
-const c = ARENA.center;
-/** Las paredes van un bloque afuera del radio interior. */
-const WALL = ARENA.radius + 1;
-const MIN_X = c.x - WALL;
-const MAX_X = c.x + WALL;
-const MIN_Z = c.z - WALL;
-const MAX_Z = c.z + WALL;
-const FLOOR_Y = c.y;
-const WALL_TOP_Y = c.y + ARENA.wallHeight;
-/** Se limpia un poco más arriba que las paredes. */
-const CLEAR_TOP_Y = WALL_TOP_Y + 6;
+/** Escenario configurado en ARENA_SCENARIO (vacío = el por defecto, "platanus"). */
+export function activeArena(): ArenaScenario {
+  return arenaFor(process.env.ARENA_SCENARIO);
+}
+
+/** Caja que ocupa la arena en planta (piso, plantilla y su destino). */
+function arenaBounds(arena: ArenaScenario): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  if (arena.kind === "built") return floorBounds(arena);
+  const { center: c, radius, template } = arena;
+  return {
+    minX: Math.min(c.x - radius, template.from.x),
+    maxX: Math.max(c.x + radius, template.to.x),
+    minZ: Math.min(c.z - radius, template.from.z),
+    maxZ: Math.max(c.z + radius, template.to.z),
+  };
+}
 
 /** Reglas del mundo: sin mobs, siempre de día, PvP con daño visible. */
-export function worldRuleCommands(): string[] {
+export function worldRuleCommands(arena: ArenaScenario = activeArena()): string[] {
+  const { red } = arena.spawns;
   return [
     // En "normal" el daño entre jugadores y el hambre funcionan; los mobs se apagan con la regla.
     "difficulty normal",
@@ -30,6 +40,7 @@ export function worldRuleCommands(): string[] {
     "gamerule doInsomnia false",
     "gamerule doDaylightCycle false",
     "gamerule doWeatherCycle false",
+    "gamerule doFireTick false",
     "gamerule keepInventory true",
     // Con regeneración natural, comer sirve de algo (los prompts pueden decidir cuándo comer).
     "gamerule naturalRegeneration true",
@@ -40,44 +51,39 @@ export function worldRuleCommands(): string[] {
     "gamerule spawnRadius 0",
     "time set 6000",
     "weather clear",
-    `setworldspawn ${c.x} ${FLOOR_Y + 1} ${c.z}`,
+    // En la pizza el centro tiene un ingrediente con telarañas: el spawn rojo tiene espacio libre.
+    `setworldspawn ${red.x} ${red.y} ${red.z}`,
   ];
 }
 
-/** Área que debe quedar cargada aunque no haya jugadores (arena + cámara). */
-export function forceloadCommand(): string {
+/** Área que debe quedar cargada aunque no haya jugadores (arena + cámaras). */
+export function forceloadCommand(arena: ArenaScenario = activeArena()): string {
   const pad = 8;
-  const minX = Math.min(MIN_X, ARENA.camera.x) - pad;
-  const maxX = Math.max(MAX_X, ARENA.camera.x) + pad;
-  const minZ = Math.min(MIN_Z, ARENA.camera.z) - pad;
-  const maxZ = Math.max(MAX_Z, ARENA.camera.z) + pad;
+  const b = arenaBounds(arena);
+  const minX = Math.min(b.minX, arena.camera.x, arena.cameraWide.x) - pad;
+  const maxX = Math.max(b.maxX, arena.camera.x, arena.cameraWide.x) + pad;
+  const minZ = Math.min(b.minZ, arena.camera.z, arena.cameraWide.z) - pad;
+  const maxZ = Math.max(b.maxZ, arena.camera.z, arena.cameraWide.z) + pad;
   return `forceload add ${minX} ${minZ} ${maxX} ${maxZ}`;
 }
 
-/** Piso, limpieza del interior, paredes de vidrio con base luminosa y marcas de spawn. */
-export function arenaBuildCommands(): string[] {
-  const { red, blue } = ARENA.spawns;
+/**
+ * Comandos que dejan la arena como nueva entre peleas.
+ *  - Pizza Spleef 2 (mapa del ZIP): se restaura su plantilla original y se limpian restos
+ *    del combate. Las entidades decorativas y la lógica original del mapa se conservan.
+ *  - Platanus (mundo vacío): se reconstruye entera (ver platanus.ts).
+ * El primer comando es el que toca chunks: es el que se reintenta si aún no cargaron.
+ */
+export function arenaBuildCommands(arena: ArenaScenario = activeArena()): string[] {
+  if (arena.kind === "built") return platanusBuildCommands(arena);
+  const { center: c, template } = arena;
+  const { from, to, destination } = template;
+  const cleanup = ["item", "arrow", "spectral_arrow", "experience_orb"].map(
+    (type) => `kill @e[type=minecraft:${type},x=${c.x},y=${c.y},z=${c.z},distance=..${arena.radius + 8}]`,
+  );
   return [
-    // Fuera flechas, items tirados y cualquier entidad que no sea jugador.
-    "kill @e[type=!minecraft:player]",
-    // Limpiar todo el volumen (interior + paredes viejas).
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${CLEAR_TOP_Y} ${MAX_Z} minecraft:air`,
-    // Piso.
-    `fill ${MIN_X} ${FLOOR_Y} ${MIN_Z} ${MAX_X} ${FLOOR_Y} ${MAX_Z} minecraft:smooth_stone`,
-    // Cuatro paredes de vidrio (la cámara ve a través).
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${WALL_TOP_Y} ${MIN_Z} minecraft:glass`,
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MAX_Z} ${MAX_X} ${WALL_TOP_Y} ${MAX_Z} minecraft:glass`,
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MIN_X} ${WALL_TOP_Y} ${MAX_Z} minecraft:glass`,
-    `fill ${MAX_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${WALL_TOP_Y} ${MAX_Z} minecraft:glass`,
-    // Luz: la primera fila de cada pared es de linternas de mar.
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${FLOOR_Y + 1} ${MIN_Z} minecraft:sea_lantern`,
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MAX_Z} ${MAX_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
-    `fill ${MIN_X} ${FLOOR_Y + 1} ${MIN_Z} ${MIN_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
-    `fill ${MAX_X} ${FLOOR_Y + 1} ${MIN_Z} ${MAX_X} ${FLOOR_Y + 1} ${MAX_Z} minecraft:sea_lantern`,
-    // Marcas en el piso: centro y esquinas de cada lado.
-    `setblock ${c.x} ${FLOOR_Y} ${c.z} minecraft:sea_lantern`,
-    `setblock ${red.x} ${FLOOR_Y} ${red.z} minecraft:red_concrete`,
-    `setblock ${blue.x} ${FLOOR_Y} ${blue.z} minecraft:blue_concrete`,
+    `clone ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} ${destination.x} ${destination.y} ${destination.z} replace`,
+    ...cleanup,
   ];
 }
 
@@ -95,8 +101,8 @@ export function fighterKitCommands(username: string): string[] {
   ];
 }
 
-export function teleportCommand(side: Side): string {
-  const spawn = ARENA.spawns[side];
+export function teleportCommand(side: Side, arena: ArenaScenario = activeArena()): string {
+  const spawn = arena.spawns[side];
   // +0.5 para caer al centro del bloque; pitch 0 = mirando al frente.
   return `tp ${AGENT_USERNAMES[side]} ${spawn.x + 0.5} ${spawn.y} ${spawn.z + 0.5} ${spawn.yaw} 0`;
 }
@@ -105,37 +111,45 @@ async function sendAll(rcon: RconLike, commands: string[]): Promise<void> {
   for (const command of commands) await rcon.send(command);
 }
 
-/** /fill falla si el chunk aún no cargó tras el forceload: se reintenta un rato. */
-async function sendWhenLoaded(rcon: RconLike, command: string, sleep: SleepFn): Promise<void> {
+/**
+ * Reintenta mientras el chunk no haya cargado tras el forceload. Una prueba `execute if`
+ * fallida significa que el servidor tiene otro mundo cargado.
+ */
+async function sendWhenLoaded(rcon: RconLike, command: string, sleep: SleepFn, arena: ArenaScenario): Promise<void> {
   for (let attempt = 0; attempt < 15; attempt += 1) {
     const response = await rcon.send(command);
-    if (!/not loaded/i.test(response)) return;
+    if (!/not loaded/i.test(response)) {
+      if (/test failed|testfail/i.test(response)) {
+        throw new Error(`No está cargado el mapa ${arena.name}. Revisa el mundo ${arena.level} del servidor.`);
+      }
+      return;
+    }
     await sleep(1_000);
   }
   throw new Error("La zona de la arena no terminó de cargar en el servidor de Minecraft");
 }
 
-export async function applyWorldRules(rcon: RconLike): Promise<void> {
-  await sendAll(rcon, worldRuleCommands());
+export async function applyWorldRules(rcon: RconLike, arena: ArenaScenario = activeArena()): Promise<void> {
+  await sendAll(rcon, worldRuleCommands(arena));
 }
 
-export async function buildArena(rcon: RconLike, sleep: SleepFn): Promise<void> {
-  await rcon.send(forceloadCommand());
-  for (const command of arenaBuildCommands()) {
-    if (command.startsWith("fill ") || command.startsWith("setblock ")) {
-      await sendWhenLoaded(rcon, command, sleep);
-    } else {
-      await rcon.send(command);
-    }
+export async function buildArena(rcon: RconLike, sleep: SleepFn, arena: ArenaScenario = activeArena()): Promise<void> {
+  await rcon.send(forceloadCommand(arena));
+  if (arena.kind === "template") {
+    const { at, block } = arena.check;
+    await sendWhenLoaded(rcon, `execute if block ${at.x} ${at.y} ${at.z} ${block}`, sleep, arena);
   }
+  const [first, ...rest] = arenaBuildCommands(arena);
+  if (first !== undefined) await sendWhenLoaded(rcon, first, sleep, arena);
+  await sendAll(rcon, rest);
 }
 
 /** Deja a un peleador listo: supervivencia, limpio, curado, en su spawn y con el kit. */
-export async function prepareFighter(rcon: RconLike, side: Side): Promise<void> {
+export async function prepareFighter(rcon: RconLike, side: Side, arena: ArenaScenario = activeArena()): Promise<void> {
   const username = AGENT_USERNAMES[side];
   await sendAll(rcon, [`gamemode survival ${username}`, `clear ${username}`, `effect clear ${username}`]);
 
-  const tpResponse = await rcon.send(teleportCommand(side));
+  const tpResponse = await rcon.send(teleportCommand(side, arena));
   if (/no (player|entity) was found/i.test(tpResponse)) {
     throw new Error(`${username} no está conectado al servidor de Minecraft`);
   }

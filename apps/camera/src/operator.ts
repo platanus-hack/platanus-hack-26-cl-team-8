@@ -1,5 +1,6 @@
 import type { Bot } from "mineflayer";
-import { AGENT_USERNAMES, ARENA, SIDES } from "@phack/protocol";
+import { AGENT_USERNAMES, SIDES } from "@phack/protocol";
+import { activeArena } from "./arena";
 import { connectBot, runRcon } from "./bot";
 import type { CameraConfig } from "./config";
 import { cameraPose, orbitPosition, pickAimTarget, pickShot, smoothToward, type Shot, type Vec } from "./director";
@@ -13,7 +14,7 @@ import { errorText, FatalError, log } from "./log";
  * ve exactamente lo que "ve" el bot. Mover la cámara = mover al bot.
  *
  * Hay dos cámaras y el bot salta de una a otra:
- *  - la que sigue ("follow"): parada en ARENA.camera, gira para mirar a los peleadores;
+ *  - la que sigue ("follow"): parada en la `camera` del escenario activo, gira para mirar a los peleadores;
  *  - la general ("wide"): estática, alta, muestra toda la arena como en un partido.
  * Sin pelea se muestra la general; con pelea se alternan (CAMERA_FOLLOW_SECONDS /
  * CAMERA_WIDE_SECONDS).
@@ -27,8 +28,6 @@ const AIM_SMOOTHING_SECONDS = 0.6;
 const AIM_HEIGHT = 1;
 /** Altura de los ojos de un jugador sobre sus pies: ahí queda la cámara del cliente. */
 const EYE_HEIGHT = 1.62;
-/** Dónde se para la cámara general, relativo al centro de la arena: alta y un poco hacia atrás. */
-const WIDE_OFFSET: Vec = { x: 0, y: 22, z: 13 };
 /**
  * Lo máximo que el bot avanza por iteración. Al cambiar de cámara cruza en un par de
  * décimas de segundo; más rápido y el servidor rechazaría el movimiento.
@@ -88,11 +87,12 @@ const toDegrees = (radians: number): number => (radians * 180) / Math.PI;
 
 /** Loop de vuelo: decide qué cámara está al aire y deja al bot en esa pose. */
 function startFlightLoop(config: CameraConfig): void {
+  const ARENA = activeArena();
   const center: Vec = { x: ARENA.center.x, y: ARENA.center.y + AIM_HEIGHT, z: ARENA.center.z };
   const followBase: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
   // La general nunca cambia: se calcula una sola vez.
   const widePose = cameraPose(
-    { x: center.x + WIDE_OFFSET.x, y: center.y + WIDE_OFFSET.y, z: center.z + WIDE_OFFSET.z },
+    ARENA.cameraWide,
     center,
   );
 

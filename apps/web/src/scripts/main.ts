@@ -4,7 +4,7 @@ import { fetchDefaults, fetchMatches, fetchState } from "./api";
 import { initControls, setPhase } from "./controls";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
-import { SIDE_LABEL, formatNumber, resultDetail, resultTitle, truncate } from "./format";
+import { SIDE_LABEL, formatNumber, resultDetail, resultTitle } from "./format";
 import { setDefaults } from "./models";
 import { initPlayer, setServerClockOffset, videoDelayMs } from "./player";
 import { applyRemotePrompts, initPrompts, loadPrompts } from "./prompts";

@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA } from "@phack/protocol";
+import { arenaFor } from "@phack/protocol";
 import type { ChatMessage, LlmResponse, TokenUsage } from "@phack/llm";
 import { computeAim, estimateVelocity, type VelocitySample } from "./aim";
 import { distance3, retreatTarget, round1, type Vec3Like } from "./geometry";
@@ -8,6 +8,7 @@ import { buildTurnMessages, MAX_HISTORY_MESSAGES, trimHistory } from "./history"
 import { buildObservation, type Observation } from "./observation";
 import { buildSystemPrompt } from "./prompt";
 import { isToolName, parseToolArgs, TOOL_DEFS, type ParsedToolArgs, type ToolName } from "./tools";
+import { classifyLlmError, isValidAction } from "./decision";
 import type { DecisionReport, Fighter, FighterOptions } from "./types";
 
 // mineflayer y mineflayer-pathfinder son CommonJS puro. Se cargan con createRequire
@@ -57,6 +58,9 @@ const FALLBACK_FOODS = new Set([
 ]);
 /** Comidas que se pueden comer aunque la barra de hambre esté llena. */
 const ALWAYS_EDIBLE = new Set(["golden_apple", "enchanted_golden_apple", "chorus_fruit"]);
+
+/** Geometría de la arena de la pelea actual (ARENA_SCENARIO se lee diferido: el torneo lo fija por partida). */
+const currentArena = () => arenaFor(process.env.ARENA_SCENARIO);
 
 const isSword = (name: string): boolean => name.endsWith("_sword");
 const isAxe = (name: string): boolean => name.endsWith("_axe");
@@ -461,6 +465,8 @@ class MineflayerFighter implements Fighter {
     const bot = this.bot;
     if (!bot || !this.connected || !this.alive) return;
 
+    // Desde aquí corre la latencia de la decisión (estado -> acción válida).
+    const decisionStartedAt = Date.now();
     const observation = this.observe(bot);
     const observationJson = JSON.stringify(observation);
     const messages: ChatMessage[] = [
@@ -471,13 +477,21 @@ class MineflayerFighter implements Fighter {
 
     const abort = new AbortController();
     this.llmAbort = abort;
-    const timeout = setTimeout(() => abort.abort(), LLM_TIMEOUT_MS);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, LLM_TIMEOUT_MS);
     const llmStartedAt = Date.now();
     let response: LlmResponse;
     try {
       response = await this.opts.llm.complete({ messages, tools: TOOL_DEFS, signal: abort.signal });
     } catch (err) {
-      if (!this.stopped) this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
+      if (!this.stopped) {
+        this.log("warn", `Falló la llamada al LLM (se mantiene la acción actual): ${errorText(err)}`);
+        const info = classifyLlmError(err, { timedOut });
+        this.safe(() => this.opts.events.onLlmError?.(info));
+      }
       return;
     } finally {
       clearTimeout(timeout);
@@ -485,16 +499,19 @@ class MineflayerFighter implements Fighter {
     }
     if (this.stopped) return;
 
-    // Latencia y tokens de la llamada: se informan antes de actuar, una vez por respuesta.
+    // Latencia, tokens y costo de la llamada: una vez por respuesta, después de actuar.
     const report: DecisionReport = { ms: Date.now() - llmStartedAt };
     const usage = validUsage(response.usage);
     if (usage) report.usage = usage;
-    this.safe(() => this.opts.events.onDecision(report));
+    if (typeof response.costUsd === "number" && Number.isFinite(response.costUsd) && response.costUsd >= 0) {
+      report.costUsd = response.costUsd;
+    }
 
     const toolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
     const text = typeof response.text === "string" ? response.text : "";
     const normalized: LlmResponse = { text, toolCalls };
     const first = toolCalls[0];
+    const valid = isValidAction(first);
 
     let firstResult = "";
     if (first) {
@@ -510,12 +527,15 @@ class MineflayerFighter implements Fighter {
         firstResult = `error al ejecutar la acción: ${errorText(err)}`;
         this.log("warn", `Error ejecutando "${first.name}": ${errorText(err)}`);
       }
+      if (valid) report.decisionMs = Date.now() - decisionStartedAt;
       const result = firstResult;
       this.safe(() => this.opts.events.onAction(first.name, args, result));
     } else {
       if (text.trim().length > 0) this.safe(() => this.opts.events.onThought(text.trim()));
       this.log("warn", "El LLM respondió sin elegir una herramienta; se mantiene la acción actual");
     }
+    if (!valid) report.invalid = true;
+    this.safe(() => this.opts.events.onDecision(report));
 
     const turn = buildTurnMessages(observationJson, normalized, (index) =>
       index === 0 ? firstResult : "ignorada: solo se ejecuta una acción por turno",
@@ -537,7 +557,7 @@ class MineflayerFighter implements Fighter {
         inventory: bot.inventory.items().map((item) => ({ name: item.name, count: item.count })),
       },
       opponent: opponent ? { position: opponent.position, health: readEntityHealth(opponent) } : null,
-      arena: { center: ARENA.center, radius: ARENA.radius },
+      arena: { center: currentArena().center, radius: currentArena().radius },
       currentAction: this.mode,
       lastActionResult: this.lastResult,
     });
@@ -733,7 +753,7 @@ class MineflayerFighter implements Fighter {
     if (now - this.lastRetreatPlanAt < RETREAT_REPLAN_MS) return;
     this.lastRetreatPlanAt = now;
     const self = bot.entity.position;
-    const target = retreatTarget({ self, opponent: opponent.position, center: ARENA.center, radius: ARENA.radius });
+    const target = retreatTarget({ self, opponent: opponent.position, center: currentArena().center, radius: currentArena().radius });
     bot.pathfinder.setGoal(new goals.GoalNear(target.x, Math.floor(self.y), target.z, 1));
     this.goalKind = "point";
     this.followTarget = null;
@@ -875,7 +895,7 @@ class MineflayerFighter implements Fighter {
 
   private goToCenter(bot: Bot): void {
     if (this.goalKind === "center") return;
-    bot.pathfinder.setGoal(new goals.GoalNear(ARENA.center.x, ARENA.center.y + 1, ARENA.center.z, 2));
+    bot.pathfinder.setGoal(new goals.GoalNear(currentArena().center.x, currentArena().center.y + 1, currentArena().center.z, 2));
     this.goalKind = "center";
     this.followTarget = null;
   }

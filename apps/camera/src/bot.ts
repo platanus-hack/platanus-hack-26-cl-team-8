@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import type { Bot } from "mineflayer";
-import { ARENA } from "@phack/protocol";
+import { activeArena } from "./arena";
 import type { CameraConfig } from "./config";
 import { errorText, log } from "./log";
 
@@ -100,9 +100,9 @@ export async function runRcon(config: CameraConfig, commands: readonly string[])
   }
 }
 
-/** Deja a la cámara en modo espectador y en ARENA.camera usando RCON. */
+/** Deja a la cámara en modo espectador y en la cámara del escenario activo usando RCON. */
 export async function placeCamera(config: CameraConfig): Promise<void> {
-  const { x, y, z } = ARENA.camera;
+  const { x, y, z } = activeArena().camera;
   await runRcon(config, [`gamemode spectator ${config.username}`, `tp ${config.username} ${x} ${y} ${z}`]);
 }
 
@@ -111,8 +111,9 @@ export function isMisplaced(bot: Bot): boolean {
   const entity = bot.entity;
   if (!entity) return true;
   if (bot.game?.gameMode !== "spectator") return true;
-  const dx = entity.position.x - ARENA.camera.x;
-  const dy = entity.position.y - ARENA.camera.y;
-  const dz = entity.position.z - ARENA.camera.z;
+  const { camera } = activeArena();
+  const dx = entity.position.x - camera.x;
+  const dy = entity.position.y - camera.y;
+  const dz = entity.position.z - camera.z;
   return dx * dx + dy * dy + dz * dz > 3 * 3;
 }

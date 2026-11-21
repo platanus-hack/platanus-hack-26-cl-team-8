@@ -1,4 +1,4 @@
-import type { MatchPhase, MatchResult, Side, WinReason } from "@phack/protocol";
+import type { MatchPhase, MatchResult, Side } from "@phack/protocol";
 
 export const SIDE_LABEL: Record<Side, string> = { red: "Rojo", blue: "Azul" };
 
@@ -7,14 +7,6 @@ export const PHASE_LABEL: Record<MatchPhase, string> = {
   preparing: "Preparando la arena",
   running: "En combate",
   finished: "Pelea finalizada",
-};
-
-export const REASON_LABEL: Record<WinReason, string> = {
-  kill: "K.O.",
-  timeout_health: "Más vida al acabar el tiempo",
-  draw: "Empate",
-  stopped: "Detenida",
-  error: "Error",
 };
 
 function pad2(n: number): string {
@@ -27,21 +19,9 @@ export function formatClock(ms: number): string {
   return `${pad2(Math.floor(total / 60))}:${pad2(total % 60)}`;
 }
 
-export function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return minutes > 0 ? `${minutes} min ${pad2(seconds)} s` : `${seconds} s`;
-}
-
 export function formatTime(epochMs: number): string {
   const d = new Date(epochMs);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-}
-
-export function formatDateTime(epochMs: number): string {
-  const d = new Date(epochMs);
-  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 /** Número con a lo más un decimal (la vida de Minecraft viene en medios corazones). */

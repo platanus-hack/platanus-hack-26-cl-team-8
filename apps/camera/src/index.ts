@@ -1,8 +1,9 @@
 import type { Bot } from "mineflayer";
-import { AGENT_USERNAMES, ARENA, SIDES } from "@phack/protocol";
+import { AGENT_USERNAMES, SIDES } from "@phack/protocol";
+import { activeArena } from "./arena";
 import { connectBot, isMisplaced, placeCamera } from "./bot";
 import { loadConfig, type CameraConfig } from "./config";
-import { orbitPosition, pickAimTarget, smoothToward, type Vec } from "./director";
+import { framingFov, orbitPosition, pickAimTarget, smoothScalar, smoothToward, type Vec } from "./director";
 import { FfmpegStreamer } from "./ffmpeg";
 import { errorText, FatalError, log } from "./log";
 import { createStage, type Stage } from "./stage";
@@ -11,6 +12,14 @@ import { createStage, type Stage } from "./stage";
 const AIM_SMOOTHING_SECONDS = 0.6;
 /** Altura sobre los pies a la que se apunta (más o menos el pecho). */
 const AIM_HEIGHT = 1;
+/** Alto que debe caber en cuadro por peleador: cuerpo (1.8) + marcador de color flotando encima. */
+const SUBJECT_TOP = 3.6;
+/**
+ * Zoom automático: el FOV se ajusta para encuadrar a los dos peleadores. Juntos = zoom
+ * cerrado sobre el intercambio; separados = plano más abierto. Sin peleadores, toda la arena.
+ */
+const ZOOM = { minFov: 18, maxFov: 58, idleFov: 50, margin: 1.35 };
+const ZOOM_SMOOTHING_SECONDS = 0.9;
 /** Fallos seguidos de conexión al servidor de Minecraft antes de rendirse. */
 const MAX_CONNECT_FAILURES = 20;
 /** Excepciones seguidas en el render antes de rendirse. */
@@ -69,9 +78,12 @@ function startRenderLoop(config: CameraConfig, stage: Stage, ffmpeg: FfmpegStrea
   const pixels = new Uint8Array(config.width * config.height * 4);
   const frame = Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength);
 
+  const ARENA = activeArena();
   const center: Vec = { x: ARENA.center.x, y: ARENA.center.y, z: ARENA.center.z };
   const basePosition: Vec = { x: ARENA.camera.x, y: ARENA.camera.y, z: ARENA.camera.z };
   let aim: Vec = { x: center.x, y: center.y + AIM_HEIGHT, z: center.z };
+  let fov = ZOOM.idleFov;
+  const framing = { ...ZOOM, aspect: config.width / config.height };
 
   const startedAt = performance.now();
   let lastTick = startedAt;
@@ -90,14 +102,22 @@ function startRenderLoop(config: CameraConfig, stage: Stage, ffmpeg: FfmpegStrea
     try {
       const bot = currentBot;
       const fighters: Vec[] = [];
+      // Puntos que deben quedar dentro de la imagen: pies y tope (con marcador) de cada peleador.
+      const subjects: Vec[] = [];
       for (const side of SIDES) {
         const feet = fighterFeet(bot, AGENT_USERNAMES[side]);
         stage.setMarker(side, feet, elapsed);
-        if (feet) fighters.push({ x: feet.x, y: feet.y + AIM_HEIGHT, z: feet.z });
+        if (feet) {
+          fighters.push({ x: feet.x, y: feet.y + AIM_HEIGHT, z: feet.z });
+          subjects.push(feet, { x: feet.x, y: feet.y + SUBJECT_TOP, z: feet.z });
+        }
       }
       const target = pickAimTarget(fighters, { x: center.x, y: center.y + AIM_HEIGHT, z: center.z });
       aim = smoothToward(aim, target, dt, AIM_SMOOTHING_SECONDS);
-      stage.setCamera(orbitPosition(basePosition, center, elapsed, config.orbitSeconds), aim);
+      const cameraPosition = orbitPosition(basePosition, center, elapsed, config.orbitSeconds);
+      fov = smoothScalar(fov, framingFov(cameraPosition, aim, subjects, framing), dt, ZOOM_SMOOTHING_SECONDS);
+      stage.setFov(fov);
+      stage.setCamera(cameraPosition, aim);
 
       if (!stage.ready) {
         // Todavía no hay mundo (el bot nunca se ha conectado): nada que dibujar.

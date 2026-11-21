@@ -17,8 +17,13 @@ export class LlmError extends Error {
   readonly status: number | null;
   /** Cuerpo de la respuesta, truncado. */
   readonly body: string;
+  /**
+   * true si es un fallo pasajero de infraestructura (429, 408, 5xx, red, timeout) y no
+   * culpa del pedido: vale la pena reintentar. Si no se indica, se deduce del status.
+   */
+  readonly retryable: boolean;
 
-  constructor(provider: string, status: number | null, body: string, detail?: string) {
+  constructor(provider: string, status: number | null, body: string, detail?: string, retryable?: boolean) {
     const shortBody = truncate(body);
     const parts = [`[llm:${provider}]`];
     if (status !== null) parts.push(`HTTP ${status}`);
@@ -29,7 +34,13 @@ export class LlmError extends Error {
     this.provider = provider;
     this.status = status;
     this.body = shortBody;
+    this.retryable = retryable ?? isRetryableStatus(status);
   }
+}
+
+/** 429, 408, 5xx o sin respuesta HTTP (red / timeout) = fallo pasajero. */
+export function isRetryableStatus(status: number | null): boolean {
+  return status === null || status === 408 || status === 429 || status >= 500;
 }
 
 function abortError(provider: string): Error {

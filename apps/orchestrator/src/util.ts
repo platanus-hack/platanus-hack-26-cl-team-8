@@ -11,10 +11,9 @@ export function errorMessage(err: unknown): string {
 
 /**
  * Rechaza con `message` si `promise` no termina en `ms`.
- * La promesa original sigue viva; se le cuelga un catch para no dejar rechazos sin manejar.
+ * La promesa original sigue viva; su rechazo se maneja aunque el plazo ya haya vencido.
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  promise.catch(() => {});
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(message)), ms);
     promise.then(

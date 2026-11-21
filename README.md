@@ -48,7 +48,7 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
 
 | Servicio | Imagen / código | Qué hace |
 |---|---|---|
-| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mundo plano sin mobs, modo offline, RCON activado. |
+| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mapa Pizza Spleef 2 sin mobs, modo offline, RCON activado. |
 | `orchestrator` | `apps/orchestrator` | Dueño de la pelea: prepara la arena por RCON, conecta a los dos agentes, lleva el estado, decide el ganador, guarda el historial y emite eventos por websocket. |
 | `camera` | `apps/camera` | Bot cámara. Alterna entre seguir la pelea y una toma general; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
 | `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
@@ -162,6 +162,14 @@ Variables de entorno: el orquestador lee el `.env` de la raíz al arrancar (`lib
 
 El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado por git).
 
+### Mapa compartido
+
+Todas las peleas usan **Pizza Spleef 2**, incluido en `infra/minecraft/worlds/pizza-spleef-2.zip` (el archivo descargado `Pizza_Spleef_2.zip`, sin modificaciones). Docker y el arranque nativo importan el mismo ZIP una sola vez al mundo `pizza-spleef-2`. El antiguo mundo `world` se conserva; los reinicios no sobrescriben el mapa importado.
+
+Se usa la pizza jugable centrada en `(8, 3, 8)`, de radio 25, con sus ingredientes y telarañas originales. Los agentes comienzan en `(-8, 4, 8)` y `(24, 4, 8)`; las cámaras y los límites de movimiento comparten estas coordenadas mediante `ARENA` en `packages/protocol`. El borde da al vacío. Los bloques de comandos del minijuego original permanecen desactivados: las peleas PvP las dirige el orquestador, que entre peleas restaura la plantilla mediana incluida en el mapa y limpia ítems, flechas y experiencia.
+
+Para aplicar este cambio a un stack Docker existente, ejecuta `docker compose up -d --build minecraft orchestrator camera`: cambia el mundo de Minecraft y actualiza a la vez los agentes y las cámaras. En modo nativo, reinicia `pnpm local` (requiere `unzip`, incluido en macOS).
+
 ### Si algo falla
 
 | Síntoma | Qué revisar |
@@ -246,6 +254,36 @@ Luego `docker compose up -d` (recrea los contenedores cuyo entorno cambió).
 - `LLM_PROVIDER` y `LLM_MODEL` son el valor por defecto de ambos agentes. Desde la web se puede elegir proveedor y modelo por agente; si se elige uno sin clave configurada, la pelea falla con un error claro.
 - Cada agente decide cada `AGENT_TICK_MS` milisegundos (1500 por defecto), y una pelea dura como máximo `MATCH_DURATION_SECONDS` (180). Una pelea completa son del orden de 2 × 180 / 1,5 = **240 llamadas al LLM**. El sitio no tiene autenticación: cualquiera con el link puede iniciar peleas, así que ponle un límite de gasto a la clave.
 - La lista completa de variables está en [.env.example](.env.example) y su fuente de verdad en `libs/env/src/index.ts`.
+
+## Torneo de modelos
+
+Arena 1v1 entre modelos de Vercel AI Gateway con rating Bradley–Terry en escala Elo (DeepSeek V4.1 Flash por Baseten fijo en 1000). Responde dos preguntas: qué modelos juegan parecido a DeepSeek (calibración, banda ±150 Elo) y, entre ellos, quién le gana a quién (liga todos contra todos). Detalle del diseño en [docs/TORNEO.md](docs/TORNEO.md).
+
+El torneo corre como proceso aparte (`pnpm tournament …`, lee el `.env` de la raíz) y guarda todo en `DATA_DIR/tournaments/<id>/`. Mientras un `run` está vivo, el botón "Iniciar pelea" de la web responde 409.
+
+```bash
+# 1. Dry-run: baja el catálogo y los endpoints públicos (sin gastar créditos) y muestra
+#    los modelos exactos, las líneas omitidas con su motivo, el calendario y el costo.
+pnpm tournament plan
+
+# 2. Congelar el torneo (catálogo, modelos, proveedor, benchmark). Imprime el id.
+pnpm tournament create --name "Torneo 1h" --max-minutes 60 --max-usd 10 --concurrency 1 --max-candidates 8
+
+# 3. Correrlo (Minecraft levantado + VERCEL_API_KEY). Ctrl+C = pausa al terminar la partida en curso.
+pnpm tournament run <id>
+pnpm tournament pause <id>          # desde otra terminal: misma pausa, vía archivo PAUSE
+pnpm tournament run <id>            # reanuda sin repetir partidas
+
+# 4. Mirar
+pnpm tournament status <id>         # progreso + calibración (quién entró, quién no y por qué)
+pnpm tournament leaderboard <id>    # ranking oficial (solo liga) y matriz
+pnpm tournament list
+```
+
+- **Ensayo sin Minecraft ni créditos:** `pnpm tournament create --simulate --name ensayo` y luego `pnpm tournament run <id>`. Usa agentes simulados (ratings ocultos por modelo, RNG con semilla) y el mismo calendario, límites y reporte.
+- **Sin red:** `--catalog apps/orchestrator/src/tournament/catalog.fixture.json` (ruta relativa a la raíz o absoluta) usa un catálogo local.
+- **Leaderboard web:** `pnpm dev` y abrir http://localhost:4321/arena (lee `/api/tournaments` del orquestador; con `?mock` muestra datos de ejemplo).
+- Todas las opciones: `pnpm tournament --help`.
 
 ## Web en Cloudflare (Worker + túnel privado)
 
