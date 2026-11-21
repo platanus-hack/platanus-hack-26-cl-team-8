@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { MODEL_PRICE_CAP, ModelsResponseSchema } from "@phack/protocol";
+import fixture from "./tournament/catalog.fixture.json";
 import {
   CATALOG_URL,
   FALLBACK_MODELS,
   ModelCatalog,
   parseCatalog,
+  rosterOf,
   pricePerMillion,
   withinPriceCap,
   type CatalogFetch,
@@ -31,6 +33,25 @@ const CATALOG = {
     entry("openai/entrada-cara", "0.00000125", "0.000005"),
     entry("openai/salida-cara", "0.000001", "0.0000051"),
     entry("google/gratis", "0", "0"),
+  ],
+};
+
+const REF = "deepseek/deepseek-v4.1-flash-1017-fast";
+const TEXT = { modalities: { input: ["text"], output: ["text"] } };
+
+/** Catálogo con la referencia del torneo: rosterOf deja la referencia + una versión por línea prioritaria. */
+const ROSTER = {
+  object: "list",
+  data: [
+    entry(REF, "0.0000006", "0.0000024", { ...TEXT, released: 300 }),
+    entry("anthropic/claude-haiku-5.5", "0.0000001", "0.0000005", { ...TEXT, released: 200 }),
+    // Versión vieja de la misma línea: no entra.
+    entry("anthropic/claude-haiku-4.5", "0.000001", "0.000005", { ...TEXT, released: 100 }),
+    // Línea prioritaria que pasa del tope: no entra.
+    entry("openai/gpt-6-luna", "0.00000125", "0.000005", { ...TEXT, released: 200 }),
+    // Barato pero fuera de las líneas prioritarias: no entra.
+    entry("mistral/barato", "0.0000001", "0.0000001", { ...TEXT, released: 200 }),
+    entry("openai/entrada-cara", "0.00000125", "0.000005", { ...TEXT, released: 200 }),
   ],
 };
 
@@ -136,6 +157,29 @@ describe("parseCatalog", () => {
   });
 });
 
+describe("rosterOf", () => {
+  it("deja la referencia y una versión por línea prioritaria dentro del tope", () => {
+    expect(rosterOf(ROSTER).map((m) => m.id)).toEqual([REF, "anthropic/claude-haiku-5.5"]);
+  });
+
+  it("agrega al final los ids siempre permitidos que pasan parseCatalog", () => {
+    expect(rosterOf(ROSTER, ["openai/entrada-cara", "inventado/x"]).map((m) => m.id)).toEqual([
+      REF,
+      "anthropic/claude-haiku-5.5",
+      "openai/entrada-cara",
+    ]);
+  });
+
+  it("sin la referencia en el catálogo devuelve una lista vacía", () => {
+    expect(rosterOf(CATALOG)).toEqual([]);
+    expect(rosterOf("basura")).toEqual([]);
+  });
+
+  it("con el catálogo real da la misma lista que FALLBACK_MODELS (la del torneo)", () => {
+    expect(rosterOf(fixture).map((m) => m.id)).toEqual(FALLBACK_MODELS.map((m) => m.id));
+  });
+});
+
 describe("FALLBACK_MODELS", () => {
   it("la lista fija respeta el tope e incluye el modelo por defecto de vercel", () => {
     expect(FALLBACK_MODELS.length).toBeGreaterThan(0);
@@ -157,8 +201,8 @@ describe("ModelCatalog", () => {
     expect(catalog.isAllowed("deepseek/barato")).toBe(false);
   });
 
-  it("con el catálogo bajado permite solo lo que no pasa del tope", async () => {
-    const { fetch, urls } = okFetch(CATALOG);
+  it("con el catálogo bajado permite solo la lista del torneo", async () => {
+    const { fetch, urls } = okFetch(ROSTER);
     const { catalog } = catalogWith(fetch);
     expect(await catalog.refresh()).toBe(true);
 
@@ -166,28 +210,35 @@ describe("ModelCatalog", () => {
     const snapshot = catalog.snapshot();
     expect(snapshot.source).toBe("catalog");
     expect(snapshot.updatedAt).toBe(1234);
-    expect(snapshot.models.map((m) => m.id)).toEqual(["deepseek/barato", "anthropic/justo-en-el-tope", "google/gratis"]);
+    expect(snapshot.models.map((m) => m.id)).toEqual([REF, "anthropic/claude-haiku-5.5"]);
     expect(ModelsResponseSchema.safeParse(snapshot).success).toBe(true);
 
-    expect(catalog.isAllowed("deepseek/barato")).toBe(true);
-    expect(catalog.isAllowed("  anthropic/justo-en-el-tope  ")).toBe(true);
-    expect(catalog.isAllowed("openai/entrada-cara")).toBe(false);
-    expect(catalog.isAllowed("openai/salida-cara")).toBe(false);
+    expect(catalog.isAllowed(REF)).toBe(true);
+    expect(catalog.isAllowed("  anthropic/claude-haiku-5.5  ")).toBe(true);
+    expect(catalog.isAllowed("anthropic/claude-haiku-4.5")).toBe(false);
+    expect(catalog.isAllowed("mistral/barato")).toBe(false);
+    expect(catalog.isAllowed("openai/gpt-6-luna")).toBe(false);
     expect(catalog.isAllowed("inventado/modelo")).toBe(false);
     expect(catalog.isAllowed("")).toBe(false);
     // La lista fija ya no vale: el catálogo vivo manda.
-    expect(catalog.isAllowed("anthropic/claude-haiku-5.5")).toBe(false);
+    expect(catalog.isAllowed("zai/glm-5.3-flash")).toBe(false);
+  });
+
+  it("un catálogo sin la referencia cuenta como descarga fallida", async () => {
+    const { catalog } = catalogWith(okFetch(CATALOG).fetch);
+    expect(await catalog.refresh()).toBe(false);
+    expect(catalog.snapshot().source).toBe("fallback");
   });
 
   it("el modelo por defecto del servidor siempre está permitido", async () => {
-    const { catalog } = catalogWith(okFetch(CATALOG).fetch, "openai/entrada-cara");
+    const { catalog } = catalogWith(okFetch(ROSTER).fetch, "openai/entrada-cara");
     expect(catalog.isAllowed("openai/entrada-cara")).toBe(true);
     await catalog.refresh();
     expect(catalog.isAllowed("openai/entrada-cara")).toBe(true);
     // Y si el catálogo lo trae, aparece en la lista con su precio aunque pase del tope.
     expect(catalog.snapshot().models.map((m) => m.id)).toContain("openai/entrada-cara");
 
-    const absent = catalogWith(okFetch(CATALOG).fetch, "privado/que-no-esta-en-el-catalogo").catalog;
+    const absent = catalogWith(okFetch(ROSTER).fetch, "privado/que-no-esta-en-el-catalogo").catalog;
     await absent.refresh();
     expect(absent.isAllowed("privado/que-no-esta-en-el-catalogo")).toBe(true);
   });
@@ -219,7 +270,7 @@ describe("ModelCatalog", () => {
     let fail = false;
     const { catalog, logs } = catalogWith(async () => {
       if (fail) throw new Error("sin internet");
-      return { ok: true, status: 200, json: async () => CATALOG };
+      return { ok: true, status: 200, json: async () => ROSTER };
     });
     await catalog.refresh();
     const good = catalog.snapshot();
@@ -228,7 +279,7 @@ describe("ModelCatalog", () => {
     expect(await catalog.refresh()).toBe(false);
     expect(await catalog.refresh()).toBe(false);
     expect(catalog.snapshot()).toEqual(good);
-    expect(catalog.isAllowed("deepseek/barato")).toBe(true);
+    expect(catalog.isAllowed("anthropic/claude-haiku-5.5")).toBe(true);
     // El mismo fallo repetido no llena el registro de avisos.
     expect(logs.filter((l) => l.level === "warn")).toHaveLength(1);
   });
@@ -241,7 +292,7 @@ describe("ModelCatalog", () => {
   });
 
   it("start baja el catálogo sin bloquear y stop corta el refresco", async () => {
-    const { catalog } = catalogWith(okFetch(CATALOG).fetch);
+    const { catalog } = catalogWith(okFetch(ROSTER).fetch);
     catalog.start();
     catalog.start();
     try {

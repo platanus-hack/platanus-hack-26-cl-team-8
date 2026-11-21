@@ -39,6 +39,7 @@ elegido, `…/models/<id>/endpoints` (público, sin clave, sin gastar créditos)
   Terra; Gemini Flash ≠ Gemini Flash-Lite. `-batch` se descarta siempre.
 - **Una versión por línea:** la más reciente por `released`. Dentro de esa versión se
   prefiere exactamente `-fast`, luego otras rápidas, luego la base y al final `-free`.
+- **Misma lista que la web:** antes de agrupar se descartan los modelos que pasan de `MODEL_PRICE_CAP` (la referencia se salta el tope), igual que `GET /api/models`, que a su vez sirve la referencia + las mismas versiones por línea (`rosterOf` en `apps/orchestrator/src/models.ts`). Una línea prioritaria cara aparece omitida como "no está en el catálogo".
 - **Compatibilidad:** texto de entrada y salida y tool use. Si la versión más reciente no
   sirve (o no hay proveedor disponible) la línea se **omite con su motivo**; nunca se cae a
   una versión vieja.

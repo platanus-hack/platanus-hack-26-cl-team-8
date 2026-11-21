@@ -33,6 +33,7 @@ import {
   freezeModel,
   resolveCatalog,
 } from "./catalog";
+import { eligibleModels, parseCatalog } from "../models";
 import { buildReport, summarize } from "./report";
 import { BenchmarkMismatchError, DEFAULT_OVERHEAD_SECONDS, runTournament } from "./runner";
 import { DEFAULT_SEEDS, estimateMatch, planPreview } from "./schedule";
@@ -200,7 +201,10 @@ async function prepare(flags: Flags, env: Env, limits: TournamentLimits): Promis
   const simulate = flags.simulate;
   const catalog = await loadCatalog(flags);
   const referenceId = flags.reference ?? DEFAULT_REFERENCE_ID;
-  const resolution = resolveCatalog(catalog.models, {
+  // Misma lista que el selector de la web (GET /api/models): solo modelos con tools y
+  // dentro de MODEL_PRICE_CAP; la referencia se salta el tope.
+  const allowed = new Set(parseCatalog({ data: catalog.models }, [referenceId]).map((m) => m.id));
+  const resolution = resolveCatalog(eligibleModels({ data: catalog.models }, allowed), {
     priorityLines: DEFAULT_PRIORITY_LINES,
     referenceId,
     maxCandidates: limits.maxCandidates,
