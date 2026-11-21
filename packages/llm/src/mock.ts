@@ -53,6 +53,7 @@ export const MOCK_TOOL_NAMES = [
   "eat",
   "pearl",
   "build",
+  "dig",
   "shield",
   "water",
   "lava",

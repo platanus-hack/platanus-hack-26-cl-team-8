@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { attackCooldownMs, isArrow, isAxe, isBuildBlock, isFoodName, isPearl, isSword } from "./items";
+import {
+  ARENA_BLOCKS,
+  bestDigTool,
+  isBreakable,
+  attackCooldownMs, isArrow, isAxe, isBuildBlock, isFoodName, isPearl,
+  isSword,
+} from "./items";
 
 describe("clasificación de ítems", () => {
   it("distingue espadas, hachas y picotas", () => {
@@ -15,7 +21,9 @@ describe("clasificación de ítems", () => {
     expect(isArrow("bow")).toBe(false);
     expect(isPearl("ender_pearl")).toBe(true);
     expect(isBuildBlock("oak_planks")).toBe(true);
-    expect(isBuildBlock("cobblestone")).toBe(false);
+    expect(isBuildBlock("red_wool")).toBe(true);
+    expect(isBuildBlock("cobblestone")).toBe(true);
+    expect(isBuildBlock("glass")).toBe(false);
     expect(isFoodName("cooked_beef")).toBe(true);
     expect(isFoodName("golden_apple")).toBe(true);
     expect(isFoodName("ender_pearl")).toBe(false);
@@ -59,3 +67,23 @@ describe("attackCooldownMs", () => {
     }
   });
 });
+
+describe("romper bloques", () => {
+  it("nunca deja romper la arena, el aire ni los líquidos", () => {
+    for (const name of ARENA_BLOCKS) expect(isBreakable(name)).toBe(false);
+    for (const name of ["air", "water", "lava", "fire"]) expect(isBreakable(name)).toBe(false);
+    for (const name of ["red_wool", "oak_planks", "cobblestone", "obsidian", "dirt"]) expect(isBreakable(name)).toBe(true);
+  });
+
+  it("elige la mejor herramienta para cada bloque", () => {
+    const inventory = ["iron_sword", "stone_pickaxe", "diamond_pickaxe", "iron_axe", "shears"];
+    expect(bestDigTool("red_wool", inventory)).toBe("shears");
+    expect(bestDigTool("oak_planks", inventory)).toBe("iron_axe");
+    expect(bestDigTool("obsidian", inventory)).toBe("diamond_pickaxe");
+    expect(bestDigTool("dirt", inventory)).toBeNull();
+    expect(bestDigTool("cobblestone", ["iron_sword"])).toBeNull();
+    // El pico no es un hacha aunque su nombre termine en "axe".
+    expect(bestDigTool("oak_planks", ["diamond_pickaxe"])).toBeNull();
+  });
+});
+

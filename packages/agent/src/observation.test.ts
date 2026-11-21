@@ -131,3 +131,16 @@ describe("buildObservation: lo que llega del rival", () => {
     expect(obs.rivalThoughts).toEqual(["voy a flanquear"]);
   });
 });
+
+describe("buildObservation: terreno", () => {
+  it("altura, bloques en medio y encierro solo aparecen cuando dicen algo", () => {
+    const flat = buildObservation({ ...base, terrain: { height: 0.02, blocksBetween: 0, enclosed: false } });
+    expect(flat).not.toHaveProperty("height");
+    expect(flat).not.toHaveProperty("blocksBetween");
+    expect(flat).not.toHaveProperty("enclosed");
+
+    const boxed = buildObservation({ ...base, terrain: { height: 3.04, blocksBetween: 2, enclosed: true } });
+    expect(boxed).toMatchObject({ height: 3, blocksBetween: 2, enclosed: true });
+  });
+});
+

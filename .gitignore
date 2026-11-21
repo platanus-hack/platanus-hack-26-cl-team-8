@@ -16,3 +16,6 @@ data/
 .dev.vars
 # Capturas y logs de Playwright MCP
 .playwright-mcp/
+
+# Texturas de Minecraft para la página /items (son de Mojang: se generan con scripts/items/catalog.mjs, no van al repo).
+apps/web/public/items/

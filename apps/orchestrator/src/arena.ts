@@ -117,7 +117,16 @@ export function fighterKitCommands(username: string, kit: Kit): string[] {
  */
 export function clearPlacedBlocksCommands(): string[] {
   const box = `fill ${MIN_X + 1} ${FLOOR_Y + 1} ${MIN_Z + 1} ${MAX_X - 1} ${WALL_TOP_Y} ${MAX_Z - 1} minecraft:air replace`;
-  return ["#minecraft:planks", "#minecraft:wool", "minecraft:water", "minecraft:lava", "minecraft:fire"].map(
+  return [
+    "#minecraft:planks",
+    "#minecraft:wool",
+    "minecraft:cobblestone",
+    "minecraft:dirt",
+    "minecraft:obsidian",
+    "minecraft:water",
+    "minecraft:lava",
+    "minecraft:fire",
+  ].map(
     (filter) => `${box} ${filter}`,
   );
 }

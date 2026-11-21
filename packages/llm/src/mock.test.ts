@@ -250,7 +250,7 @@ describe("mock con las herramientas de kit", () => {
 
 describe("piezas de la política mock", () => {
   it("conoce las mismas herramientas que el agente", () => {
-    expect([...MOCK_TOOL_NAMES]).toEqual(["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "shield", "water", "lava", "wait"]);
+    expect([...MOCK_TOOL_NAMES]).toEqual(["approach", "attack", "retreat", "shoot", "eat", "pearl", "build", "dig", "shield", "water", "lava", "wait"]);
   });
 
   it("readObservation usa el último mensaje user y tolera campos faltantes", () => {

@@ -235,6 +235,9 @@ describe("arena", () => {
     expect(clearPlacedBlocksCommands()).toEqual([
       `${box} #minecraft:planks`,
       `${box} #minecraft:wool`,
+      `${box} minecraft:cobblestone`,
+      `${box} minecraft:dirt`,
+      `${box} minecraft:obsidian`,
       `${box} minecraft:water`,
       `${box} minecraft:lava`,
       `${box} minecraft:fire`,
