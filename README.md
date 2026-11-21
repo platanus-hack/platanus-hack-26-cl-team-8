@@ -318,6 +318,21 @@ El script:
 4. Reinicia `mediamtx` para que tome `infra/mediamtx/mediamtx.yml` (el video se corta unos segundos). Los cambios en `infra/minecraft/config/` o `infra/caddy/Caddyfile` se aplican a mano: `docker compose restart minecraft` / `docker compose restart web`.
 5. Con `DEPLOY_SMOKE=1`, corre `scripts/smoke.sh` en el servidor.
 
+### Despliegue automático cuando cambia `main`
+
+`scripts/deploy-main.sh` despliega `origin/main` solo si cambió desde el último despliegue (compara con el commit anotado en el servidor). Copia el commit exacto, no tu carpeta de trabajo. Los datos del servidor van en `.env.deploy` (ignorado por git): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, y opcionalmente `DEPLOY_PASSWORD` y `DEPLOY_SUDO=1` si el usuario necesita `sudo` para Docker.
+
+```bash
+bash scripts/deploy-main.sh            # despliega si hay commits nuevos
+bash scripts/deploy-main.sh --force    # despliega aunque no haya cambios
+```
+
+Para dejarlo corriendo solo desde Claude Code:
+
+```
+/loop 2m Ejecuta `bash scripts/deploy-main.sh` y responde con una sola línea con su resultado. No edites archivos ni intentes arreglar nada; si falla, muestra el error tal cual.
+```
+
 La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarga de Paper y generación del mundo) el sitio muestra "sin señal" y el orquestador reintenta RCON hasta que el servidor responda. Iniciar una pelea antes de eso termina con error.
 
 `scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
