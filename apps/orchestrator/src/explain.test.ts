@@ -46,7 +46,7 @@ function record(result: MatchResult, red: Partial<AgentStatus> = {}, blue: Parti
       },
       blue: { side: "blue", prompt: "Eres defensivo:\n\nmantén distancia y usa el arco." },
     },
-    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "single" },
+    settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "single", voice: false },
     series: null,
     final: { red: status("red", red), blue: status("blue", blue) },
     result,
@@ -204,7 +204,7 @@ describe("modo por rondas", () => {
     const wins = { red: rounds.filter((r) => r.winner === "red").length, blue: rounds.filter((r) => r.winner === "blue").length };
     return {
       ...record(result, red, blue),
-      settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, mode: "rounds" },
+      settings: { ...DEFAULT_SETTINGS, comms: "none", timer: true, timerSeconds: null, mode: "rounds", voice: false },
       series: { round: rounds.length, maxRounds: 5, wins, rounds, roundStartedAt: null, points: { red: 0, blue: 0 } },
     };
   }

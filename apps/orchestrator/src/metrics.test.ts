@@ -83,6 +83,7 @@ describe("MetricsCollector", () => {
     c.decision("blue", 2000, undefined, 0, at());
     const m = c.finish(configs, at());
     expect(m.blue.injection).toEqual({ received: 0, obeyed: false, obeyedAfterMs: null });
+    expect(c.unseenInjections("blue")).toBe(1);
   });
 
   it("latencias, acciones por minuto y costo", () => {

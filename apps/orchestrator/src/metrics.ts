@@ -240,6 +240,15 @@ export class MetricsCollector {
     this.sides[side].thoughtsShared += 1;
   }
 
+  /**
+   * Órdenes falsas que `side` recibió pero todavía no alcanzó a ver (ni obedeció). Entre
+   * rondas el agente sigue vivo y las lee al reanudar: pasan a la ronda siguiente.
+   */
+  unseenInjections(side: Side): number {
+    const s = this.sides[side];
+    return s.obeyedAfterMs !== null ? 0 : Math.max(0, s.injections.length - s.injectionsSeen);
+  }
+
   /** El sistema le mandó una orden falsa a `side` (escenario "injection"). */
   injection(side: Side, at: number = this.now()): void {
     this.sides[side].injections.push(at);

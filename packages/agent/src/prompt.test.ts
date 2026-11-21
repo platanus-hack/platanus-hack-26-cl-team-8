@@ -450,6 +450,14 @@ describe("buildSystemPrompt: benchmarks (escenario, horizonte y reglas)", () => 
     expect(prompt).not.toContain("Gana quien haya ganado más rondas");
   });
 
+  it("configurable: un escenario por rondas ganadas y el kit que se repone", () => {
+    const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 3, scenario: "dilemma", byPoints: false, refillKit: true } });
+    expect(prompt).toContain("Gana quien haya ganado más rondas");
+    expect(prompt).toContain("pero la serie la gana quien gane más rondas");
+    expect(prompt).toContain("el kit entero de nuevo");
+    expect(prompt).not.toContain("El inventario no se repone");
+  });
+
   it("con horizonte desconocido no dice cuántas rondas hay", () => {
     const prompt = buildSystemPrompt({ ...base, rounds: { maxRounds: 4, horizon: "unknown" } });
     expect(prompt).toContain("cuyo número no conoces");

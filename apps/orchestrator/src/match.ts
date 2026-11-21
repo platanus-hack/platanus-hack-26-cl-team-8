@@ -17,6 +17,7 @@ import {
   kitOf,
   parseTranscript,
   roundPoints,
+  seriesByPoints,
   seriesDecided,
   type Judgement,
   type MatchMetrics,
@@ -135,6 +136,16 @@ export type MatchDeps = {
   sleep?: SleepFn;
   /** Solo para los tests: reemplaza ROUNDS_REFILL_KIT. */
   roundsRefillKit?: boolean;
+  /**
+   * Voz de los mensajes (ver speech.ts). Opcional: sin esto, o sin clave, los mensajes solo
+   * se leen. request no espera ni lanza: devuelve el id del audio o null.
+   */
+  speech?: {
+    available(): boolean;
+    request(side: Side, text: string): string | null;
+    /** Despierta las voces antes de la pelea; opcional. */
+    warm?(): void;
+  };
 };
 
 /** Se lanza al intentar iniciar una pelea cuando ya hay una en curso (HTTP 409). */
@@ -181,6 +192,8 @@ type MatchContext = {
   roundMetrics: MatchMetrics[];
   /** Precio por token del modelo de cada lado (null si no se conoce o es el simulado). */
   prices: Record<Side, { input: number; output: number } | null>;
+  /** Órdenes falsas que cada agente no alcanzó a leer en la ronda que terminó. */
+  unseenInjections: Record<Side, number>;
   /** Órdenes falsas programadas para la ronda en juego (escenario "injection"). */
   injectionTimers: ReturnType<typeof setTimeout>[];
 };
@@ -314,6 +327,7 @@ export class MatchManager {
       metrics: null,
       roundMetrics: [],
       prices: { red: null, blue: null },
+      unseenInjections: { red: 0, blue: 0 },
       injectionTimers: [],
     };
     this.ctx = ctx;
@@ -362,6 +376,7 @@ export class MatchManager {
     const { rcon, env } = this.deps;
     try {
       this.log(ctx, "info", "Preparando la pelea…");
+      this.warmVoices(ctx);
 
       const llms: Record<Side, LlmClient> = { red: this.makeLlm(ctx, "red"), blue: this.makeLlm(ctx, "blue") };
       // Los kits personalizados se arman en paralelo (cada uno con el LLM de su lado).
@@ -390,7 +405,13 @@ export class MatchManager {
           comms: this.state.settings.comms,
           durationSeconds: this.durationSeconds(),
           rounds: this.state.series
-            ? { maxRounds: this.state.series.maxRounds, scenario: this.state.settings.scenario, horizon: this.state.settings.horizon }
+            ? {
+                maxRounds: this.state.series.maxRounds,
+                scenario: this.state.settings.scenario,
+                horizon: this.state.settings.horizon,
+                byPoints: seriesByPoints(this.state.settings),
+                refillKit: this.deps.roundsRefillKit ?? (this.state.settings.refillKit || ROUNDS_REFILL_KIT),
+              }
             : null,
           rules: this.state.settings.rules[side],
           llm: llms[side],
@@ -487,13 +508,17 @@ export class MatchManager {
       if (first) this.state.agents[side].damageDealt = 0;
       ctx.absorption[side] = 0;
     }
-    // Benchmarks: cada ronda se mide por separado.
+    // Benchmarks: cada ronda se mide por separado. Las órdenes falsas que un agente no
+    // alcanzó a leer en la ronda anterior las lee al reanudar: cuentan desde ahora.
+    const unseen = ctx.unseenInjections;
+    ctx.unseenInjections = { red: 0, blue: 0 };
     ctx.metrics = new MetricsCollector({
       rules: { red: this.state.settings.rules.red, blue: this.state.settings.rules.blue },
       standing: (side) => this.standing(side),
       prices: { ...ctx.prices },
     });
     ctx.metrics.start(now);
+    for (const side of SIDES) for (let i = 0; i < unseen[side]; i += 1) ctx.metrics.injection(side, now);
     if (this.state.settings.scenario === "injection") this.scheduleInjections(ctx);
     if (seconds !== null) {
       ctx.timer = setTimeout(() => {
@@ -519,7 +544,7 @@ export class MatchManager {
           drawn,
           maxRounds: series.maxRounds,
           ...(this.state.settings.horizon === "unknown" ? { hideMax: true } : {}),
-          ...(this.state.settings.scenario !== "duel"
+          ...(seriesByPoints(this.state.settings)
             ? { points: { mine: series.points[side], rival: series.points[otherSide(side)] } }
             : {}),
         };
@@ -571,7 +596,8 @@ export class MatchManager {
     }
     // El duelo se decide por rondas ganadas (puede terminar antes); los escenarios con
     // puntos juegan todas las rondas.
-    const decided = this.state.settings.scenario === "duel" ? seriesDecided(series) : series.rounds.length >= series.maxRounds;
+    const byPoints = seriesByPoints(this.state.settings);
+    const decided = byPoints ? series.rounds.length >= series.maxRounds : seriesDecided(series);
     // Durante la pausa, "round" ya es la ronda que viene (ver SeriesSchema).
     if (!decided) series.round += 1;
     const event: Extract<ArenaEvent, { type: "round_end" }> = {
@@ -584,7 +610,7 @@ export class MatchManager {
     this.record(ctx, event);
     this.log(ctx, "info", describeRound(result, series));
     if (decided) {
-      void this.finish(ctx, this.state.settings.scenario === "duel" ? seriesResult(series) : pointsResult(series));
+      void this.finish(ctx, byPoints ? pointsResult(series) : seriesResult(series));
       return;
     }
     this.record(ctx, { type: "phase", at: now, phase: "intermission" });
@@ -607,7 +633,7 @@ export class MatchManager {
       await clearPlacedBlocks(rcon);
       this.assertNotEnded(ctx);
       for (const side of SIDES) {
-        if (this.deps.roundsRefillKit ?? ROUNDS_REFILL_KIT) {
+        if (this.deps.roundsRefillKit ?? (this.state.settings.refillKit || ROUNDS_REFILL_KIT)) {
           await prepareFighter(rcon, side, kitOf(this.state.configs[side]), (text) => this.log(ctx, "warn", text));
         } else {
           await resetFighterForRound(rcon, side, kitOf(this.state.configs[side]));
@@ -810,6 +836,32 @@ export class MatchManager {
     return this.deps.createLlmClient({ provider, model, apiKeys: this.apiKeys() });
   }
 
+  /**
+   * Si en esta partida los agentes van a hablar en voz alta, despierta las voces mientras se
+   * prepara la arena: así la primera frase no llega tarde. No espera ni puede fallar la pelea.
+   */
+  private warmVoices(ctx: MatchContext): void {
+    const { voice, comms } = this.state.settings;
+    if (!voice || comms !== "chat") return;
+    try {
+      this.deps.speech?.warm?.();
+    } catch (err) {
+      this.log(ctx, "warn", `No se pudieron preparar las voces: ${errorMessage(err)}`);
+    }
+  }
+
+  /** Id del audio de un mensaje, o null si la voz está apagada, no hay servicio o falló. */
+  private requestSpeech(ctx: MatchContext, side: Side, message: string): string | null {
+    const speech = this.deps.speech;
+    if (!speech || !this.state.settings.voice) return null;
+    try {
+      return speech.available() ? speech.request(side, message) : null;
+    } catch (err) {
+      this.log(ctx, "warn", `No se pudo pedir la voz de un mensaje: ${errorMessage(err)}`);
+      return null;
+    }
+  }
+
   private apiKeys(): ApiKeys {
     return { vercel: this.deps.env.VERCEL_API_KEY || undefined };
   }
@@ -865,7 +917,9 @@ export class MatchManager {
         // igual (por punto de código), así que un mensaje nunca se corta dos veces. Sin
         // filtros por contenido ni por repetición; el luchador ya espacia los mensajes.
         const message = cutCodePoints(text, MAX_AGENT_MESSAGE_LENGTH);
-        this.emit(ctx, { type: "message", at: Date.now(), side, text: message });
+        // Con la voz encendida se pide el audio en el acto; el mensaje sale igual, sin esperarlo.
+        const speechId = this.requestSpeech(ctx, side, message);
+        this.emit(ctx, { type: "message", at: Date.now(), side, text: message, ...(speechId ? { speechId } : {}) });
         ctx.fighters[otherSide(side)]?.hear("message", message);
         if (fighting()) ctx.metrics?.message(side, message);
       },
@@ -943,7 +997,9 @@ export class MatchManager {
 
   /** Lo que dura esta pelea, en segundos; null si se pelea sin límite de tiempo. */
   private durationSeconds(): number | null {
-    return this.state.settings.timer ? this.deps.env.MATCH_DURATION_SECONDS : null;
+    const { timer, timerSeconds } = this.state.settings;
+    // La duración elegida en la web manda; sin elegir, la del servidor.
+    return timer ? (timerSeconds ?? this.deps.env.MATCH_DURATION_SECONDS) : null;
   }
 
   /** Pelea sin límite de tiempo que llegó al tope de seguridad del servidor: se detiene, sin ganador. */
@@ -1065,6 +1121,7 @@ export class MatchManager {
     this.clearInjections(ctx);
     if (!collector) return null;
     ctx.metrics = null;
+    for (const side of SIDES) ctx.unseenInjections[side] = collector.unseenInjections(side);
     const metrics = collector.finish(this.state.configs, at);
     ctx.roundMetrics.push(metrics);
     return metrics;
@@ -1073,7 +1130,7 @@ export class MatchManager {
   /** Cómo terminó la ronda, contado a un agente; en escenarios con puntos, también los puntos. */
   private roundNoteFor(result: RoundResult, side: Side): string {
     const note = roundNote(result, side);
-    if (this.state.settings.scenario === "duel" || !result.points || !result.attacked) return note;
+    if (!seriesByPoints(this.state.settings) || !result.points || !result.attacked) return note;
     const rival = otherSide(side);
     const series = this.state.series;
     const total = series ? ` (en total: tú ${series.points[side]}, él ${series.points[rival]})` : "";
@@ -1095,7 +1152,7 @@ export class MatchManager {
     const rival = otherSide(side);
     const series = this.state.series;
     if (series) {
-      const score = this.state.settings.scenario === "duel" ? series.wins : series.points;
+      const score = seriesByPoints(this.state.settings) ? series.points : series.wins;
       if (score[side] !== score[rival]) return score[side] > score[rival] ? "ahead" : "behind";
     }
     const diff = this.state.agents[side].health - this.state.agents[rival].health;

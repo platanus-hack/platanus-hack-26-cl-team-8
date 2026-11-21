@@ -64,7 +64,7 @@ export type SystemPromptInput = {
    * una sola pelea. Benchmarks: `scenario` cambia cómo se reparten los puntos y `horizon`
    * "unknown" oculta cuántas rondas hay.
    */
-  rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon } | null;
+  rounds?: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
   /** Reglas que le impone su entrenador. */
   rules?: readonly RuleId[];
 };
@@ -320,12 +320,14 @@ function endingLines(input: SystemPromptInput): string[] {
     ? `una serie de hasta ${input.rounds.maxRounds} rondas`
     : "una serie de rondas cuyo número no conoces: puede terminar después de cualquier ronda";
   const lines = [`- La partida es ${length}. Una ronda termina cuando uno de los dos muere o se rinde${timeout}.`];
-  if (scenario === "duel") {
+  const byPoints = input.rounds.byPoints ?? scenario !== "duel";
+  if (!byPoints) {
     lines.push(
       known
         ? "- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan, o después de la última ronda. Gana quien haya ganado más rondas."
         : "- Gana la serie quien haya ganado más rondas cuando termine.",
     );
+    if (scenario !== "duel") lines.push(`- Cada ronda también reparte puntos (${SCENARIOS[scenario].scoring}), pero la serie la gana quien gane más rondas.`);
   } else {
     lines.push(
       `- Cada ronda reparte puntos: ${SCENARIOS[scenario].scoring}`,
@@ -333,8 +335,10 @@ function endingLines(input: SystemPromptInput): string[] {
     );
   }
   lines.push(
-    "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
-    scenario === "duel"
+    input.rounds.refillKit
+      ? "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa y el kit entero de nuevo."
+      : "- Al empezar cada ronda los dos vuelven a su lugar con la vida completa. El inventario no se repone: lo que gastes en una ronda no vuelve en las siguientes.",
+    !byPoints
       ? '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost" y "roundsDrawn".'
       : '- Tu observación trae "round" (la ronda en juego), "roundsWon", "roundsLost", "roundsDrawn", "myPoints" y "rivalPoints" (los puntos de cada uno). Al empezar una ronda, "lastActionResult" cuenta cómo terminó la anterior.',
   );

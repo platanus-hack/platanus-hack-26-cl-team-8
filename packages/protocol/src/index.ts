@@ -690,6 +690,11 @@ export const MODE_LABELS: Record<MatchMode, { name: string; description: string 
   },
 };
 
+/** Duración mínima y máxima que se puede elegir para una pelea (o una ronda), en segundos. */
+export const MIN_TIMER_SECONDS = 60;
+export const MAX_TIMER_SECONDS = 4 * 60 * 60;
+const TimerSecondsSchema = z.number().int().min(MIN_TIMER_SECONDS).max(MAX_TIMER_SECONDS);
+
 // ---------- Benchmarks: escenarios, horizonte y reglas ----------
 //
 // Se montan sobre el modo por rondas: cada ronda reparte puntos según el escenario y los
@@ -777,6 +782,30 @@ export const RULE_LABELS: Record<RuleId, { name: string; prompt: string }> = {
 
 const RulesSchema = z.array(RuleIdSchema).max(RULE_IDS.length);
 
+/**
+ * Cómo se gana una serie:
+ * - "rounds": quien gane más rondas; termina antes si al que va abajo ya no le alcanzan.
+ * - "points": quien sume más puntos del escenario; se juegan todas las rondas.
+ * - "auto": por rondas en el duelo y por puntos en los demás escenarios.
+ */
+export const SERIES_WINS = ["auto", "rounds", "points"] as const;
+export const SeriesWinSchema = z.enum(SERIES_WINS);
+export type SeriesWin = z.infer<typeof SeriesWinSchema>;
+export const SERIES_WIN_LABELS: Record<SeriesWin, { name: string; description: string }> = {
+  auto: { name: "Automático", description: "Por rondas ganadas en el duelo y por puntos en los demás escenarios." },
+  rounds: {
+    name: "Rondas ganadas",
+    description: "Gana quien gane más rondas; la serie termina antes si ya está decidida.",
+  },
+  points: { name: "Puntos", description: "Gana quien sume más puntos del escenario; se juegan todas las rondas." },
+};
+
+/** ¿La serie se decide por puntos? Resuelve "auto" según el escenario. */
+export function seriesByPoints(settings: { seriesWin: SeriesWin; scenario: ScenarioId }): boolean {
+  if (settings.seriesWin === "auto") return settings.scenario !== "duel";
+  return settings.seriesWin === "points";
+}
+
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
   comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
@@ -786,6 +815,13 @@ export const MatchSettingsSchema = z.object({
    * alguien la detenga (el servidor tiene un tope de seguridad aparte, MATCH_MAX_SECONDS).
    */
   timer: z.boolean().catch(true).default(true),
+  /**
+   * Cuánto dura la pelea (o cada ronda) cuando el límite está encendido, en segundos.
+   * null = lo que tenga el servidor por defecto (MATCH_DURATION_SECONDS; la web lo lee de
+   * ServerDefaults.matchDurationSeconds). Con el límite apagado no se usa, pero se
+   * conserva para cuando se vuelva a encender.
+   */
+  timerSeconds: TimerSecondsSchema.nullable().catch(null).default(null),
   /** Una pelea o una serie por rondas (ver MATCH_MODES). */
   mode: MatchModeSchema.catch(DEFAULT_MODE).default(DEFAULT_MODE),
   /** Benchmarks: qué reparte puntos en cada ronda (ver SCENARIOS). Otro que "duel" juega por rondas. */
@@ -794,6 +830,10 @@ export const MatchSettingsSchema = z.object({
   rounds: z.number().int().min(2).max(MAX_ROUNDS).catch(MAX_ROUNDS).default(MAX_ROUNDS),
   /** Si los agentes saben cuántas rondas tiene la serie. */
   horizon: HorizonSchema.catch("known").default("known"),
+  /** Cómo se gana la serie (ver SERIES_WINS). */
+  seriesWin: SeriesWinSchema.catch("auto").default("auto"),
+  /** Si el kit se entrega de nuevo (limpio) antes de cada ronda; si no, lo gastado no vuelve. */
+  refillKit: z.boolean().catch(false).default(false),
   /** Al terminar la partida, un LLM juez califica la transcripción (necesita un LLM real). */
   judge: z.boolean().catch(false).default(false),
   /** Reglas impuestas a cada lado (ver RULE_LABELS). */
@@ -801,18 +841,35 @@ export const MatchSettingsSchema = z.object({
     .object({ red: RulesSchema.catch([]).default([]), blue: RulesSchema.catch([]).default([]) })
     .catch({ red: [], blue: [] })
     .default({ red: [], blue: [] }),
+  /**
+   * Voz: lo que un agente le dice al otro (modo "chat") además se oye, con una voz por
+   * lado. El audio lo genera el servidor (ElevenLabs) y lo reproduce la web. Solo tiene
+   * efecto si el servidor tiene la clave configurada (ver ServerDefaults.voice).
+   */
+  voice: z.boolean().catch(false).default(false),
 });
 export type MatchSettings = z.infer<typeof MatchSettingsSchema>;
 export const DEFAULT_SETTINGS: MatchSettings = {
   comms: DEFAULT_COMMS,
   timer: true,
+  timerSeconds: null,
   mode: DEFAULT_MODE,
+  voice: false,
   scenario: DEFAULT_SCENARIO,
   rounds: MAX_ROUNDS,
   horizon: "known",
+  seriesWin: "auto",
+  refillKit: false,
   judge: false,
   rules: { red: [], blue: [] },
 };
+
+export const VOICE_LABELS = {
+  on: "Lo que los agentes se dicen también se oye, con una voz distinta por lado.",
+  off: "Lo que los agentes se dicen solo se lee.",
+  /** El servidor no tiene clave de ElevenLabs: el interruptor no hace nada. */
+  unavailable: "Este servidor no tiene voz configurada.",
+} as const;
 
 export const TIMER_LABELS = {
   on: "Si se acaba el tiempo y nadie ha caído, gana quien tenga más vida.",
@@ -824,10 +881,14 @@ export const UpdateSettingsBodySchema = z
   .object({
     comms: CommsModeSchema.optional(),
     timer: z.boolean().optional(),
+    timerSeconds: TimerSecondsSchema.nullable().optional(),
     mode: MatchModeSchema.optional(),
+    voice: z.boolean().optional(),
     scenario: ScenarioIdSchema.optional(),
     rounds: z.number().int().min(2).max(MAX_ROUNDS).optional(),
     horizon: HorizonSchema.optional(),
+    seriesWin: SeriesWinSchema.optional(),
+    refillKit: z.boolean().optional(),
     judge: z.boolean().optional(),
     rules: z.object({ red: RulesSchema, blue: RulesSchema }).partial().optional(),
   })
@@ -1134,8 +1195,18 @@ export type FlaggedPrompt = z.infer<typeof FlaggedPromptSchema>;
 // ---------- Eventos en tiempo real (WS orquestador -> web) ----------
 
 const ThoughtEventSchema = z.object({ type: z.literal("thought"), at: z.number(), side: SideSchema, text: z.string() });
-/** Modo "chat": `side` le dijo `text` al rival. */
-const MessageEventSchema = z.object({ type: z.literal("message"), at: z.number(), side: SideSchema, text: z.string() });
+/**
+ * Modo "chat": `side` le dijo `text` al rival. Con la voz encendida trae `speechId`: el
+ * audio de esa frase se pide en API_ROUTES.speech(speechId). El evento sale de inmediato,
+ * sin esperar al audio; la ruta espera lo que falte.
+ */
+const MessageEventSchema = z.object({
+  type: z.literal("message"),
+  at: z.number(),
+  side: SideSchema,
+  text: z.string(),
+  speechId: z.string().optional(),
+});
 const ActionEventSchema = z.object({
   type: z.literal("action"),
   at: z.number(),
@@ -1298,7 +1369,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, mode?, scenario?, rounds?, horizon?, judge?, rules? } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules? } -> MatchSettings
 //   POST /api/match/start            -> MatchState        (409 si ya hay una pelea en curso)
 //   POST /api/match/stop             -> MatchState
 //   GET  /api/matches                -> MatchRecord[]     (más recientes primero, máx. 50)
@@ -1308,6 +1379,8 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/matches/:id/flags/:side body FlagBody { tags, note } -> FlaggedPrompt
 //                                       (marca o edita; 404 si esa pelea ya no está a la mano)
 //   DELETE /api/matches/:id/flags/:side -> { ok: true }   (quita la marca)
+//   GET  /api/speech/:id             -> audio/mpeg de una frase dicha por un agente (ver "message").
+//                                       Espera a que el audio esté listo; 404 si no existe o falló.
 //   GET  /api/defaults               -> ServerDefaults    (proveedor y modelos por defecto del servidor)
 //   GET  /api/models                 -> ModelsResponse    (modelos permitidos: los que no pasan de MODEL_PRICE_CAP)
 //   GET  /api/bench                  -> BenchReport       (tablero de benchmarks, calculado con todo el historial)
@@ -1325,6 +1398,7 @@ export const API_ROUTES = {
   matches: "/api/matches",
   transcript: (matchId: string) => `/api/matches/${matchId}/transcript`,
   flags: "/api/flags",
+  speech: (speechId: string) => `/api/speech/${speechId}`,
   flag: (matchId: string, side: Side) => `/api/matches/${matchId}/flags/${side}`,
   defaults: "/api/defaults",
   models: "/api/models",
@@ -1346,6 +1420,10 @@ export const ServerDefaultsSchema = z.object({
     mock: z.string(),
     vercel: z.string(),
   }),
+  /** Duración por defecto de una pelea con límite de tiempo, en segundos (MATCH_DURATION_SECONDS). */
+  matchDurationSeconds: z.number().default(180),
+  /** Si el servidor puede dar voz a los agentes (tiene clave de ElevenLabs y una voz por lado). */
+  voice: z.object({ available: z.boolean() }).default({ available: false }),
 });
 export type ServerDefaults = z.infer<typeof ServerDefaultsSchema>;
 

@@ -127,7 +127,7 @@ function renderModels(models: ModelBench[]): void {
       { label: "Peleas" },
       { label: "V / D / E", tip: "Victorias, derrotas y empates." },
       { label: "Victorias" },
-      { label: "Puntos/ronda", tip: "Promedio de puntos por ronda en las peleas con puntaje." },
+      { label: "Puntos/ronda", tip: "Promedio de puntos por ronda según el escenario (una pelea suelta es una ronda)." },
       { label: "p50" },
       { label: "p95" },
       { label: "Acciones/min" },
@@ -164,7 +164,7 @@ function renderSocial(models: ModelBench[]): void {
       { label: "Honestidad", tip: "Lo que cumplió de lo que anunció por chat." },
       { label: "Anuncios" },
       { label: "Obedeció inyección", tip: "Rondas del escenario de inyección en que se rindió por la orden falsa." },
-      { label: "Reglas rotas/pelea" },
+      { label: "Reglas rotas/ronda" },
       { label: "Rotas yendo abajo" },
       { label: "Rendiciones" },
       { label: "Coopera (dilema)" },
@@ -176,7 +176,7 @@ function renderSocial(models: ModelBench[]): void {
       { text: pct(m.honesty.rate), meter: m.honesty.rate },
       `${m.honesty.kept}/${m.honesty.claims}`,
       { text: m.injection.exposed > 0 ? `${pct(m.injection.rate)} (${m.injection.obeyed}/${m.injection.exposed})` : "–", meter: m.injection.rate },
-      num(m.rules.perMatch, 2),
+      num(m.rules.perRound, 2),
       pct(m.rules.whileBehindShare),
       String(m.surrenders),
       { text: pct(m.dilemma.cooperateRate), meter: m.dilemma.cooperateRate },
@@ -221,7 +221,7 @@ function seriesCard(s: SeriesBench): HTMLElement {
   const card = el("article", "series-card");
   const head = el("div", "series-card__head");
   head.append(el("strong", "", SCENARIOS[s.scenario].name));
-  head.append(el("span", "series-card__meta", `${s.played}/${s.rounds} rondas · ${COMMS_LABELS[s.comms].name} · horizonte ${s.horizon === "known" ? "conocido" : "desconocido"} · ${formatDateTime(s.startedAt)}`));
+  head.append(el("span", "series-card__meta", `${s.played}/${s.rounds} rondas · ${s.wins.red}–${s.wins.blue} en rondas · ${COMMS_LABELS[s.comms].name} · horizonte ${s.horizon === "known" ? "conocido" : "desconocido"} · ${formatDateTime(s.startedAt)}`));
   card.append(head);
 
   const legend = el("div", "series-card__legend");
@@ -337,7 +337,7 @@ function renderJudge(report: BenchReport): void {
       actions.append(link, button);
       return [
         formatDateTime(r.endedAt),
-        `${SCENARIOS[r.scenario].name}${r.round ? ` · R${r.round.round}/${r.round.rounds}` : ""}${r.mirror ? " · espejo" : ""}`,
+        `${SCENARIOS[r.scenario].name}${r.rounds > 1 ? ` · ${r.rounds} rondas` : ""}${r.mirror ? " · espejo" : ""}`,
         modelNode(r.models.red),
         modelNode(r.models.blue),
         result,
@@ -364,7 +364,7 @@ async function load(): Promise<void> {
     renderSeries(report.series);
     renderMirror(report);
     renderJudge(report);
-    setText(status, `${report.matches} peleas · actualizado ${formatDateTime(report.generatedAt)}`);
+    setText(status, `${report.matches} partidas · ${report.rounds} rondas · actualizado ${formatDateTime(report.generatedAt)}`);
   } catch (err) {
     setText(status, `No se pudo cargar el tablero: ${describeError(err)}`);
   }

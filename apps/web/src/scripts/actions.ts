@@ -39,6 +39,7 @@ const TOOLS: Record<string, { label: string; icon: IconRef }> = {
   water: { label: "Vacía agua entre los dos", icon: { name: "water_bucket" } },
   lava: { label: "Vacía lava a los pies del rival", icon: { name: "lava_bucket" } },
   wait: { label: "Espera quieto", icon: { name: "pause" } },
+  surrender: { label: "Se rinde", icon: { name: "pause" } },
 };
 
 const MAX_ARGS_LENGTH = 160;

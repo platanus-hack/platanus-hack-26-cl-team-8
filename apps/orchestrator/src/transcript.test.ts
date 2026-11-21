@@ -83,7 +83,7 @@ describe("TranscriptStore", () => {
         at: 0,
         matchId: id,
         configs: { red: { side: "red", prompt: "ataca" }, blue: { side: "blue", prompt: "defiende" } },
-        settings: { ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" },
+        settings: { ...DEFAULT_SETTINGS, comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false },
         systemPrompts: { red: "sistema rojo", blue: "sistema azul" },
         tickMs: 1500,
         durationSeconds: 180,

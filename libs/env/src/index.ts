@@ -8,6 +8,16 @@ export { applyDotEnv, findDotEnv, loadDotEnv, parseDotEnv } from "./dotenv";
  * Las apps de Node llaman a `loadEnv()` al arrancar. La web (Astro) NO usa esto:
  * lee sus `PUBLIC_*` con `import.meta.env`.
  */
+/** Un número opcional: vacío (p. ej. `ELEVENLABS_SPEED=` en el .env) cuenta como no puesto. */
+function optionalNumber<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), schema);
+}
+
+/** Un texto con valor por defecto: vacío (p. ej. `ELEVENLABS_MODEL=` en el .env) cuenta como no puesto. */
+function textOr(fallback: string) {
+  return z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().default(fallback));
+}
+
 const EnvSchema = z.object({
   // Servidor de Minecraft
   MC_HOST: z.string().default("127.0.0.1"),
@@ -38,6 +48,22 @@ const EnvSchema = z.object({
   AGENT_TICK_MS: z.coerce.number().int().positive().default(1500),
   AGENT_OBSERVATION_RADIUS: z.coerce.number().int().min(8).max(64).default(16),
   DATA_DIR: z.string().default("./data"),
+
+  // Voz de los agentes (ElevenLabs). Sin clave o sin las dos voces, los mensajes solo se leen.
+  ELEVENLABS_API_KEY: z.string().default(""),
+  /** Id de la voz de cada lado (la página de la voz en la app de ElevenLabs). */
+  ELEVENLABS_VOICE_RED: z.string().default(""),
+  ELEVENLABS_VOICE_BLUE: z.string().default(""),
+  ELEVENLABS_MODEL: textOr("eleven_flash_v2_5"),
+  /** Velocidad del habla; donde se usa se deja entre 0.7 y 1.2. */
+  ELEVENLABS_SPEED: optionalNumber(z.coerce.number().default(1.1)),
+  ELEVENLABS_OUTPUT_FORMAT: textOr("mp3_44100_64"),
+  /** Idioma ISO 639-1 (p. ej. "es"). Vacío = lo detecta el modelo: los agentes eligen su idioma. */
+  ELEVENLABS_LANGUAGE: z.string().default(""),
+  /** Largo máximo del texto que se convierte en voz; el mensaje se corta en una palabra. */
+  VOICE_MAX_CHARS: optionalNumber(z.coerce.number().int().positive().default(300)),
+  /** Con menos créditos que esto en la cuenta, los agentes dejan de hablar. */
+  VOICE_MIN_CREDITS_LEFT: optionalNumber(z.coerce.number().int().min(0).default(5000)),
 
   // Cámara
   CAMERA_USERNAME: z.string().default("Camara"),

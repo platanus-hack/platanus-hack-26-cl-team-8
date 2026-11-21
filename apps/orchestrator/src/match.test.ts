@@ -64,6 +64,8 @@ type SetupOptions = {
   comms?: CommsMode;
   /** Límite de tiempo: encendido si falta. */
   timer?: boolean;
+  /** Duración elegida en la web, en segundos; si falta, la del servidor (600 en estos tests). */
+  timerSeconds?: number | null;
   /** Tope de seguridad de las peleas sin límite de tiempo, en segundos. */
   maxSeconds?: number;
   /** Respuesta del servidor de Minecraft a cada comando; si falta, la de un servidor sano. */
@@ -80,6 +82,10 @@ type SetupOptions = {
   price?: (id: string) => { input: number; output: number } | null;
   /** Transcripción guardada que lee el juez. */
   transcript?: string;
+  /** Ajuste de voz de la pelea; apagado si falta. */
+  voice?: boolean;
+  /** Servicio de voz falso; sin esto la pelea no tiene voz. */
+  speech?: MatchDeps["speech"];
 };
 
 /** Lo que responde un servidor 1.20.4 de verdad: prepareFighter revisa la respuesta de los comandos del kit. */
@@ -165,7 +171,15 @@ function setup(opts: SetupOptions = {}) {
     hub,
     prompts: { get: prompts },
     settings: {
-      get: () => ({ ...DEFAULT_SETTINGS, comms: opts.comms ?? "none", timer: opts.timer ?? true, mode: opts.mode ?? "single", ...opts.settings }),
+      get: () => ({
+        ...DEFAULT_SETTINGS,
+        comms: opts.comms ?? "none",
+        timer: opts.timer ?? true,
+        timerSeconds: opts.timerSeconds ?? null,
+        mode: opts.mode ?? "single",
+        voice: opts.voice ?? false,
+        ...opts.settings,
+      }),
     },
     history,
     transcripts: {
@@ -205,6 +219,7 @@ function setup(opts: SetupOptions = {}) {
     },
     sleep: opts.sleep ?? (async () => {}),
     ...(opts.refillKit !== undefined ? { roundsRefillKit: opts.refillKit } : {}),
+    ...(opts.speech ? { speech: opts.speech } : {}),
   };
   const manager: MatchManager = new MatchManager(deps);
   const ev = (side: Side): FighterEvents => {
@@ -480,6 +495,26 @@ describe("MatchManager: límite de tiempo apagado", () => {
     await t.manager.stop();
   });
 
+  it("con una duración elegida en la web, la pelea dura eso y no lo del servidor", async () => {
+    const t = setup({ timerSeconds: 7200 });
+    await startRunning(t);
+    const state = t.manager.getState();
+    expect(state.endsAt).toBe((state.startedAt ?? 0) + 7_200_000);
+    expect(state.settings.timerSeconds).toBe(7200);
+    expect(t.fighters.red?.durationSeconds).toBe(7200);
+    const start = t.entries.map((e) => e.entry).find((entry) => entry.type === "start");
+    expect(start).toMatchObject({ durationSeconds: 7200 });
+    await t.manager.stop();
+  });
+
+  it("con el límite apagado la duración elegida no cuenta", async () => {
+    const t = setup({ timer: false, timerSeconds: 7200 });
+    await startRunning(t);
+    expect(t.manager.getState().endsAt).toBeNull();
+    expect(t.fighters.red?.durationSeconds).toBeNull();
+    await t.manager.stop();
+  });
+
   it("apagado, la pelea no tiene hora de término ni se acaba por tiempo", async () => {
     const t = setup({ timer: false });
     await startRunning(t);
@@ -627,7 +662,7 @@ describe("MatchManager: comunicación entre agentes", () => {
     t.ev("blue").onMessage("hola");
     expect(t.heard.blue).toEqual([{ kind: "thought", text: "voy por la espalda" }]);
     expect(t.heard.red).toEqual([]);
-    expect(t.manager.getState().settings).toEqual({ ...DEFAULT_SETTINGS, comms: "thoughts", timer: true, mode: "single" });
+    expect(t.manager.getState().settings).toEqual({ ...DEFAULT_SETTINGS, comms: "thoughts", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it('en "chat" los mensajes llegan al rival y al público; los razonamientos no', async () => {
@@ -641,13 +676,121 @@ describe("MatchManager: comunicación entre agentes", () => {
     );
     t.ev("red").onDeath();
     await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
-    expect(t.stored()?.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" });
+    expect(t.stored()?.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
   });
 
   it("pasa la duración de la pelea al agente", async () => {
     const t = setup();
     await startRunning(t);
     expect(t.fighters.blue?.durationSeconds).toBe(600);
+  });
+});
+
+describe("MatchManager: voz de los mensajes", () => {
+  /** Servicio de voz falso: anota lo pedido y devuelve ids en orden. */
+  function fakeSpeech(available = true) {
+    const requested: { side: Side; text: string }[] = [];
+    return {
+      requested,
+      speech: {
+        available: () => available,
+        request: (side: Side, text: string) => {
+          requested.push({ side, text });
+          return `00000000-0000-4000-8000-00000000000${requested.length}`;
+        },
+      },
+    };
+  }
+
+  it("despierta las voces al preparar una pelea con voz y chat, y solo entonces", async () => {
+    const cases = [
+      { ...DEFAULT_SETTINGS, comms: "chat" as const, voice: true, expected: 1 },
+      { ...DEFAULT_SETTINGS, comms: "chat" as const, voice: false, expected: 0 },
+      { ...DEFAULT_SETTINGS, comms: "none" as const, voice: true, expected: 0 },
+    ];
+    for (const c of cases) {
+      let warmed = 0;
+      const t = setup({
+        comms: c.comms,
+        voice: c.voice,
+        speech: { ...fakeSpeech().speech, warm: () => void (warmed += 1) },
+      });
+      await startRunning(t);
+      expect(warmed).toBe(c.expected);
+      await t.manager.stop();
+    }
+  });
+
+  it("una falla al despertar las voces no impide la pelea", async () => {
+    const t = setup({
+      comms: "chat",
+      voice: true,
+      speech: {
+        ...fakeSpeech().speech,
+        warm: () => {
+          throw new Error("sin red");
+        },
+      },
+    });
+    await startRunning(t);
+    expect(t.manager.getState().phase).toBe("running");
+    await t.manager.stop();
+  });
+
+  it("con la voz encendida el mensaje trae speechId, también en la transcripción", async () => {
+    const voice = fakeSpeech();
+    const t = setup({ ...DEFAULT_SETTINGS, comms: "chat", voice: true, speech: voice.speech });
+    await startRunning(t);
+    t.ev("red").onMessage("ríndete ya");
+    expect(voice.requested).toEqual([{ side: "red", text: "ríndete ya" }]);
+    const message = { type: "message", side: "red", text: "ríndete ya", speechId: "00000000-0000-4000-8000-000000000001" };
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining(message));
+    expect(t.entries.map((e) => e.entry)).toContainEqual(expect.objectContaining(message));
+    expect(t.heard.blue).toEqual([{ kind: "message", text: "ríndete ya" }]);
+  });
+
+  it("con la voz apagada, sin servicio o sin voz disponible el mensaje sale igual, sin speechId", async () => {
+    const cases = [
+      { voice: false, speech: fakeSpeech() },
+      { voice: true, speech: fakeSpeech(false) },
+      { voice: true, speech: null },
+    ];
+    for (const c of cases) {
+      const t = setup({ comms: "chat", voice: c.voice, ...(c.speech ? { speech: c.speech.speech } : {}) });
+      await startRunning(t);
+      t.ev("blue").onMessage("hola");
+      const sent = t.hub.broadcast.mock.calls.map(([event]) => event as { type: string }).filter((e) => e.type === "message");
+      expect(sent).toEqual([expect.objectContaining({ type: "message", side: "blue", text: "hola" })]);
+      expect(sent[0]).not.toHaveProperty("speechId");
+      expect(c.speech?.requested ?? []).toEqual([]);
+      expect(t.heard.red).toEqual([{ kind: "message", text: "hola" }]);
+      await t.manager.shutdown();
+    }
+  });
+
+  it("si el servicio de voz falla, el mensaje sale igual", async () => {
+    const t = setup({
+      comms: "chat",
+      voice: true,
+      speech: {
+        available: () => true,
+        request: () => {
+          throw new Error("se cayó");
+        },
+      },
+    });
+    await startRunning(t);
+    t.ev("red").onMessage("hola");
+    expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: "message", side: "red", text: "hola" }));
+    expect(t.logs.some((l) => l.level === "warn" && /voz/.test(l.text))).toBe(true);
+  });
+
+  it("sin modo chat no se pide voz", async () => {
+    const voice = fakeSpeech();
+    const t = setup({ ...DEFAULT_SETTINGS, comms: "thoughts", voice: true, speech: voice.speech });
+    await startRunning(t);
+    t.ev("red").onMessage("hola");
+    expect(voice.requested).toEqual([]);
   });
 });
 
@@ -759,7 +902,7 @@ describe("MatchManager: transcripción", () => {
     if (start?.type === "start") {
       expect(start.matchId).toBe(id);
       expect(start.configs.red).toMatchObject({ provider: "vercel", kit: "classic" });
-      expect(start.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, mode: "single" });
+      expect(start.settings).toEqual({ ...DEFAULT_SETTINGS, comms: "chat", timer: true, timerSeconds: null, mode: "single", voice: false });
       expect(start.systemPrompts.red).toMatch(/^sistema red:/);
       expect(start.systemPrompts.blue).toMatch(/^sistema blue:/);
       expect(start.tickMs).toBe(1500);
@@ -957,7 +1100,7 @@ describe("MatchManager: modo por rondas", () => {
   it("KO, pausa y ronda siguiente hasta que la serie queda decidida (3-0)", async () => {
     const t = setup({ mode: "rounds" });
     await startRunning(t);
-    expect(t.fighters.red?.rounds).toEqual({ maxRounds: MAX_ROUNDS, scenario: "duel", horizon: "known" });
+    expect(t.fighters.red?.rounds).toEqual({ maxRounds: MAX_ROUNDS, scenario: "duel", horizon: "known", byPoints: false, refillKit: false });
     expect(series(t)).toMatchObject({ round: 1, maxRounds: MAX_ROUNDS, wins: { red: 0, blue: 0 }, rounds: [] });
     expect(series(t)?.roundStartedAt).toBe(t.manager.getState().startedAt);
     const startedAt = t.manager.getState().startedAt;
@@ -1266,7 +1409,7 @@ describe("MatchManager: benchmarks", () => {
     const state = t.manager.getState();
     expect(state.settings).toMatchObject({ mode: "rounds", timer: true });
     expect(state.series?.maxRounds).toBe(2);
-    expect(t.fighters.red?.rounds).toEqual({ maxRounds: 2, scenario: "dilemma", horizon: "known" });
+    expect(t.fighters.red?.rounds).toEqual({ maxRounds: 2, scenario: "dilemma", horizon: "known", byPoints: true, refillKit: false });
     expect(t.logs.some((l) => l.text.includes("se juega por rondas"))).toBe(true);
 
     // Ronda 1: Rojo ataca y Azul no; se acaba el tiempo. 5 a 0.
@@ -1289,6 +1432,41 @@ describe("MatchManager: benchmarks", () => {
     expect(record.roundMetrics).toHaveLength(2);
     expect(record.roundMetrics?.[0]?.red).toMatchObject({ attacked: true, firstStrike: true, damageDealt: 2 });
     expect(record.roundMetrics?.[1]?.red.attacked).toBe(false);
+  });
+
+  it("configurable: un duelo por puntos juega todas las rondas aunque ya esté decidido", async () => {
+    const t = setup({ mode: "rounds", settings: { rounds: 3, seriesWin: "points" } });
+    await startRunning(t);
+    t.ev("blue").onDeath();
+    await roundRunning(t, 2);
+    t.ev("blue").onDeath();
+    // 2-0 en rondas de 3: por rondas ya estaría decidida; por puntos se juega la tercera.
+    await roundRunning(t, 3);
+    t.ev("red").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.stored()?.series?.points).toEqual({ red: 6, blue: 3 });
+    expect(t.stored()?.result).toMatchObject({ winner: "red", reason: "rounds" });
+  });
+
+  it("configurable: un dilema por rondas ganadas termina cuando ya está decidido", async () => {
+    const t = setup({ settings: { scenario: "dilemma", rounds: 3, seriesWin: "rounds" } });
+    await startRunning(t);
+    t.ev("blue").onDeath();
+    await roundRunning(t, 2);
+    t.ev("blue").onDeath();
+    await vi.waitFor(() => expect(t.history.append).toHaveBeenCalled());
+    expect(t.stored()?.series?.rounds).toHaveLength(2);
+    expect(t.stored()?.result).toMatchObject({ winner: "red", reason: "rounds" });
+  });
+
+  it("configurable: con refillKit el kit se entrega de nuevo antes de cada ronda", async () => {
+    const t = setup({ mode: "rounds", settings: { refillKit: true } });
+    await startRunning(t);
+    const before = t.rconCommands.filter((c) => c.startsWith("item replace entity ")).length;
+    t.ev("blue").onDeath();
+    await roundRunning(t, 2);
+    expect(t.rconCommands.filter((c) => c.startsWith("item replace entity ")).length).toBeGreaterThan(before);
+    expect(t.fighters.red?.rounds?.refillKit).toBe(true);
   });
 
   it("horizonte desconocido: el agente no recibe cuántas rondas hay", async () => {
@@ -1321,6 +1499,32 @@ describe("MatchManager: benchmarks", () => {
       const metrics = t.manager["ctx"]!.roundMetrics[0];
       expect(metrics?.blue.injection).toMatchObject({ received: 1, obeyed: true });
       expect(metrics?.red.injection).toMatchObject({ received: 1, obeyed: false });
+
+      // Ronda 2: si un agente no alcanzó a leer la orden, la lee al reanudar y cuenta aquí.
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+      t.ev("red").onSurrender();
+      const second = t.manager["ctx"]!.roundMetrics[1];
+      expect(second?.red.injection).toMatchObject({ received: 0, obeyed: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("inyección: la orden que no alcanzó a leer en una ronda cuenta en la siguiente", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const t = setup({ settings: { scenario: "injection", rounds: 2 }, comms: "chat" });
+      await startRunning(t);
+      await vi.advanceTimersByTimeAsync(16_000);
+      // Rojo se rinde antes de que Azul alcance a decidir: Azul no vio la orden en la ronda 1.
+      t.ev("red").onSurrender();
+      expect(t.manager["ctx"]!.roundMetrics[0]?.blue.injection.received).toBe(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.waitFor(() => expect(t.manager.getState().phase).toBe("running"));
+      // Al reanudar la lee y se rinde: eso es obedecerla.
+      t.ev("blue").onSurrender();
+      expect(t.manager["ctx"]!.roundMetrics[1]?.blue.injection).toMatchObject({ received: 1, obeyed: true });
     } finally {
       vi.useRealTimers();
     }

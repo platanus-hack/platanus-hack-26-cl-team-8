@@ -4,11 +4,15 @@ import {
   JUDGE_CRITERIA,
   buildBenchReport,
   roundPoints,
+  seriesByPoints,
   type BenchReport,
   type Judgement,
   type MatchRecord,
   type MatchResult,
+  type MatchMetrics,
   type MatchSettings,
+  type RoundReason,
+  type RoundResult,
   type RuleId,
   type Side,
   type SideMetrics,
@@ -91,7 +95,7 @@ function judgementFor(rand: () => number): Judgement {
 
 type Round = {
   winner: Side | null;
-  reason: MatchResult["reason"];
+  reason: RoundReason;
   attacked: Record<Side, boolean>;
   surrendered?: Side;
   injected?: boolean;
@@ -108,22 +112,23 @@ function series(opts: {
   rounds: Round[];
   rules?: Partial<Record<Side, RuleId[]>>;
   judged?: boolean;
-  mirror?: boolean;
-  /** Pelea suelta, sin serie. */
+  /** Pelea suelta (una sola ronda), sin serie. */
   single?: boolean;
 }): void {
   const rand = rng(opts.seed);
   const settings: MatchSettings = {
     ...DEFAULT_SETTINGS,
     ...opts.settings,
-    rounds: opts.single ? 1 : opts.rounds.length,
+    mode: opts.single ? "single" : "rounds",
+    rounds: Math.max(2, opts.rounds.length),
     rules: { red: opts.rules?.red ?? [], blue: opts.rules?.blue ?? [] },
   };
-  const id = `mock-series-${opts.seed}`;
+  const roundMetrics: MatchMetrics[] = [];
+  const results: RoundResult[] = [];
+  let durationMs = 0;
   opts.rounds.forEach((round, index) => {
-    clock += 4 * 60_000;
-    const durationMs = (60 + Math.round(rand() * 120)) * 1000;
-    const result: MatchResult = { winner: round.winner, reason: round.reason };
+    const roundMs = (60 + Math.round(rand() * 120)) * 1000;
+    durationMs += roundMs;
     const build = (side: Side): SideMetrics => {
       const damage = round.attacked[side] ? Math.round((4 + rand() * 20) * 10) / 10 : 0;
       const m = sideMetrics(opts.models[side], rand, {
@@ -144,47 +149,81 @@ function series(opts: {
       }
       return m;
     };
-    const metrics = { red: build("red"), blue: build("blue"), mirror: opts.mirror ?? false };
-    const status = (side: Side) => ({
-      side,
-      username: AGENT_USERNAMES[side],
-      connected: true,
-      alive: !(round.reason === "kill" && round.winner !== side && round.winner !== null),
-      health: round.winner === side ? 8 + Math.round(rand() * 20) : Math.round(rand() * 6),
-      food: 18,
-      damageDealt: metrics[side].damageDealt,
-      decisions: metrics[side].decisions,
-      lastThought: "",
-      lastAction: "",
-      heldItem: "iron_sword",
-      tokensIn: metrics[side].tokensIn,
-      tokensOut: metrics[side].tokensOut,
-      avgDecisionMs: metrics[side].latencyP50,
+    roundMetrics.push({ red: build("red"), blue: build("blue"), mirror: opts.models.red === opts.models.blue });
+    results.push({
+      round: index + 1,
+      winner: round.winner,
+      reason: round.reason,
+      durationMs: roundMs,
+      points: roundPoints(settings.scenario, round, round.attacked),
+      attacked: round.attacked,
     });
-    const record: MatchRecord = {
-      id: `${id}-r${index + 1}`,
-      startedAt: clock - durationMs,
-      endedAt: clock,
-      durationMs,
-      configs: {
-        red: { side: "red", prompt: "Prompt de ejemplo rojo.", provider: opts.models.red === "mock" ? "mock" : "vercel", model: opts.models.red, kit: "classic" },
-        blue: { side: "blue", prompt: "Prompt de ejemplo azul.", provider: opts.models.blue === "mock" ? "mock" : "vercel", model: opts.models.blue, kit: "classic" },
-      },
-      final: { red: status("red"), blue: status("blue") },
-      settings,
-      result,
-      points: roundPoints(settings.scenario, result, round.attacked),
-      metrics,
-    };
-    if (!opts.single) record.series = { id, round: index + 1, rounds: opts.rounds.length, horizon: settings.horizon };
-    if (opts.judged) record.judgement = judgementFor(rand);
-    records.push(record);
   });
+  clock += durationMs + 60_000;
+  const wins = { red: 0, blue: 0 };
+  const points = { red: 0, blue: 0 };
+  for (const r of results) {
+    if (r.winner) wins[r.winner] += 1;
+    points.red += r.points?.red ?? 0;
+    points.blue += r.points?.blue ?? 0;
+  }
+  const first = opts.rounds[0]!;
+  let result: MatchResult;
+  if (opts.single) {
+    result = { winner: first.winner, reason: first.reason === "surrender" ? "kill" : first.reason };
+  } else {
+    const score = seriesByPoints(settings) ? points : wins;
+    result = score.red === score.blue ? { winner: null, reason: "draw" } : { winner: score.red > score.blue ? "red" : "blue", reason: "rounds" };
+  }
+  const total = (side: Side, key: "damageDealt" | "decisions" | "tokensIn" | "tokensOut") =>
+    roundMetrics.reduce((sum, m) => sum + m[side][key], 0);
+  const status = (side: Side) => ({
+    side,
+    username: AGENT_USERNAMES[side],
+    connected: true,
+    alive: true,
+    health: result.winner === side ? 8 + Math.round(rand() * 20) : Math.round(rand() * 6),
+    food: 18,
+    damageDealt: Math.round(total(side, "damageDealt") * 10) / 10,
+    decisions: total(side, "decisions"),
+    lastThought: "",
+    lastAction: "",
+    heldItem: "iron_sword",
+    tokensIn: total(side, "tokensIn"),
+    tokensOut: total(side, "tokensOut"),
+    avgDecisionMs: roundMetrics[0]![side].latencyP50,
+  });
+  const sameModel = opts.models.red === opts.models.blue;
+  const record: MatchRecord = {
+    id: `mock-bench-${opts.seed}`,
+    startedAt: clock - durationMs,
+    endedAt: clock,
+    durationMs,
+    configs: {
+      red: { side: "red", prompt: "Prompt de ejemplo.", provider: opts.models.red === "mock" ? "mock" : "vercel", model: opts.models.red, kit: "classic" },
+      blue: {
+        side: "blue",
+        prompt: sameModel ? "Prompt de ejemplo." : "Otro prompt de ejemplo.",
+        provider: opts.models.blue === "mock" ? "mock" : "vercel",
+        model: opts.models.blue,
+        kit: "classic",
+      },
+    },
+    final: { red: status("red"), blue: status("blue") },
+    settings,
+    series: opts.single
+      ? null
+      : { round: results.length, maxRounds: settings.rounds, wins, points, rounds: results, roundStartedAt: null },
+    result,
+    roundMetrics,
+  };
+  if (opts.judged) record.judgement = judgementFor(rand);
+  records.push(record);
 }
 
 const peace = { red: false, blue: false };
 const both = { red: true, blue: true };
-const draw: MatchResult["reason"] = "draw";
+const draw: RoundReason = "draw";
 
 // Dilema del prisionero: cooperan, Gemini traiciona, Haiku devuelve el golpe, y Gemini traiciona al final.
 series({
@@ -252,7 +291,6 @@ for (const [i, winner] of (["red", "blue", "red"] as const).entries()) {
     seed: 66 + i,
     models: { red: HAIKU, blue: HAIKU },
     settings: { scenario: "duel" },
-    mirror: true,
     single: true,
     rounds: [{ winner, reason: "kill", attacked: both }],
   });

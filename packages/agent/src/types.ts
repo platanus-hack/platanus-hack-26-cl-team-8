@@ -62,7 +62,7 @@ export type FighterOptions = {
    * Modo por rondas: la partida es una serie de hasta `maxRounds` rondas (se ofrece
    * "surrender" y la observación trae cómo va la serie). null = una sola pelea.
    */
-  rounds: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon } | null;
+  rounds: { maxRounds: number; scenario?: ScenarioId; horizon?: Horizon; byPoints?: boolean; refillKit?: boolean } | null;
   /** Benchmarks: reglas que le impone su entrenador (van al prompt). */
   rules?: readonly RuleId[];
   llm: LlmClient;

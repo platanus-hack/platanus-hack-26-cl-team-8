@@ -407,7 +407,7 @@ class MineflayerFighter implements Fighter {
           drawn: 0,
           maxRounds: rounds.maxRounds,
           ...(rounds.horizon === "unknown" ? { hideMax: true } : {}),
-          ...(rounds.scenario && rounds.scenario !== "duel" ? { points: { mine: 0, rival: 0 } } : {}),
+          ...(rounds.byPoints ? { points: { mine: 0, rival: 0 } } : {}),
         }
       : null;
     this.toolDefs = kitToolDefs(kit, opts.comms, rounds !== null);
