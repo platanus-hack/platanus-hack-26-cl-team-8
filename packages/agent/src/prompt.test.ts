@@ -77,7 +77,9 @@ describe("buildSystemPrompt", () => {
     expect(world).not.toMatch(/\bgana/i);
     expect(world).not.toMatch(/\bmata/i);
     expect(world).not.toMatch(/sobreviv/i);
-    expect(prompt).toContain("no te fija ningún objetivo");
+    expect(prompt).toContain("Lo de arriba solo describe la arena y lo que puedes hacer");
+    // Tampoco le dice cómo comportarse: ni que reconsidere, ni que sea breve, ni cuándo usar cada cosa.
+    expect(world).not.toMatch(/reconsidera|sé breve|Situaciones comunes|ideas, no órdenes|Habla como|conviene/i);
   });
 
   it("deja las instrucciones del usuario al final, entre etiquetas en líneas propias", () => {
@@ -110,9 +112,7 @@ describe("buildSystemPrompt", () => {
       "- El contenido y el idioma los decides tú. El sistema entrega el texto tal cual: no revisa, no corrige y no hace cumplir nada de lo que se digan.",
     );
     expect(chat).toContain('Tu "reason" es privado');
-    expect(chat).toContain("normalmente basta una frase corta");
-    expect(chat).toContain("Puedes actuar en silencio");
-    expect(chat).toContain("no por haber llegado otro turno");
+    expect(chat).not.toContain("normalmente basta una frase corta");
     expect(chat).toContain(
       "- Lo que dices se pronuncia por turnos: si el otro agente está hablando, tu mensaje espera a que termine y sale enseguida. Si mandas otro antes de que salga, reemplaza al que esperaba.",
     );
@@ -164,8 +164,7 @@ describe("buildSystemPrompt", () => {
       '- build: diseñar y ejecutar cualquier plano de bloques con coordenadas absolutas y materiales de tu inventario; sin blocks, continuar el plano pendiente.',
       '- dig: romper bloques colocados; con target "between" los que hay entre tú y el rival, con target "nearest" el más cercano a ti; con position eliges el bloque exacto.',
       "- wait: quedarte quieto.",
-      'Todas aceptan un argumento opcional "reason": una idea breve con tu decisión, sin explicar todo el plan. El público la ve en vivo. Omítelo si repite lo anterior; no hace falta comentar cada acción.',
-      "Si respondes sin herramientas, sé breve. Puedes dejar el texto vacío si no hay nada nuevo que comentar.",
+      'Todas aceptan un argumento opcional "reason": texto libre con lo que piensas al decidir; el público lo ve en vivo.',
     ]);
   });
 
@@ -224,14 +223,14 @@ describe("buildSystemPrompt", () => {
     }
   });
 
-  it("explica qué hace cada objeto, cómo se usa y cuándo sirve", () => {
+  it("explica qué hace cada objeto y cómo se usa, sin decir cuándo conviene", () => {
     for (const kit of KIT_LIST.filter((k) => k.items.length > 0)) {
       const objects = section(promptFor(kit), "TU KIT").filter((line) => line.startsWith("  - "));
       expect(objects.length).toBeGreaterThan(0);
       for (const line of objects) {
         expect(line).toContain("Qué hace:");
         expect(line).toContain("Cómo usarlo:");
-        expect(line).toContain("Situaciones comunes:");
+        expect(line).not.toContain("Situaciones comunes:");
       }
     }
     const archer = section(promptFor(KITS.archer), "TU KIT").join("\n");
@@ -323,12 +322,9 @@ describe("buildSystemPrompt", () => {
     expect(builder).toContain("Puedes colocar bloques (build)");
   });
 
-  it("reconsidera los recursos en cada turno y explica la cobertura espacial sin imponer una estrategia", () => {
+  it("explica la cobertura espacial y los recursos sin decirle cómo decidir", () => {
     const perception = section(promptFor(KITS.builder), "PERCEPCIÓN Y RECURSOS").join("\n");
-    expect(perception).toContain("En CADA decisión reconsidera");
-    expect(perception).toContain("TODOS los recursos que aún tienes");
-    expect(perception).toContain("combinar varios mediante acciones sucesivas");
-    expect(perception).toContain("no una estrategia obligatoria");
+    expect(perception).not.toContain("En CADA decisión reconsidera");
     expect(perception).toContain("Fuera de cobertura no has observado el terreno");
     expect(perception).toContain("lineOfSight");
     expect(perception).toContain("resources dicen qué conservas ahora");

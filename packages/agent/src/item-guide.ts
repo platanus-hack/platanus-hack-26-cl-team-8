@@ -243,7 +243,7 @@ function guideTitle(item: KitItem): string {
 
 /**
  * Líneas de la guía de objetos (sin la armadura). Cada una:
- * "  - <objeto>. Qué hace: … Cómo usarlo: … Situaciones comunes: …"
+ * "  - <objeto>. Qué hace: … Cómo usarlo: …"
  */
 export function itemGuideLines(kit: Kit): string[] {
   const objects = groupItems(kit.items.filter((i) => !i.slot.startsWith("armor.")));
@@ -251,7 +251,8 @@ export function itemGuideLines(kit: Kit): string[] {
     const guide = guideFor(item, kit);
     const extras = enchantmentNotes(item.enchantments);
     if (!guide) return `  - ${guideTitle(item)}.${extras}`;
-    return `  - ${guideTitle(item)}. Qué hace: ${guide.what}.${extras} Cómo usarlo: ${guide.how}. Situaciones comunes: ${guide.when}.`;
+    // Solo qué hace y cómo se usa: cuándo conviene usarlo lo decide el agente (o su prompt).
+    return `  - ${guideTitle(item)}. Qué hace: ${guide.what}.${extras} Cómo usarlo: ${guide.how}.`;
   });
 }
 

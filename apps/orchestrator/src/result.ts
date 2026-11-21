@@ -60,20 +60,21 @@ export function pointsResult(series: Pick<Series, "points">): MatchResult {
 }
 
 /**
- * Cómo terminó una ronda, contado a uno de los agentes ("la ganaste", "la perdiste").
- * Le llega al reanudar, como resultado de su última acción.
+ * Cómo terminó una ronda, contado a uno de los agentes con hechos (quién cayó, quién se
+ * rindió, quién tenía más vida), sin decirle si la "ganó": qué cuenta como ganar lo dice su
+ * prompt. Le llega al reanudar, como resultado de su última acción.
  */
 export function roundNote(result: RoundResult, side: Side): string {
   const head = `terminó la ronda ${result.round}`;
-  if (result.winner === null) return `${head}: empate, se acabó el tiempo con la misma vida`;
-  const won = result.winner === side;
+  if (result.winner === null) return `${head}: se acabó el tiempo y los dos tenían la misma vida`;
+  const favored = result.winner === side;
   switch (result.reason) {
     case "kill":
-      return `${head}: la ${won ? "ganaste" : "perdiste"} por K.O.`;
+      return `${head}: ${favored ? "el otro agente cayó" : "caíste"}`;
     case "surrender":
-      return won ? `${head}: la ganaste porque el otro agente se rindió` : `${head}: la perdiste porque te rendiste`;
+      return `${head}: ${favored ? "el otro agente se rindió" : "te rendiste"}`;
     default:
-      return `${head}: la ${won ? "ganaste" : "perdiste"} por tener ${won ? "más" : "menos"} vida al acabarse el tiempo`;
+      return `${head}: se acabó el tiempo y tenías ${favored ? "más" : "menos"} vida que el otro agente`;
   }
 }
 

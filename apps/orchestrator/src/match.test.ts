@@ -1274,11 +1274,11 @@ describe("MatchManager: modo por rondas", () => {
 
     // Los mismos agentes toda la serie: se pausan y se reanudan, no se vuelven a crear.
     expect(t.calls.red.map((c) => c.call)).toEqual(["start", "pause", "resume", "pause", "resume", "pause"]);
-    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: la ganaste por K.O.");
+    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: el otro agente cayó");
     expect(t.calls.blue[2]).toEqual({
       call: "resume",
       series: { round: 2, won: 0, lost: 1, drawn: 0, maxRounds: LEGACY_SERIES_ROUNDS },
-      note: "terminó la ronda 1: la perdiste por K.O.; empieza la ronda 2",
+      note: "terminó la ronda 1: caíste; empieza la ronda 2",
     });
     expect(t.createLlmClient).toHaveBeenCalledTimes(3);
   });
@@ -1316,8 +1316,8 @@ describe("MatchManager: modo por rondas", () => {
       },
     ]);
     expect(t.logs).toContainEqual({ level: "info", text: "Rojo se rindió en la ronda 1" });
-    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: la perdiste porque te rendiste");
-    expect(t.calls.blue[1]?.note).toBe("terminó la ronda 1: la ganaste porque el otro agente se rindió");
+    expect(t.calls.red[1]?.note).toBe("terminó la ronda 1: te rendiste");
+    expect(t.calls.blue[1]?.note).toBe("terminó la ronda 1: el otro agente se rindió");
     await roundRunning(t, 2);
     expect(series(t)?.wins).toEqual({ red: 0, blue: 1 });
     t.ev("blue").onSurrender();
@@ -1343,7 +1343,7 @@ describe("MatchManager: modo por rondas", () => {
     await roundRunning(t, 5);
     expect(series(t)?.rounds[3]).toMatchObject({ round: 4, winner: "red", reason: "timeout_health" });
     expect(t.calls.blue.at(-1)?.note).toBe(
-      "terminó la ronda 4: la perdiste por tener menos vida al acabarse el tiempo; empieza la ronda 5",
+      "terminó la ronda 4: se acabó el tiempo y tenías menos vida que el otro agente; empieza la ronda 5",
     );
     expect(t.calls.red.at(-1)?.series).toEqual({ round: 5, won: 2, lost: 1, drawn: 1, maxRounds: LEGACY_SERIES_ROUNDS });
     // Ronda 5: gana Azul y la serie queda 2 a 2.

@@ -142,10 +142,10 @@ describe("kitToolDefs", () => {
     }
   });
 
-  it('"reason" pide una decisión breve sin repeticiones', () => {
+  it('"reason" es texto libre, sin pedir un estilo', () => {
     for (const def of TOOL_DEFS) {
       const properties = (def.parameters as { properties: Record<string, { description?: string }> }).properties;
-      expect(properties.reason?.description).toBe("Opcional: una idea breve con tu decisión. Omítela si repite lo anterior; el público la ve.");
+      expect(properties.reason?.description).toBe("Opcional: texto libre con lo que piensas al decidir; el público lo ve.");
     }
   });
 
@@ -199,13 +199,12 @@ describe("modo chat: argumento say", () => {
     expect(parseToolArgs({ say: "a".repeat(1000) }).say).toHaveLength(MAX_AGENT_MESSAGE_LENGTH);
   });
 
-  it("la descripción de say pide brevedad y explica los turnos para hablar", () => {
+  it("la descripción de say explica los turnos para hablar, sin pedir un estilo", () => {
     const [def] = kitToolDefs(KITS.classic, "chat");
     const say = (def?.parameters as { properties: Record<string, { description: string }> }).properties["say"];
     expect(say?.description).toContain(String(MAX_AGENT_MESSAGE_LENGTH));
     expect(say?.description).toContain("tal cual");
-    expect(say?.description).toContain("normalmente una frase");
-    expect(say?.description).toContain("Puedes actuar en silencio");
+    expect(say?.description).not.toContain("normalmente una frase");
     expect(say?.description).toContain("se pronuncia por turnos");
     expect(say?.description).toContain("reemplaza al que esperaba");
     expect(say?.description).not.toContain("sayCooldown");
