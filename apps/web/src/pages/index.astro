@@ -318,6 +318,8 @@ const stats = [
           <p class="section__hint" data-when="watch">
             Cada agente pelea siguiendo su prompt, con el kit y el modelo que ves aquí.
           </p>
+          <!-- Reabre la hoja de bienvenida (scripts/welcome.ts). -->
+          <button type="button" class="welcome-open" id="welcome-open">Cómo funciona</button>
           <!-- Qué puede hacer este navegador (access.ts): espectador, invitado o arena abierta. -->
           <p class="access-note" id="access-note" role="status" hidden>
             <span class="access-note__tag" id="access-note-tag"></span>
@@ -587,6 +589,62 @@ const stats = [
     <footer class="footer">
       <p>Hecho para la Platanus Hackathon 2026, track Simulaciones. Minecraft y agentes LLM.</p>
     </footer>
+
+    <!--
+      Bienvenida: una hoja que explica el sitio a quien entra por primera vez (scripts/welcome.ts).
+      Se cierra con el botón, con Esc o tocando fuera, y no vuelve a salir sola; se puede
+      reabrir con "Cómo funciona", sobre los prompts.
+    -->
+    <dialog class="welcome" id="welcome" aria-labelledby="welcome-title">
+      <div class="welcome__body">
+        <img class="welcome__mark" src="/brand/isotipo.svg" width="84" height="36" alt="" />
+        <h2 class="welcome__title" id="welcome-title">Esto es Prompt Arena</h2>
+        <p class="welcome__lead">
+          Dos agentes de IA pelean en Minecraft. Ninguno tiene una estrategia programada: cada uno sigue un prompt
+          escrito por una persona.
+        </p>
+        <ul class="welcome__list">
+          <li>
+            <span class="welcome__icon"><PixelIcon name="fight" /></span>
+            <div>
+              <h3>La pelea, en vivo</h3>
+              <p>El video sale del juego de verdad. Encima va el marcador: vida, daño y decisiones de cada lado.</p>
+            </div>
+          </li>
+          <li>
+            <span class="welcome__icon"><PixelIcon name="thought" /></span>
+            <div>
+              <h3>Lo que piensa cada agente</h3>
+              <p>Cada decisión llega con su razón, en el momento en que pasa en pantalla.</p>
+            </div>
+          </li>
+          <li data-when="watch">
+            <span class="welcome__icon"><PixelIcon name="prompt" /></span>
+            <div>
+              <h3>Los prompts de cada lado</h3>
+              <p>Bajo el video se lee qué le pidieron a cada agente, con qué kit y con qué modelo pelea.</p>
+            </div>
+          </li>
+          <li data-when="play">
+            <span class="welcome__icon"><PixelIcon name="prompt" /></span>
+            <div>
+              <h3>Tú escribes los prompts</h3>
+              <p>Bajo el video, dile a cada agente cómo pelear, elige su kit y su modelo, e inicia la pelea.</p>
+            </div>
+          </li>
+          <li>
+            <span class="welcome__icon"><PixelIcon name="trophy" /></span>
+            <div>
+              <h3>El leaderboard</h3>
+              <p>Un torneo donde todos los modelos reciben el mismo prompt. Muestra cuál pelea mejor.</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <form class="welcome__actions" method="dialog">
+        <button type="submit" class="btn btn--primary" id="welcome-go">Ver la pelea</button>
+      </form>
+    </dialog>
 
     <div class="toasts" id="toasts" aria-live="assertive"></div>
 

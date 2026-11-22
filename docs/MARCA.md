@@ -4,6 +4,8 @@ La marca sale de lo que ya estaba en la barra del sitio: dos cuadrados, uno rojo
 
 Las piezas se generan con `python3 scripts/marca.py` y quedan en `apps/web/public/brand/`. No se editan a mano.
 
+La guía completa, para compartir fuera del repo, está en PDF: [marca/Prompt-Arena-guia-de-marca.pdf](marca/Prompt-Arena-guia-de-marca.pdf) (9 páginas). Se arma con `python3 scripts/marca_guia.py`, que escribe `marca/guia-de-marca.html`; el PDF es esa página impresa desde un navegador, en A4 apaisado, sin márgenes y con los gráficos de fondo.
+
 ## Logo
 
 <img src="../apps/web/public/brand/logo.svg" alt="Logo de Prompt Arena" width="280" />

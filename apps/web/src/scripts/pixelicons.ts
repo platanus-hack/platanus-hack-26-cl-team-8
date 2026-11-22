@@ -14,6 +14,7 @@
  *   thought                nube de pensamiento: marca lo que el agente piensa (lo que dice lleva "talk")
  *
  *   fight, trophy                    navegación: la pelea en vivo y el leaderboard
+ *   prompt                           la marca de un prompt (">_"): bienvenida
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
  *   pips, timer, bookmark, star      marca de cada ajuste de la partida (con talk y speaking)
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
@@ -520,6 +521,40 @@ export const ICONS = {
       ".xxx.xx....",
       "xxx...x....",
       "xx.........",
+    ],
+  },
+  /** Nube de pensamiento, con sus dos burbujas: lo que piensa un agente. */
+  thought: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...xxxxxx..",
+      "..xxxxxxxx.",
+      ".xxxxxxxxxx",
+      ".xxxxxxxxxx",
+      "..xxxxxxxx.",
+      "...xxxxxx..",
+      "...........",
+      "..xx.......",
+      "..xx.......",
+      "x..........",
+    ],
+  },
+  /** Un prompt: el signo ">" y el cursor, como en una terminal. */
+  prompt: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "...........",
+      ".xx........",
+      "..xx.......",
+      "...xx......",
+      "..xx.......",
+      ".xx........",
+      "...........",
+      ".....xxxxx.",
+      "...........",
+      "...........",
     ],
   },
   /** Navegación: el leaderboard. Una copa con asas. */

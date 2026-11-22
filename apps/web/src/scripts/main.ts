@@ -21,6 +21,7 @@ import { initSound, playEnd, playHit, playKnockout, playMessage, playStart } fro
 import { initThoughts, markFallen, pushAction, pushInjected, pushMessage, pushThought, syncThoughts } from "./thoughts";
 import { initTranscriptLink, setTranscriptMatch } from "./transcriptlink";
 import { initVoice, playSpeech, preloadSpeech, stopSpeech } from "./voice";
+import { initWelcome } from "./welcome";
 
 const STATE_POLL_MS = 5000;
 
@@ -294,6 +295,8 @@ function init(): void {
   initSettingControls();
   initSettings();
   initAccess();
+  // Después del acceso: la bienvenida cambia una línea según si este navegador puede jugar.
+  initWelcome();
   initArenaPicker();
   // Al iniciar o detener, la respuesta del botón se muestra al instante: se vacía la cola
   // para que un estado viejo en espera no la pise después.
