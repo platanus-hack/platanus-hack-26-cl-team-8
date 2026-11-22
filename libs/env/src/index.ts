@@ -61,6 +61,14 @@ const EnvSchema = z.object({
   AGENT_OBSERVATION_RADIUS: z.coerce.number().int().min(8).max(64).default(16),
   DATA_DIR: z.string().default("./data"),
 
+  /**
+   * Clave del equipo: con ella puesta, cambiar la arena pide una clave (ver access.ts del
+   * orquestador). Vacía = sin control, como en una máquina local.
+   */
+  ADMIN_PASSPHRASE: z.string().default(""),
+  /** Clave de invitados (un jurado): prompts e iniciar peleas, nada más. Opcional. */
+  PLAYER_PASSPHRASE: z.string().default(""),
+
   // Voz de los agentes (ElevenLabs). Sin clave o sin las dos voces, los mensajes solo se leen.
   ELEVENLABS_API_KEY: z.string().default(""),
   /** Id de la voz de cada lado (la página de la voz en la app de ElevenLabs). */

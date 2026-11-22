@@ -139,9 +139,16 @@ async function main(): Promise<void> {
     vercelKeyConfigured: env.VERCEL_API_KEY.trim() !== "",
     speech,
     tournaments,
+    access: { adminKey: env.ADMIN_PASSPHRASE, playerKey: env.PLAYER_PASSPHRASE },
   });
   await app.listen({ host: env.ORCHESTRATOR_HOST, port: env.ORCHESTRATOR_PORT });
   log("info", `API escuchando en ${env.ORCHESTRATOR_HOST}:${env.ORCHESTRATOR_PORT} (LLM por defecto: ${env.LLM_PROVIDER})`);
+  log(
+    env.ADMIN_PASSPHRASE.trim() !== "" ? "info" : "warn",
+    env.ADMIN_PASSPHRASE.trim() !== ""
+      ? "Acceso: cambiar la arena pide clave (la del equipo o la de invitados); mirar no"
+      : "Acceso: sin ADMIN_PASSPHRASE, cualquiera que llegue a la API puede cambiar la arena",
+  );
   log("info", speech.configured() ? "Voz de los agentes: disponible (ElevenLabs)" : "Voz de los agentes: sin configurar (falta ELEVENLABS_API_KEY o una voz)");
 
   // ---------- Apagado ordenado ----------

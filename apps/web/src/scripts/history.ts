@@ -345,8 +345,15 @@ function sideCell(bout: Bout, side: Side): HTMLElement {
     );
   }
   if (flagsAvailable) {
-    actions.append(button(flag ? "Editar marca" : "Marcar", () => startDraft(bout.id, side, flag)));
-    if (flag) actions.append(button("Quitar marca", () => void unflag(bout.id, side)));
+    // Marcar prompts es del equipo (ver access.ts).
+    const mark = button(flag ? "Editar marca" : "Marcar", () => startDraft(bout.id, side, flag));
+    mark.dataset.needs = "admin";
+    actions.append(mark);
+    if (flag) {
+      const unmark = button("Quitar marca", () => void unflag(bout.id, side));
+      unmark.dataset.needs = "admin";
+      actions.append(unmark);
+    }
   }
   for (const target of SIDES) {
     actions.append(

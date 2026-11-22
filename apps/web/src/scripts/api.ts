@@ -25,6 +25,7 @@ import {
   type BenchReport,
   type Judgement,
 } from "@phack/protocol";
+import { accessHeaders } from "./access";
 import { MOCK, apiUrl } from "./config";
 
 export class ApiError extends Error {
@@ -42,6 +43,7 @@ type Parser<T> = { parse(data: unknown): T };
 function defaultMessage(status: number): string {
   if (status === 409) return "Ya hay una pelea en curso.";
   if (status === 400 || status === 422) return "El servidor rechazó los datos enviados.";
+  if (status === 403) return "No tienes permiso para esto.";
   if (status === 404) return "El servidor no reconoce esa operación.";
   if (status === 429) return "Demasiadas solicitudes. Espera un momento.";
   if (status >= 500) return "El servidor de la arena falló o no está disponible.";
@@ -76,7 +78,8 @@ async function mockedRequest<T>(path: string, parser: Parser<T>, init?: { method
 async function request<T>(path: string, parser: Parser<T>, init?: { method: string; body?: unknown }): Promise<T> {
   if (MOCK) return mockedRequest(path, parser, init);
 
-  const headers: Record<string, string> = { Accept: "application/json" };
+  // La clave de este navegador, si tiene: el servidor decide con ella qué se puede cambiar.
+  const headers: Record<string, string> = { Accept: "application/json", ...accessHeaders() };
   const options: RequestInit = { method: init?.method ?? "GET", headers };
   if (init?.body !== undefined) {
     headers["Content-Type"] = "application/json";

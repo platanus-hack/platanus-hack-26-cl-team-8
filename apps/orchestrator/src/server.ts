@@ -20,6 +20,9 @@ import {
   formatTranscript,
   parseTranscript,
   validateCustomKit,
+  ACCESS_HEADER,
+  DEFAULT_SETTINGS,
+  type AccessResponse,
   type AgentConfig,
   type BenchOptions,
   type BenchReport,
@@ -37,6 +40,7 @@ import {
   type StartMatchBody,
   type UpdatePromptBody,
 } from "@phack/protocol";
+import { allowed, createAccess, denial, needOf, type AccessConfig } from "./access";
 import { sourceOfRecord, type FlagSource } from "./flags";
 import type { Hub } from "./hub";
 import type { JudgeOutcome } from "./judge";
@@ -105,6 +109,8 @@ export type ServerDeps = {
   speech?: { get(speechId: string): Promise<Buffer | null> };
   /** Límite de solicitudes que modifican estado, por IP. */
   rateLimit?: { limit: number; windowMs: number };
+  /** Claves del equipo y de invitados (ver access.ts). Sin esto, o sin clave del equipo, no hay control. */
+  access?: AccessConfig;
   /** Torneos guardados en DATA_DIR (solo lectura) y lock del CLI que los corre. */
   tournaments?: TournamentReader;
 };
@@ -223,6 +229,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
   });
 
+  // ---------- Quién puede cambiar qué ----------
+
+  const access = createAccess(deps.access ?? { adminKey: "", playerKey: "" });
+  // preHandler: el cuerpo ya está leído, y los ajustes se deciden por lo que traen.
+  app.addHook("preHandler", async (req, reply) => {
+    if (!access.enabled) return;
+    const need = needOf(req.method, req.routeOptions.url ?? "", req.body);
+    if (need === null) return;
+    const role = access.roleOf(req.headers[ACCESS_HEADER]);
+    const settings = deps.settings?.get() ?? DEFAULT_SETTINGS;
+    if (!allowed(need, role, settings)) return reply.code(403).send(errorBody(denial(need, role)));
+  });
+
   // ---------- Errores ----------
 
   app.setNotFoundHandler((_req, reply) => {
@@ -243,6 +262,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // ---------- HTTP ----------
 
   app.get(API_ROUTES.health, async () => ({ ok: true }));
+
+  app.get(API_ROUTES.access, async (req, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return { enabled: access.enabled, role: access.roleOf(req.headers[ACCESS_HEADER]) } satisfies AccessResponse;
+  });
 
   app.get(API_ROUTES.state, async () => deps.match.getState());
 
@@ -293,7 +317,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, voiceSet?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
+              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, voiceSet?, publicPlay?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
             ),
           );
       }
@@ -310,6 +334,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       }
       if (body.data.voice !== undefined) change.voice = body.data.voice;
       if (body.data.voiceSet !== undefined) change.voiceSet = body.data.voiceSet;
+      if (body.data.publicPlay !== undefined) change.publicPlay = body.data.publicPlay;
       const b = body.data;
       if (b.scenario !== undefined) change.scenario = b.scenario;
       if (b.rounds !== undefined) change.rounds = b.rounds;

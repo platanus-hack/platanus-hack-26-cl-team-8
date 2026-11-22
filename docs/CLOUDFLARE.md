@@ -99,10 +99,11 @@ Cloudflare crea solo el registro DNS `arena.tudominio.cl` (un CNAME hacia el tú
 
 No pongas Cloudflare Access delante del sitio completo: la arena es pública a propósito.
 
-> **Ojo: desde ahora la arena queda abierta a todo internet, no solo al equipo.** El orquestador no tiene cuentas: cualquiera que abra `arena.tudominio.cl` puede cambiar prompts y ajustes, iniciar y detener peleas, lanzar baterías de presets (`POST /api/presets/:id`, muchas peleas seguidas), pedir el juicio de una pelea (`POST /api/matches/:id/judge`, una llamada al LLM por pedido), marcar banderas y vaciar el historial visible (`DELETE /api/history`, que solo pide `{ "confirm": "BORRAR" }`; lo archiva, no lo destruye). Las peleas y el juicio gastan créditos del Vercel AI Gateway. La única defensa propia es el límite de 30 pedidos que cambian algo cada 10 s por IP, y quien tenga varias IPs se lo salta.
+> **Ojo: desde ahora la arena queda abierta a todo internet, no solo al equipo.** El orquestador no tiene cuentas: cualquiera que abra `arena.tudominio.cl` puede cambiar prompts y ajustes, iniciar y detener peleas, lanzar baterías de presets (`POST /api/presets/:id`, muchas peleas seguidas), pedir el juicio de una pelea (`POST /api/matches/:id/judge`, una llamada al LLM por pedido), marcar banderas y vaciar el historial visible (`DELETE /api/history`, que solo pide `{ "confirm": "BORRAR" }`; lo archiva, no lo destruye). Las peleas y el juicio gastan créditos del Vercel AI Gateway. Sin `ADMIN_PASSPHRASE`, la única defensa propia es el límite de 30 pedidos que cambian algo cada 10 s por IP, y quien tenga varias IPs se lo salta.
 >
 > Antes de publicar:
 >
+> 0. **Pon `ADMIN_PASSPHRASE` en el `.env` del servidor** (y `PLAYER_PASSPHRASE` si habrá invitados). Con ella, quien visita solo mira, y cambiar algo pide clave: ver "Acceso" en el [README](../README.md#acceso-quién-puede-cambiar-la-arena). Es la defensa principal; lo de abajo la complementa.
 > 1. **Pon un tope de gasto** a la clave del Vercel AI Gateway (panel de Vercel → AI Gateway → límites de la clave).
 > 2. **Agrega una regla de rate limiting** en Cloudflare (el plan Free trae una): en el dominio, **Security → WAF → Rate limiting rules → Create rule**, con la expresión
 >    `(http.host eq "arena.tudominio.cl" and http.request.method in {"POST" "PUT" "DELETE"} and starts_with(http.request.uri.path, "/api/"))`,

@@ -75,14 +75,22 @@ http_get() {
   curl -s -L -o "$BODY_FILE" -w '%{http_code}' --max-time "${2:-10}" "$1" 2>/dev/null || true
 }
 
+# Clave del equipo: si el servidor pide clave para cambiar la arena (ADMIN_PASSPHRASE), las
+# solicitudes que cambian algo la mandan. Se toma del entorno o del .env; nunca se imprime.
+ACCESS_KEY="${ADMIN_PASSPHRASE:-}"
+if [ -z "$ACCESS_KEY" ] && [ -f .env ]; then
+  ACCESS_KEY="$(grep -E '^ADMIN_PASSPHRASE=' .env | tail -n 1 | cut -d= -f2- || true)"
+fi
+
 # http_send METODO URL [json] -> imprime el código HTTP; deja el cuerpo en $BODY_FILE.
 http_send() {
   : >"$BODY_FILE"
   if [ -n "${3:-}" ]; then
     curl -s -o "$BODY_FILE" -w '%{http_code}' --max-time 30 -X "$1" \
-      -H 'Content-Type: application/json' --data "$3" "$2" 2>/dev/null || true
+      -H "x-arena-key: $ACCESS_KEY" -H 'Content-Type: application/json' --data "$3" "$2" 2>/dev/null || true
   else
-    curl -s -o "$BODY_FILE" -w '%{http_code}' --max-time 30 -X "$1" "$2" 2>/dev/null || true
+    curl -s -o "$BODY_FILE" -w '%{http_code}' --max-time 30 -X "$1" \
+      -H "x-arena-key: $ACCESS_KEY" "$2" 2>/dev/null || true
   fi
 }
 

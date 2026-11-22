@@ -164,6 +164,8 @@ services:
       <<: *node-env
       # Voz de los agentes (ElevenLabs). Solo el orquestador las necesita: la clave no llega
       # a la cámara. Sin clave o sin las dos voces, los mensajes solo se leen.
+      ADMIN_PASSPHRASE: ${ADMIN_PASSPHRASE:-}
+      PLAYER_PASSPHRASE: ${PLAYER_PASSPHRASE:-}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       ELEVENLABS_VOICE_RED: ${ELEVENLABS_VOICE_RED:-}
       ELEVENLABS_VOICE_BLUE: ${ELEVENLABS_VOICE_BLUE:-}

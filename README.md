@@ -474,6 +474,23 @@ Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wran
 
 El Worker lleva dentro el contrato de `packages/protocol` y se despliega aparte del orquestador. Cuando el contrato cambia (proveedores, kits, rutas de la API), despliega primero el orquestador y la web justo después: mientras las dos versiones no coinciden, la web puede descartar el estado o los valores por defecto que no entiende.
 
+## Acceso: quién puede cambiar la arena
+
+Mirar nunca pide nada: la transmisión, el marcador, los pensamientos, el historial y el leaderboard son públicos. Cambiar algo pide una clave cuando el servidor tiene `ADMIN_PASSPHRASE` en su `.env`; sin ella no hay control (cómodo en local, peligroso en un sitio público).
+
+| Quién | Cómo entra | Qué puede |
+|---|---|---|
+| Equipo | `ADMIN_PASSPHRASE` | Todo: detener peleas, todos los ajustes, voz, baterías, juez, marcas y borrar el historial. |
+| Invitado (un jurado) | `PLAYER_PASSPHRASE`, opcional | Escribir los prompts (con kit y modelo), elegir cómo se comunican los agentes e iniciar peleas. |
+| Visitante | sin clave | Solo mirar. Con el ajuste **Arena abierta** encendido por el equipo, lo mismo que un invitado. |
+
+La clave se le da a un navegador de dos maneras:
+
+- **Con un enlace** (sirve para un QR): `https://tu-sitio/#key=LA_CLAVE`. La página la guarda en `localStorage` y la borra de la dirección. Lo que va tras el `#` no viaja al servidor ni queda en sus registros.
+- **A mano**, en la consola del navegador: `localStorage.setItem("prompt-arena.access", JSON.stringify({ key: "LA_CLAVE" }))`.
+
+En la barra de arriba aparece "Equipo" o "Invitado"; dos clics ahí quitan la clave de ese navegador. El servidor es el que decide (`apps/orchestrator/src/access.ts`): la web solo esconde lo que igual sería rechazado. Para probar cómo se ve cada rol sin servidor: `/?mock&as=visitor`, `/?mock&as=player` o `/?mock&as=admin`.
+
 ## Cloudflare Tunnel (sitio en tu dominio y SSH sin Tailscale)
 
 El servicio `cloudflared` (perfil `tunnel` de compose) conecta el servidor con Cloudflare por un túnel de salida: no se abren puertos en el router. Las rutas se configuran en el panel de Cloudflare:

@@ -11,6 +11,7 @@ import {
   KIT_LIST,
   MAX_HEALTH,
   TIMER_LABELS,
+  PUBLIC_PLAY_LABELS,
   VOICE_LABELS,
   VOICE_SETS,
   VOICE_SET_LABELS,
@@ -84,6 +85,14 @@ const stats = [
           <i class="live__dot" aria-hidden="true"></i>
           En vivo
         </span>
+        <!-- Con qué clave está este navegador (access.ts); dos clics la quitan. -->
+        <button
+          type="button"
+          class="access-chip"
+          id="access-chip"
+          data-tip="Este navegador tiene una clave de la arena. Haz clic dos veces para quitarla."
+          hidden
+        ></button>
         <button
           type="button"
           class="sound"
@@ -279,12 +288,12 @@ const stats = [
       <!-- El botón de la pelea, abajo al centro: uno solo a la vez (iniciar o detener). -->
       <div class="controls">
         <!-- Mapa de la próxima pelea (ajuste "arena"): arenapicker.ts lo llena con los del servidor. -->
-        <label class="map-picker" data-tip="Mapa de la próxima pelea. No se puede cambiar con una pelea en curso." hidden>
+        <label class="map-picker" data-needs="admin" data-tip="Mapa de la próxima pelea. No se puede cambiar con una pelea en curso." hidden>
           <span class="map-picker__label">Mapa</span>
           <select id="map-select" disabled></select>
         </label>
-        <button type="button" class="btn btn--primary" id="btn-start" disabled>Iniciar pelea</button>
-        <button type="button" class="btn btn--ghost" id="btn-stop" disabled>Detener</button>
+        <button type="button" class="btn btn--primary" id="btn-start" data-needs="play" disabled>Iniciar pelea</button>
+        <button type="button" class="btn btn--ghost" id="btn-stop" data-needs="admin" disabled>Detener</button>
       </div>
     </section>
 
@@ -294,9 +303,11 @@ const stats = [
         <header class="section__head">
           <h2 class="section__title" id="prompts-title">Preparar la pelea</h2>
           <p class="section__hint">
-            Ajusta la partida y dile a cada agente qué quiere lograr, con qué kit y con qué modelo. Cualquiera puede
-            editarlo; vale desde la próxima pelea. Los ítems que existen están en <a href="/items">la lista de ítems</a>.
+            Dile a cada agente qué quiere lograr, con qué kit y con qué modelo. Vale desde la próxima pelea. Los ítems
+            que existen están en <a href="/items">la lista de ítems</a>.
           </p>
+          <!-- Qué puede hacer este navegador (access.ts): espectador, invitado o arena abierta. -->
+          <p class="access-note" id="access-note" role="status" hidden></p>
         </header>
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
@@ -309,7 +320,7 @@ const stats = [
         <div class="settings" id="settings-field">
           <div class="settings__group">
             <!-- Pre-ajuste: elegir uno lo carga de inmediato; si algo cambia, vuelve a "Personalizado" (scripts/presetpicker.ts). -->
-            <div class="setting">
+            <div class="setting" data-needs="admin">
               <div class="setting__text">
                 <label class="setting__label" for="preset"><PixelIcon name="bookmark" />Pre-ajuste</label>
                 <p class="setting__help" id="preset-description"></p>
@@ -326,7 +337,7 @@ const stats = [
               </div>
             </div>
 
-            <div class="setting">
+            <div class="setting" data-needs="admin">
               <div class="setting__text">
                 <label class="setting__label" for="rounds-count"><PixelIcon name="pips" />Rondas</label>
                 <p class="setting__help" id="mode-description">Una pelea suelta. Con 2 o más, una serie: cada agente sabe cómo va y puede rendirse en una ronda.</p>
@@ -350,7 +361,7 @@ const stats = [
               </div>
             </div>
 
-            <div class="setting setting--wide">
+            <div class="setting setting--wide" data-needs="play">
               <div class="setting__text">
                 <label class="setting__label" for="comms"><PixelIcon name="talk" />Comunicación entre agentes</label>
                 <p class="setting__help" id="comms-description">{COMMS_LABELS[DEFAULT_COMMS].description}</p>
@@ -364,7 +375,7 @@ const stats = [
           </div>
 
           <div class="settings__group">
-            <div class="setting">
+            <div class="setting" data-needs="admin">
               <div class="setting__text">
                 <label class="setting__label" for="timer"><PixelIcon name="timer" />Límite de tiempo</label>
                 <p class="setting__help" id="timer-description">{TIMER_LABELS.on}</p>
@@ -394,7 +405,7 @@ const stats = [
               </div>
             </div>
 
-            <div class="setting">
+            <div class="setting" data-needs="admin">
               <div class="setting__text">
                 <label class="setting__label" for="voice"><PixelIcon name="speaking" />Voz de los agentes</label>
                 <p class="setting__help" id="voice-description">{VOICE_LABELS.off}</p>
@@ -414,7 +425,7 @@ const stats = [
               </div>
             </div>
 
-            <div class="setting">
+            <div class="setting" data-needs="admin">
               <div class="setting__text">
                 <label class="setting__label" for="judge"><PixelIcon name="star" />Juez</label>
                 <p class="setting__help" id="judge-description">
@@ -429,10 +440,24 @@ const stats = [
                 </label>
               </div>
             </div>
+
+            <div class="setting" data-needs="admin" id="public-play-row" hidden>
+              <div class="setting__text">
+                <label class="setting__label" for="public-play"><PixelIcon name="flag" />Arena abierta</label>
+                <p class="setting__help" id="public-play-description">{PUBLIC_PLAY_LABELS.off}</p>
+              </div>
+              <div class="setting__control">
+                <label class="toggle">
+                  <span class="sr-only" id="public-play-state">Apagado</span>
+                  <input type="checkbox" role="switch" id="public-play" aria-describedby="public-play-description" />
+                  <span class="toggle__track" aria-hidden="true"><i></i></span>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="editors">
+        <div class="editors" data-lock="play">
           {
             sides.map((side) => (
               <form class={`editor editor--${side.id}`} id={`editor-${side.id}`} data-side={side.id} autocomplete="off" novalidate>
