@@ -284,7 +284,8 @@ textarea {
 .top {
   position: absolute;
   inset: 0 0 auto 0;
-  z-index: 3;
+  /* Sobre el marcador: la ayuda de la barra (pestañas, sonido) se abre encima de él. */
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 18px;
@@ -315,6 +316,54 @@ textarea {
 
 .brand__title {
   font: 400 16px/1 var(--pixel);
+}
+
+/*
+ * Navegación entre la pelea y el leaderboard (components/SiteNav.astro): dos pestañas
+ * pegadas al nombre, la misma pieza en las dos páginas. La actual va rellena y con una
+ * raya abajo; la otra queda en blanco igual, para que se lea como un lugar al que ir y no
+ * como algo apagado. El fondo oscuro la deja legible encima del video.
+ */
+.site-nav {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--line);
+  background: rgba(6, 7, 9, 0.6);
+}
+
+.site-nav__item {
+  position: relative;
+  padding: 7px 11px 6px;
+  font: 400 12px/1 var(--pixel);
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.site-nav__item + .site-nav__item {
+  border-left: 1px solid var(--line);
+}
+
+.site-nav__item:hover,
+.site-nav__item[aria-current="page"] {
+  background: var(--line);
+}
+
+.site-nav__item[aria-current="page"] {
+  cursor: default;
+}
+
+.site-nav__item[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 2px;
+  background: var(--text);
+}
+
+.site-nav__item:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
 }
 
 /*
@@ -2812,34 +2861,139 @@ body:not([data-play="yes"]) [data-needs="play"] {
   display: none !important;
 }
 
-[data-lock="play"][inert] {
-  opacity: 0.6;
+/* El encabezado de los prompts tiene dos versiones: para quien juega y para quien mira. */
+body[data-play="no"] [data-when="play"],
+body:not([data-play="no"]) [data-when="watch"] {
+  display: none !important;
 }
 
+/*
+ * Prompts de solo lectura (quien mira): se leen como texto, no como un formulario apagado.
+ * Se van el contador, los botones y las flechas de las listas; el texto queda con su color.
+ */
+[data-lock="play"][inert] .editor__count,
+[data-lock="play"][inert] .editor__copy,
+[data-lock="play"][inert] .btn--save,
+[data-lock="play"][inert] .editor__status {
+  display: none;
+}
+
+[data-lock="play"][inert] .editor__text {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  resize: none;
+  /* El alto sigue al texto donde el navegador lo permite; si no, queda el de siempre. */
+  field-sizing: content;
+}
+
+[data-lock="play"][inert] .field select,
+[data-lock="play"][inert] .picker__trigger {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 600;
+  appearance: none;
+}
+
+[data-lock="play"][inert] .picker__trigger::after {
+  content: none;
+}
+
+[data-lock="play"][inert] .editor__options {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* La franja sobre los prompts: una etiqueta (qué modo es) y una frase (qué se puede hacer). */
 .access-note {
-  max-width: 76ch;
-  padding: 10px 14px;
-  border-left: 2px solid var(--amber);
-  background: rgba(232, 184, 74, 0.07);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
   font-size: 14px;
+  color: var(--muted);
 }
 
 .access-note[hidden] {
   display: none;
 }
 
-/* Con qué clave está este navegador, en la barra de arriba. */
+.access-note__tag,
 .access-chip {
-  padding: 4px 9px 5px;
-  border: 1px solid var(--amber);
-  background: none;
-  color: var(--amber);
+  --tone: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px 6px;
+  border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+  background: rgba(6, 7, 9, 0.6);
+  color: var(--tone);
   font: 400 12px/1 var(--pixel);
+  white-space: nowrap;
+}
+
+/* Mirar es el modo neutro; lo que da permisos lleva color. */
+.access-note[data-kind="watch"] .access-note__tag,
+.access-chip[data-kind="watch"] {
+  --tone: var(--text);
+}
+
+.access-note[data-kind="open"] .access-note__tag,
+.access-chip[data-kind="open"] {
+  --tone: var(--ok);
+}
+
+.access-note[data-kind="guest"] .access-note__tag,
+.access-chip[data-kind="guest"],
+.access-chip[data-kind="team"] {
+  --tone: var(--amber);
+}
+
+/* Con qué permisos está este navegador, en la barra de arriba. Solo con clave es un botón. */
+.access-chip {
+  cursor: default;
+}
+
+.access-chip[hidden] {
+  display: none;
+}
+
+.access-chip[data-kind="guest"],
+.access-chip[data-kind="team"] {
   cursor: pointer;
 }
 
-.access-chip:hover {
+.access-chip[data-kind="guest"]:hover,
+.access-chip[data-kind="team"]:hover {
   background: rgba(232, 184, 74, 0.12);
+}
+
+/* El ojo es la marca de "estás mirando": solo en modo espectador. */
+.access-chip__eye {
+  display: none;
+  flex: none;
+}
+
+.access-chip[data-kind="watch"] .access-chip__eye {
+  display: block;
+}
+
+/* En teléfonos la barra es angosta: quien mira ve solo el ojo; "arena abierta" queda en la franja de abajo. */
+@media (max-width: 699px) {
+  .access-chip {
+    padding: 5px 7px 6px;
+  }
+
+  .access-chip[data-kind="watch"] #access-chip-label {
+    display: none;
+  }
+
+  .access-chip[data-kind="open"] {
+    display: none;
+  }
 }
 
 /* Voces de los agentes (habituales o japonesas): junto al interruptor, solo con la voz encendida. */
@@ -3988,8 +4142,14 @@ button.inv__slot {
     font-size: 0;
   }
 
-  .top__arena {
-    font-size: 12px;
+  .site-nav__item {
+    padding: 6px 8px 5px;
+    font-size: 11px;
+  }
+
+  /* En el teléfono no hay mouse, y la ayuda escondida igual ensancharía la página. */
+  .site-nav__item[data-tip]::after {
+    display: none;
   }
 
   /* ----- Marcador: el reloj arriba, y debajo un lado junto al otro ----- */
@@ -4263,6 +4423,33 @@ button.inv__slot {
   .bout__sides {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;
+  }
+}
+
+/*
+ * Teléfonos angostos: en la barra de la pelea no caben el nombre, las dos pestañas y las
+ * marcas de estado. Quedan el logo de dos cuadros y la pestaña que lleva al leaderboard;
+ * el nombre sigue ahí para lectores de pantalla (es el h1).
+ */
+@media (max-width: 520px) {
+  .top .brand {
+    flex: none;
+  }
+
+  .top .brand__title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .top .site-nav__item[aria-current="page"] {
+    display: none;
+  }
+
+  .top .site-nav__item + .site-nav__item {
+    border-left: 0;
   }
 }
 

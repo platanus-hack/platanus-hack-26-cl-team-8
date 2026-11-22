@@ -5,6 +5,7 @@ import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
 import "../styles/global.css";
 import "../styles/arena.css";
+import SiteNav from "../components/SiteNav.astro";
 ---
 
 <!doctype html>
@@ -27,10 +28,10 @@ import "../styles/arena.css";
         <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
         <span class="brand__title">Prompt Arena</span>
       </a>
-      <span class="arena-top__crumb" aria-hidden="true">/</span>
-      <h1 class="arena-top__title">Leaderboard</h1>
+      <!-- El título lo muestra la pestaña marcada de la navegación; aquí queda para lectores de pantalla. -->
+      <h1 class="sr-only">Leaderboard</h1>
+      <SiteNav current="arena" />
       <span class="arena-top__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
-      <a class="arena-top__back" href="/">Pelea en vivo</a>
     </header>
 
     <main class="arena">

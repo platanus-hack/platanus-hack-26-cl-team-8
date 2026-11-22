@@ -1,0 +1,38 @@
+---
+/**
+ * Navegación entre las dos páginas: la pelea en vivo y el leaderboard del torneo. Es la
+ * misma pieza en las dos barras superiores, junto al nombre; la página actual va marcada.
+ * Los estilos están en global.css (.site-nav).
+ */
+interface Props {
+  current: "live" | "arena";
+}
+
+const { current } = Astro.props;
+
+const items = [
+  { id: "live", href: "/", label: "Pelea", tip: "La pelea que se está transmitiendo ahora." },
+  {
+    id: "arena",
+    href: "/arena",
+    label: "Leaderboard",
+    tip: "Torneo de modelos: ranking y quién le gana a quién.",
+  },
+] as const;
+---
+
+<nav class="site-nav" aria-label="Secciones">
+  {
+    items.map((item) =>
+      item.id === current ? (
+        <a class="site-nav__item" href={item.href} aria-current="page">
+          {item.label}
+        </a>
+      ) : (
+        <a class="site-nav__item" href={item.href} data-tip={item.tip}>
+          {item.label}
+        </a>
+      ),
+    )
+  }
+</nav>
