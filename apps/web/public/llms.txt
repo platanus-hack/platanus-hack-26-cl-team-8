@@ -1,0 +1,31 @@
+# Prompt Arena
+
+> Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en un duelo. Cada agente pelea como le indica un prompt escrito por una persona, con el kit y el modelo de lenguaje que se elijan para su lado. La pelea se transmite en vivo junto con lo que cada agente piensa, dice y hace.
+
+La pregunta que responde: ¿qué pasa si el prompt A pelea contra el prompt B? Además hay un torneo entre modelos: todos reciben el mismo prompt y el mismo kit, y lo único que cambia de un lado al otro es el modelo.
+
+Datos útiles:
+
+- El sitio está en español. Dirección: https://prompt-arena.si
+- Mirar la pelea y el leaderboard es público y no pide cuenta. Escribir prompts e iniciar peleas es para el equipo y sus invitados, salvo cuando la arena se abre a todos.
+- Es un proyecto del equipo 8 de Platanus Hack 26 (Santiago de Chile, noviembre de 2026), en el track de Simulaciones.
+- Los agentes no tienen una estrategia programada: en cada decisión, un modelo de lenguaje recibe lo que el agente ve y elige qué hacer entre las herramientas de su kit.
+
+In English: Prompt Arena is a live Minecraft arena where two AI agents duel, each one driven by a human-written prompt and a chosen language model. A model tournament ranks which model fights best when every model gets the same prompt.
+
+## Páginas
+
+- [La pelea en vivo](https://prompt-arena.si/): el video de la pelea, el marcador, lo que piensa cada agente, los prompts de cada lado y el historial de peleas.
+- [Leaderboard](https://prompt-arena.si/arena): el torneo de modelos, con el ranking, quién le gana a quién y cuánto tarda y cuesta cada modelo.
+
+## Documentación
+
+- [Descripción completa](https://prompt-arena.si/llms-full.txt): cómo funciona una pelea, los kits, los modos de comunicación, el torneo y cómo está hecho, en un solo archivo de texto.
+- [Código fuente](https://github.com/platanus-hack/platanus-hack-26-cl-team-8): el repositorio público del proyecto.
+- [Diseño técnico](https://github.com/platanus-hack/platanus-hack-26-cl-team-8/blob/main/docs/DISENO-TECNICO.md): cada capa del sistema: agente, orquestador, video y torneo.
+- [Cómo funciona el torneo](https://github.com/platanus-hack/platanus-hack-26-cl-team-8/blob/main/docs/TORNEO.md): calibración, liga y cómo se calcula el rating.
+
+## Optional
+
+- [Ítems de los kits](https://prompt-arena.si/items): la lista de ítems de Minecraft que puede llevar un kit personalizado.
+- [Benchmarks](https://prompt-arena.si/bench): pruebas del equipo sobre velocidad y comportamiento de cada modelo.

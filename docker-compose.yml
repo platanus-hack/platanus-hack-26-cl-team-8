@@ -238,6 +238,8 @@ services:
         PUBLIC_HLS_URL: ${PUBLIC_HLS_URL:-/live/arena/index.m3u8}
         # Calibración de la sincronía video/datos, en ms. Vacío = 400 (ver docs/handoff/medir-sincronia.md).
         PUBLIC_STREAM_PIPELINE_MS: ${PUBLIC_STREAM_PIPELINE_MS:-}
+        # Dirección pública del sitio, para las vistas previas al compartir. Vacío = https://prompt-arena.si.
+        PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
     restart: unless-stopped
     volumes:
       # El Caddyfile del repo manda aunque la imagen traiga uno propio:

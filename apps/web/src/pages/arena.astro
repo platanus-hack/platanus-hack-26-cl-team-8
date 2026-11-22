@@ -1,4 +1,5 @@
 ---
+import PageHead from "../components/PageHead.astro";
 // Leaderboard del torneo de modelos. Los ids de esta página son el contrato con
 // src/scripts/arena/*.ts. Todo el contenido dinámico se escribe con textContent.
 import "@fontsource-variable/instrument-sans";
@@ -11,16 +12,11 @@ import SiteNav from "../components/SiteNav.astro";
 <!doctype html>
 <html lang="es">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#101113" />
-    <title>Leaderboard · Prompt Arena</title>
-    <meta
-      name="description"
-      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelo pelea mejor, cómo gana y quién le gana a quién."
+    <PageHead
+      title="Leaderboard · Prompt Arena"
+      description="Qué modelo de IA pelea mejor en Minecraft: un torneo donde todos reciben el mismo prompt y lo único que cambia es el modelo."
+      path="/arena"
     />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body class="arena-page">
     <header class="arena-top">

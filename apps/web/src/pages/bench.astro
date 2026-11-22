@@ -1,4 +1,5 @@
 ---
+import PageHead from "../components/PageHead.astro";
 // Tablero de benchmarks: lo que se midió de cada modelo en el historial de peleas. Lo
 // calcula el orquestador (GET /api/bench) y lo dibuja scripts/bench.ts.
 import "@fontsource-variable/instrument-sans";
@@ -9,13 +10,12 @@ import "../styles/global.css";
 <!doctype html>
 <html lang="es">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#101113" />
-    <title>Benchmarks · Prompt Arena</title>
-    <meta name="description" content="Velocidad, puntaje, honestidad, obediencia, reglas y aprendizaje de cada modelo en la arena." />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <PageHead
+      title="Benchmarks · Prompt Arena"
+      description="Velocidad, puntaje, honestidad, obediencia, reglas y aprendizaje de cada modelo en la arena."
+      path="/bench"
+      noindex
+    />
   </head>
   <body>
     <main class="page bench">

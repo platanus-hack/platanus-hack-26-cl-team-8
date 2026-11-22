@@ -333,11 +333,21 @@ textarea {
 
 .site-nav__item {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 7px 11px 6px;
   font: 400 12px/1 var(--pixel);
   color: var(--text);
   text-decoration: none;
   white-space: nowrap;
+}
+
+/* El ícono va a un píxel de pantalla por píxel del dibujo (11 x 11), para que quede nítido. */
+.site-nav__item .pixel-icon {
+  flex: none;
+  width: 11px;
+  height: 11px;
 }
 
 .site-nav__item + .site-nav__item {
@@ -4143,6 +4153,7 @@ button.inv__slot {
   }
 
   .site-nav__item {
+    gap: 6px;
     padding: 6px 8px 5px;
     font-size: 11px;
   }

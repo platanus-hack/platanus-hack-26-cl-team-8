@@ -13,6 +13,7 @@
  *   speaking               marca del globo mientras se oye la voz del agente
  *   thought                nube de pensamiento: marca lo que el agente piensa (lo que dice lleva "talk")
  *
+ *   fight, trophy                    navegación: la pelea en vivo y el leaderboard
  *   crown, tie, halt, alert          historial: ganó, empate, detenida, error
  *   pips, timer, bookmark, star      marca de cada ajuste de la partida (con talk y speaking)
  *   flag, talk, endless              historial: marcado, se hablaban, sin límite de tiempo
@@ -504,6 +505,40 @@ export const ICONS = {
     ],
   },
   // Historial: señales de un solo color, que toman el color del texto donde se dibujan.
+  /** Navegación: la pelea. La silueta de la espada de los kits, en el color del texto. */
+  fight: {
+    palette: { x: "currentColor" },
+    rows: [
+      "........xxx",
+      ".......xxxx",
+      "......xxxx.",
+      ".....xxxx..",
+      "xx..xxxx...",
+      ".xxxxxx....",
+      "..xxxx.....",
+      "..xxxx.....",
+      ".xxx.xx....",
+      "xxx...x....",
+      "xx.........",
+    ],
+  },
+  /** Navegación: el leaderboard. Una copa con asas. */
+  trophy: {
+    palette: { x: "currentColor" },
+    rows: [
+      "...........",
+      "..xxxxxxx..",
+      "xxxxxxxxxxx",
+      "x.xxxxxxx.x",
+      "xxxxxxxxxxx",
+      "..xxxxxxx..",
+      "...xxxxx...",
+      "....xxx....",
+      ".....x.....",
+      "....xxx....",
+      "..xxxxxxx..",
+    ],
+  },
   crown: {
     palette: { x: "currentColor" },
     rows: [

@@ -30,6 +30,17 @@ Es el logo principal y el de la entrega (`project-logo.png` es este mismo, en PN
 | Isotipo | `isotipo.svg`, `isotipo-simple.svg` | El isotipo solo, sin fondo. |
 | Nombre | `nombre.svg` | El nombre solo, sobre fondo oscuro. |
 
+Además, en `apps/web/public/` hay PNG sacados de esos SVG, para lo que no lee SVG:
+
+| Archivo | Sale de | Para qué |
+|---|---|---|
+| `og.png` (1200 × 630) | `brand/og.svg` | La tarjeta que aparece al compartir un enlace del sitio. |
+| `apple-touch-icon.png` (180) | `brand/icono.svg` | El ícono al agregar el sitio a la pantalla de inicio de un teléfono. |
+| `icon-192.png`, `icon-512.png` | `brand/icono.svg` | Los íconos de `site.webmanifest`. |
+| `favicon-32.png` | `brand/icono-simple.svg` | Favicon para navegadores que no leen SVG. |
+
+Si cambia la marca, se vuelven a sacar abriendo cada SVG en un navegador al tamaño indicado. Los datos para buscadores y vistas previas de todas las páginas están en `apps/web/src/components/PageHead.astro`.
+
 La barra del sitio usa el isotipo simple (dos cuadrados de 9 px) junto al nombre en Silkscreen.
 
 ## Colores

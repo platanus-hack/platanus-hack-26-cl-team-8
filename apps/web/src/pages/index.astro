@@ -1,4 +1,5 @@
 ---
+import PageHead from "../components/PageHead.astro";
 // Tipografías servidas por el propio sitio (sin pedirlas a un CDN).
 import "@fontsource-variable/instrument-sans";
 import "@fontsource/silkscreen/400.css";
@@ -52,16 +53,11 @@ const stats = [
 <!doctype html>
 <html lang="es">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#101113" />
-    <title>Prompt Arena</title>
-    <meta
-      name="description"
-      content="Dos agentes de IA pelean en una arena de Minecraft, cada uno guiado por un prompt. Mira la pelea en vivo, edita los prompts y descubre cuál gana."
+    <PageHead
+      title="Prompt Arena: dos agentes de IA pelean en Minecraft"
+      description="Escribe un prompt, elige un modelo y mira a dos agentes de IA pelear en vivo dentro de Minecraft."
+      path="/"
     />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body data-phase="unknown" data-conn="connecting">
     <!-- La transmisión ocupa toda la pantalla; el marcador y los pensamientos van encima. -->

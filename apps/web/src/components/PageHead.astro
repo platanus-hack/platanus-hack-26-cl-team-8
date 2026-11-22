@@ -1,0 +1,108 @@
+---
+/**
+ * Lo que va dentro de <head> en todas las páginas: título, descripción, íconos y los datos
+ * que usan los buscadores y las vistas previas al compartir un enlace (WhatsApp, Slack, X).
+ *
+ * Las vistas previas necesitan direcciones completas, así que todo se arma sobre la
+ * dirección pública del sitio (PUBLIC_SITE_URL al compilar; por defecto, el dominio de la
+ * arena). La imagen (og.png) y los íconos salen de la marca: ver docs/MARCA.md.
+ *
+ * Para los asistentes de IA hay además un resumen en texto del sitio en public/llms.txt y
+ * public/llms-full.txt: si cambia lo que el sitio hace, se actualizan a mano.
+ */
+interface Props {
+  title: string;
+  description: string;
+  /** Ruta de la página, desde la raíz: "/" o "/arena". */
+  path: string;
+  /** Páginas de trabajo del equipo: se pueden abrir, pero no se ofrecen a los buscadores. */
+  noindex?: boolean;
+}
+
+const { title, description, path, noindex = false } = Astro.props;
+
+const SITE = (import.meta.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "") || "https://prompt-arena.si";
+const url = `${SITE}${path}`;
+const image = `${SITE}/og.png`;
+const imageAlt = "Prompt Arena: dos cuadrados, uno rojo y uno azul, que se miran antes de pelear.";
+
+/** Qué es el sitio, en el formato que leen los buscadores y los asistentes (schema.org). */
+const ABOUT =
+  "Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en un duelo. Cada uno pelea como le indica un prompt escrito por una persona, con el kit y el modelo que se le elija. La pelea se transmite en vivo junto con lo que cada agente piensa, dice y hace.";
+const structured = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE}/#sitio`,
+      url: `${SITE}/`,
+      name: "Prompt Arena",
+      description: ABOUT,
+      inLanguage: "es",
+    },
+    {
+      "@type": "WebApplication",
+      "@id": `${SITE}/#app`,
+      name: "Prompt Arena",
+      url: `${SITE}/`,
+      description: ABOUT,
+      applicationCategory: "GameApplication",
+      operatingSystem: "Web",
+      inLanguage: "es",
+      image: image,
+      isAccessibleForFree: true,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      sameAs: ["https://github.com/platanus-hack/platanus-hack-26-cl-team-8"],
+    },
+    {
+      "@type": "WebPage",
+      "@id": `${url}#pagina`,
+      url,
+      name: title,
+      description,
+      inLanguage: "es",
+      isPartOf: { "@id": `${SITE}/#sitio` },
+      about: { "@id": `${SITE}/#app` },
+    },
+  ],
+};
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#101113" />
+<title>{title}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={url} />
+{noindex && <meta name="robots" content="noindex" />}
+
+<!-- Resumen del sitio en texto, para modelos de lenguaje (llms.txt) y sus rastreadores. -->
+<link rel="alternate" type="text/markdown" title="Prompt Arena para modelos de lenguaje" href="/llms.txt" />
+<script type="application/ld+json" set:html={JSON.stringify(structured)} />
+
+<!-- Íconos: el SVG para los navegadores, PNG para los que no lo leen y para la pantalla de inicio del teléfono. -->
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<link rel="manifest" href="/site.webmanifest" />
+
+<!-- Vista previa al compartir el enlace (Open Graph: WhatsApp, Slack, LinkedIn, Discord...). -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Prompt Arena" />
+<meta property="og:locale" content="es_CL" />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={url} />
+<meta property="og:image" content={image} />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={imageAlt} />
+
+<!-- Lo mismo para X, que usa sus propios nombres. -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={image} />
+<meta name="twitter:image:alt" content={imageAlt} />

@@ -18,9 +18,12 @@ ARG PUBLIC_HLS_URL="/live/arena/index.m3u8"
 # Ms de atraso entre el juego y la hora de cada cuadro del video, para sincronizar el
 # marcador con la imagen. Vacío = 400.
 ARG PUBLIC_STREAM_PIPELINE_MS=""
+# Dirección pública del sitio, para las vistas previas al compartir. Vacío = https://prompt-arena.si.
+ARG PUBLIC_SITE_URL=""
 ENV PUBLIC_API_BASE=${PUBLIC_API_BASE} \
     PUBLIC_HLS_URL=${PUBLIC_HLS_URL} \
     PUBLIC_STREAM_PIPELINE_MS=${PUBLIC_STREAM_PIPELINE_MS} \
+    PUBLIC_SITE_URL=${PUBLIC_SITE_URL} \
     ASTRO_TELEMETRY_DISABLED=1
 
 # Se instala desde la raíz, pero solo @phack/web y sus dependencias del
