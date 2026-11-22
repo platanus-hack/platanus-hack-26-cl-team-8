@@ -240,7 +240,10 @@ services:
       # así se puede ajustar el proxy sin reconstruir la web.
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
     ports:
-      - "${WEB_PORT:-8080}:80"
+      # Sin WEB_BIND, Docker publica en todas las interfaces (IPv4 e IPv6), como siempre.
+      # WEB_BIND=127.0.0.1 deja el sitio solo en el loopback del servidor: es lo indicado
+      # cuando se publica con el túnel (cloudflared llega a web:80 por la red de compose).
+      - "${WEB_BIND:+${WEB_BIND}:}${WEB_PORT:-8080}:80"
     depends_on:
       orchestrator:
         condition: service_started
@@ -256,12 +259,34 @@ services:
     logging: *logging
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Túnel administrado desde el panel de Cloudflare (con token): las rutas públicas
+    # (arena.<dominio> -> http://web:80, ssh.<dominio> -> ssh://host.docker.internal:22)
+    # se definen allá, no aquí. Guía completa: docs/CLOUDFLARE.md.
+    # Versión fija: se actualiza cambiando la etiqueta (la imagen no se autoactualiza).
+    image: cloudflare/cloudflared:2026.10.7
     profiles: ["tunnel"]
     restart: unless-stopped
-    command: tunnel --no-autoupdate run
+    # --metrics fijo para que el healthcheck sepa dónde preguntar (solo dentro del contenedor).
+    command: tunnel --no-autoupdate --metrics 127.0.0.1:20241 run
     environment:
+      # Sin token cloudflared no arranca y se reinicia en bucle (mira `docker compose logs
+      # cloudflared`). No se usa ${TUNNEL_TOKEN:?}: compose interpola todos los servicios,
+      # incluso los de perfiles apagados, y eso rompería `docker compose up` sin el túnel.
+      # scripts/deploy*.sh revisan el token antes de levantar con DEPLOY_TUNNEL=1.
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      # auto = QUIC (UDP 7844) y, si no pasa, HTTP/2 (TCP 7844). http2 = solo TCP.
+      TUNNEL_TRANSPORT_PROTOCOL: ${TUNNEL_TRANSPORT_PROTOCOL:-auto}
+    # host.docker.internal = el propio servidor, para la ruta SSH del túnel (llega al sshd del host).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # La imagen es distroless (sin shell ni curl): se usa el propio binario.
+      # `tunnel ready` consulta /ready, que responde 200 con al menos una conexión a Cloudflare.
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       web:
         condition: service_started

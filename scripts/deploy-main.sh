@@ -24,7 +24,15 @@
 #   DEPLOY_PASSWORD  contraseña SSH (opcional; requiere `sshpass`). Sin ella se usa tu llave SSH.
 #   DEPLOY_SUDO      1 = correr docker con sudo (usa DEPLOY_PASSWORD). Por defecto 0.
 #   DEPLOY_BRANCH    rama a desplegar (por defecto: main)
-#   DEPLOY_TUNNEL    1 = levantar también el perfil "tunnel" (cloudflared)
+#   DEPLOY_TUNNEL    1 = levantar también el perfil "tunnel" (cloudflared). Antes de levantar
+#                    revisa que el .env del servidor tenga TUNNEL_TOKEN.
+#   DEPLOY_CF_ACCESS 1 = entrar por SSH a través de Cloudflare Access (ssh.<dominio>), sin
+#                    Tailscale: agrega ProxyCommand "cloudflared access ssh" a ssh y rsync.
+#                    Requiere `cloudflared` en esta máquina. Ver docs/CLOUDFLARE.md.
+#   DEPLOY_CF_TOKEN_ID / DEPLOY_CF_TOKEN_SECRET
+#                    service token de Cloudflare Access (opcional, los dos juntos). Sin él,
+#                    cloudflared abre el navegador cuando vence el login; con él, el script
+#                    corre solo (por ejemplo en un loop) sin pedir nada.
 #
 # Códigos de salida: 0 = sin cambios o desplegado; 2 = servidor inalcanzable; 1 = error.
 
@@ -69,8 +77,47 @@ for bin in git rsync ssh tar; do
 done
 
 SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=20)
+
+# SSH a través de Cloudflare Access: ssh no se conecta directo al servidor, sino que
+# cloudflared lleva la conexión hasta ssh.<dominio> (%h = DEPLOY_HOST).
+CF_ACCESS="${DEPLOY_CF_ACCESS:-0}"
+if [ "$CF_ACCESS" = "1" ]; then
+  if ! CLOUDFLARED_BIN="$(command -v cloudflared)"; then
+    echo "ERROR: DEPLOY_CF_ACCESS=1 necesita 'cloudflared' en esta máquina (ver docs/CLOUDFLARE.md)." >&2
+    exit 1
+  fi
+  case "$CLOUDFLARED_BIN" in
+    *[[:space:]]* | *\'* | *\"*)
+      echo "ERROR: la ruta de cloudflared ($CLOUDFLARED_BIN) no puede tener espacios ni comillas." >&2
+      exit 1
+      ;;
+  esac
+  SSH_OPTS+=(-o "ProxyCommand=$CLOUDFLARED_BIN access ssh --hostname %h")
+  if [ -n "${DEPLOY_CF_TOKEN_ID:-}" ] || [ -n "${DEPLOY_CF_TOKEN_SECRET:-}" ]; then
+    if [ -z "${DEPLOY_CF_TOKEN_ID:-}" ] || [ -z "${DEPLOY_CF_TOKEN_SECRET:-}" ]; then
+      echo "ERROR: el service token necesita DEPLOY_CF_TOKEN_ID y DEPLOY_CF_TOKEN_SECRET." >&2
+      exit 1
+    fi
+    # cloudflared los lee del entorno: así el secreto no queda a la vista en `ps`.
+    export TUNNEL_SERVICE_TOKEN_ID="$DEPLOY_CF_TOKEN_ID"
+    export TUNNEL_SERVICE_TOKEN_SECRET="$DEPLOY_CF_TOKEN_SECRET"
+  else
+    # Sin service token hace falta un login vigente. Si no lo hay, cloudflared se queda
+    # esperando el navegador (y el ssh de abajo oculta su salida): mejor avisar ahora.
+    if ! "$CLOUDFLARED_BIN" access token --app="https://$HOST" >/dev/null 2>&1; then
+      echo "SERVIDOR NO RESPONDE: venció o no hay login de Cloudflare Access: corre cloudflared access login https://$HOST"
+      exit 2
+    fi
+  fi
+fi
+
 SSH=(ssh "${SSH_OPTS[@]}")
-RSYNC_RSH="ssh ${SSH_OPTS[*]}"
+# rsync parte -e en espacios pero respeta comillas simples: cada opción va entre comillas
+# (el ProxyCommand tiene espacios).
+RSYNC_RSH="ssh"
+for opt in "${SSH_OPTS[@]}"; do
+  RSYNC_RSH="$RSYNC_RSH '$opt'"
+done
 if [ -n "$PASSWORD" ]; then
   if ! command -v sshpass >/dev/null 2>&1; then
     echo "ERROR: DEPLOY_PASSWORD está definido pero falta 'sshpass' en esta máquina." >&2
@@ -111,6 +158,9 @@ NEW_SHORT="${NEW_SHA:0:7}"
 
 if ! OLD_SHA="$("${SSH[@]}" "$TARGET" "mkdir -p '$REMOTE_PATH' && cat '$REMOTE_PATH/.deployed-sha' 2>/dev/null || true" 2>/dev/null)"; then
   echo "SERVIDOR NO RESPONDE: no se pudo conectar a $TARGET (origin/$BRANCH está en $NEW_SHORT)."
+  if [ "$CF_ACCESS" = "1" ] && [ -z "${DEPLOY_CF_TOKEN_ID:-}" ]; then
+    echo "Si venció el login de Cloudflare Access, renuévalo con: cloudflared access login https://$HOST"
+  fi
   exit 2
 fi
 OLD_SHA="$(printf '%s' "$OLD_SHA" | tr -d '[:space:]')"
@@ -152,7 +202,14 @@ remote "[ -f .env ] || cp .env.example .env"
 # ---------- 3. Reconstruir y levantar ----------
 
 COMPOSE="docker compose"
-[ "${DEPLOY_TUNNEL:-0}" = "1" ] && COMPOSE="docker compose --profile tunnel"
+if [ "${DEPLOY_TUNNEL:-0}" = "1" ]; then
+  COMPOSE="docker compose --profile tunnel"
+  # Sin token, cloudflared se reinicia en bucle y el sitio (y el SSH por Cloudflare) se cae.
+  if ! remote "grep -Eq '^TUNNEL_TOKEN=.*[A-Za-z0-9]' .env"; then
+    echo "ERROR: DEPLOY_TUNNEL=1 pero el .env del servidor no tiene TUNNEL_TOKEN (ver docs/CLOUDFLARE.md)." >&2
+    exit 1
+  fi
+fi
 
 BUILD_LOG="$TMP_DIR/build.log"
 
@@ -163,9 +220,18 @@ mc_started_at() {
 }
 MC_BEFORE="$(mc_started_at)"
 
-if ! remote_docker "$COMPOSE up -d --build" >"$BUILD_LOG" 2>&1; then
+# La salida de compose va primero a un archivo del servidor: si la conexión SSH se corta a
+# mitad de camino (por ejemplo porque `up` recrea cloudflared y el SSH entra por el túnel),
+# compose no muere por escribir en una conexión cerrada y termina el despliegue igual.
+UP_CMD="log=\$(mktemp) && { $COMPOSE up -d --build </dev/null >\"\$log\" 2>&1; s=\$?; cat \"\$log\"; rm -f \"\$log\"; exit \$s; }"
+UP_STATUS=0
+remote_docker "$UP_CMD" >"$BUILD_LOG" 2>&1 || UP_STATUS=$?
+if [ "$UP_STATUS" != "0" ]; then
   echo "ERROR: falló '$COMPOSE up -d --build' al desplegar $NEW_SHORT. Últimas líneas:"
   tail -n 15 "$BUILD_LOG"
+  if [ "$UP_STATUS" = "255" ] && [ "$CF_ACCESS" = "1" ]; then
+    echo "La conexión SSH se cortó (¿se recreó cloudflared?). El despliegue sigue en el servidor; vuelve a correr el script en un minuto."
+  fi
   exit 1
 fi
 
