@@ -8,7 +8,7 @@ Dos agentes LLM se enfrentan en un duelo PvP dentro de una arena de Minecraft. E
 
 Un sitio web transmite la pelea en vivo (video + telemetría en tiempo real), deja que cualquiera edite los dos prompts, elija el kit y el modelo de cada lado, inicie o detenga una pelea, y muestra el historial de resultados. Es experimental: no hay cuentas ni salas, **todos ven la misma pelea**.
 
-Todo corre en un servidor casero con Docker Compose y se publica a internet con un Cloudflare Tunnel.
+Todo corre en un servidor casero con Docker Compose y se publica a internet con un Cloudflare Tunnel, en un dominio propio (guía: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)).
 
 > **Estado:** el stack completo corre en el servidor casero (pelea real con LLM, video en vivo y web). Qué se probó y qué no está en [Estado](#estado).
 
@@ -24,7 +24,7 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
                   +---------+---------+
                             | http://web:80
                   +---------v---------+
-   navegador ---> |   web  (Caddy)    |   también en http://<servidor>:8080
+   navegador ---> |   web  (Caddy)    |   también en http://<servidor>:8080 (WEB_BIND)
                   |  /       Astro    |
                   |  /api/*  ---------+---------------+
                   |  /live/* -----+   |               |
@@ -54,7 +54,7 @@ Todo corre en un servidor casero con Docker Compose y se publica a internet con 
 | `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
 | `mediamtx` | `bluenviron/mediamtx` | Convierte el RTMP en HLS de baja latencia. |
 | `web` | `apps/web` + Caddy | Sitio estático (Astro) y proxy inverso de un solo origen. |
-| `cloudflared` | `cloudflare/cloudflared` | Túnel de salida hacia Cloudflare (opcional). |
+| `cloudflared` | `cloudflare/cloudflared` | Túnel de salida hacia Cloudflare (opcional): publica el sitio y el SSH de los despliegues. |
 
 Rutas públicas (un solo origen, todo pasa por Caddy):
 
@@ -246,7 +246,7 @@ pnpm local --tunnel                 # + el túnel de Cloudflare (ver "Web en Clo
 - **Todo escucha solo en `127.0.0.1`**: el servidor de Minecraft está en modo offline y la API no tiene autenticación, así que nada queda expuesto a la red local.
 - El servidor de Minecraft (jar de Paper, mundo, `server.properties` generado) vive en `.local/minecraft/`, y el historial y las transcripciones del orquestador en `.local/data/`. Ambas carpetas están fuera de git. Para empezar de cero, borra `.local/`.
 - Las variables salen de `.env`, igual que en Docker. Los hosts internos (`MC_HOST`, `RCON_HOST`, `RTMP_URL`…) los fija `scripts/local/dev.mjs` apuntando a `127.0.0.1`.
-- Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero por Tailscale), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
+- Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero, con un túnel SSH por Cloudflare: ver [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
 
 ## Kits y herramientas
 
@@ -430,6 +430,7 @@ pnpm tournament run <id>            # reanuda sin repetir partidas
 # 4. Mirar
 pnpm tournament status <id>         # progreso + calibración (quién entró, quién no y por qué)
 pnpm tournament leaderboard <id>    # ranking oficial (solo liga) y matriz
+pnpm tournament speed <id>          # velocidad por modelo junto al Elo y su correlación (--dir <carpeta> para archivos sueltos)
 pnpm tournament list
 ```
 
@@ -472,23 +473,25 @@ Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wran
 
 El Worker lleva dentro el contrato de `packages/protocol` y se despliega aparte del orquestador. Cuando el contrato cambia (proveedores, kits, rutas de la API), despliega primero el orquestador y la web justo después: mientras las dos versiones no coinciden, la web puede descartar el estado o los valores por defecto que no entiende.
 
-## Cloudflare Tunnel (alternativa: hostname público hacia Caddy)
+## Cloudflare Tunnel (sitio en tu dominio y SSH sin Tailscale)
 
-1. En el panel de Cloudflare: **Zero Trust → Networks → Tunnels → Create a tunnel**, tipo **Cloudflared**.
-2. Copia el **token** del túnel (el valor largo que aparece después de `--token` en el comando de instalación) y pégalo en `.env`:
-   ```bash
-   TUNNEL_TOKEN=eyJ...
-   ```
-3. En el túnel, pestaña **Public Hostname → Add a public hostname**:
-   - Subdomain / Domain: el que quieras (por ejemplo `arena.tudominio.cl`).
-   - Service: tipo **HTTP**, URL **`web:80`** (es decir, `http://web:80`).
-4. Levanta el stack con el perfil del túnel:
-   ```bash
-   docker compose --profile tunnel up -d
-   ```
-5. Revisa `docker compose logs cloudflared`: debe registrar conexiones con Cloudflare. El sitio queda en `https://arena.tudominio.cl`.
+El servicio `cloudflared` (perfil `tunnel` de compose) conecta el servidor con Cloudflare por un túnel de salida: no se abren puertos en el router. Las rutas se configuran en el panel de Cloudflare:
 
-Cloudflare termina TLS; Caddy solo habla HTTP en el puerto 80. Los websockets funcionan por el túnel sin configuración adicional. No hay que abrir puertos en el router.
+| Hostname | Servicio | Acceso |
+|---|---|---|
+| `arena.<dominio>` | HTTP `web:80` (Caddy) | público |
+| `ssh.<dominio>` | SSH `host.docker.internal:22` (sshd del servidor) | solo con Cloudflare Access (obligatorio) |
+
+En corto:
+
+1. Dominio en Cloudflare, túnel creado en **Networking → Tunnels**, y su token en el `.env` del servidor (`TUNNEL_TOKEN=eyJ...`).
+2. Levantar con el perfil: `docker compose --profile tunnel up -d` (o `DEPLOY_TUNNEL=1` en los scripts de despliegue).
+3. Con el sitio funcionando, `WEB_BIND=127.0.0.1` en el `.env` del servidor (obligatorio si el túnel es la única entrada) para que el puerto 8080 no quede abierto a la red.
+4. Desplegar por Cloudflare: `DEPLOY_HOST=ssh.<dominio>` y `DEPLOY_CF_ACCESS=1` en `.env.deploy`, con `cloudflared` instalado en tu máquina.
+
+El paso a paso completo (nameservers, rutas, la aplicación de Access para el SSH, service token para el loop, orden para apagar Tailscale sin quedarse fuera, verificación y problemas comunes) está en [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
+
+Cloudflare termina TLS; Caddy solo habla HTTP en el puerto 80. Los websockets funcionan por el túnel sin configuración adicional.
 
 ## Despliegue
 
@@ -505,9 +508,11 @@ DEPLOY_HOST=servidor DEPLOY_USER=usuario DEPLOY_PATH=/home/usuario/phack2026 \
 DEPLOY_TUNNEL=1 DEPLOY_SMOKE=1 bash scripts/deploy.sh
 ```
 
+Por Cloudflare, en vez de una IP de la red: `DEPLOY_HOST=ssh.<dominio> DEPLOY_CF_ACCESS=1` (ssh y rsync pasan por `cloudflared access ssh`; ver [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)). Sirve igual para `scripts/deploy-main.sh`, que además lee esas variables de `.env.deploy`; `deploy.sh` solo las toma del entorno.
+
 El script:
 
-1. Copia el repo con `rsync` (excluye `node_modules`, `.git`, `data`, `dist` y `.env`). Un `pnpm-lock.yaml` generado en el servidor no se borra; aun así, cópialo a tu máquina y commitéalo cuando exista.
+1. Copia el repo con `rsync` (excluye `node_modules`, `.git`, `data`, `dist`, `.env` y `.env.*` salvo `.env.example`, así que `.env.deploy` no sale de tu máquina). Un `pnpm-lock.yaml` generado en el servidor no se borra; aun así, cópialo a tu máquina y commitéalo cuando exista.
 2. Si en el servidor no hay `.env`, lo crea desde `.env.example` (modo mock). **Las claves se editan en el servidor**, nunca viajan desde tu máquina.
 3. Corre `docker compose up -d --build` (con `--profile tunnel` si `DEPLOY_TUNNEL=1`).
 4. Reinicia `mediamtx` para que tome `infra/mediamtx/mediamtx.yml` (el video se corta unos segundos). Los cambios en `infra/minecraft/config/` o `infra/caddy/Caddyfile` se aplican a mano: `docker compose restart minecraft` / `docker compose restart web`.
@@ -515,7 +520,7 @@ El script:
 
 ### Despliegue automático cuando cambia `main`
 
-`scripts/deploy-main.sh` despliega `origin/main` solo si cambió desde el último despliegue (compara con el commit anotado en el servidor). Copia el commit exacto, no tu carpeta de trabajo. Los datos del servidor van en `.env.deploy` (ignorado por git): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, y opcionalmente `DEPLOY_PASSWORD` y `DEPLOY_SUDO=1` si el usuario necesita `sudo` para Docker.
+`scripts/deploy-main.sh` despliega `origin/main` solo si cambió desde el último despliegue (compara con el commit anotado en el servidor). Copia el commit exacto, no tu carpeta de trabajo. Los datos del servidor van en `.env.deploy` (ignorado por git): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, y opcionalmente `DEPLOY_PASSWORD` y `DEPLOY_SUDO=1` si el usuario necesita `sudo` para Docker. Para entrar por Cloudflare: `DEPLOY_CF_ACCESS=1`, y para que el loop corra sin abrir el navegador, un service token de Access en `DEPLOY_CF_TOKEN_ID` y `DEPLOY_CF_TOKEN_SECRET`.
 
 ```bash
 bash scripts/deploy-main.sh            # despliega si hay commits nuevos
@@ -581,7 +586,7 @@ Los kits, las herramientas `pearl` y `build`, la lista de modelos permitidos y l
 
 - **Los kits nuevos en una pelea real.** Las peleas de prueba fueron todas con el kit Clásico. Falta ver en el servidor los otros cinco kits, la perla de ender y el muro, y el balance entre kits: sale de las fórmulas de daño de Minecraft 1.20.4, no de peleas medidas.
 - **La lista de modelos permitidos** contra el catálogo real, y cómo se comporta cada modelo barato en una pelea: solo se probó `deepseek/deepseek-v4.1-flash-1017-fast`.
-- **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel.
+- **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel, el SSH por Cloudflare Access (`DEPLOY_CF_ACCESS=1`) y el healthcheck de `cloudflared`.
 - **`scripts/deploy.sh` tal cual**: asume que el usuario SSH puede usar `docker` sin `sudo`.
 - **La cámara fuera de Docker**, y el modo `CAMERA_MODE=viewer` después de agregar el modo `client`.
 - **La transmisión tras un reinicio completo del servidor** (que `phack-stream` parta solo al encender) y en otra distribución que no sea Fedora.
