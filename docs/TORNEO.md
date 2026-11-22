@@ -160,6 +160,8 @@ cambia el torneo ni el rating, y se puede correr con la liga en curso. `--stage 
 - **Parte de las decisiones** (`decisionShare`): mis decisiones / las de los dos en la misma
   partida, promediada. Es la medida de velocidad que no depende de la duración: los dos
   pelearon el mismo tiempo. 50 % = igual de rápido que el rival.
+- **Decisiones por minuto de pelea** (`decisionsPerFightMin`): exacta, con la duración real de
+  la pelea (`fightMs`); solo en ligas desde la versión sin tope de 1,5 s.
 - **Decisiones por minuto de reloj** (`decisionsPerWallMin`): aproximada. `startedAt`/`endedAt`
   de un intento incluyen preparar la arena, conectar los bots y la cuenta regresiva, así que
   subestima.
@@ -181,7 +183,17 @@ DATA_DIR/tournaments/
     attempts.jsonl      MatchAttempt por línea, append-only (reintentos = varias líneas)
     state.json          RunnerState: liga congelada, rondas adaptativas, parada, pausa
     PAUSE               (opcional) pedido de pausa
+    matches.jsonl       MatchRecord de cada pelea que llegó a empezar (métricas por ronda incluidas)
+    transcripts/<recordId>.jsonl   transcripción completa: cada observación, respuesta del LLM,
+                        reason, acción y evento
 ```
+
+Desde la liga sin tope de 1,5 s, cada intento trae además `recordId` (para cruzarlo con su
+registro y su transcripción), `fightMs` (duración real de la pelea, sin la preparación) y, por
+lado, `latenciesMs` (la latencia de cada decisión, en orden). Las ligas de antes no los traen:
+solo guardaban el resumen de `attempts.jsonl`. El registro y la transcripción van en la
+carpeta del torneo, no en el historial de la web, para no mezclarse con sus peleas en `/bench`.
+Una transcripción pesa del orden de cientos de KB: unas 300 partidas son unos cientos de MB.
 
 Por cada matchId cuenta solo el **primer** intento válido (`validAttempts`). `DATA_DIR`
 relativo se resuelve desde `apps/orchestrator` (igual que el orquestador en `pnpm dev`).

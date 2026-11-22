@@ -10,7 +10,8 @@
  * (preparar la arena, conectar bots, kits y cuenta regresiva incluidos), no de la pelea.
  * Por eso la métrica principal de velocidad es `decisionShare`: qué parte de las
  * decisiones de la partida tomó el modelo frente a su rival, que pelearon el mismo tiempo.
- * `decisionsPerWallMin` es solo aproximada (incluye la preparación).
+ * `decisionsPerWallMin` es solo aproximada (incluye la preparación). Los intentos que traen
+ * `fightMs` (desde la liga sin tope de 1,5 s) dan además `decisionsPerFightMin`, exacta.
  */
 import type { MatchAttempt, Side, TournamentConfig, TournamentReport } from "@phack/protocol";
 import { allModels } from "./report";
@@ -38,6 +39,11 @@ export type SpeedRow = {
   decisionShare: number | null;
   /** Decisiones por minuto de reloj del intento (incluye la preparación: subestima). */
   decisionsPerWallMin: number | null;
+  /**
+   * Decisiones por minuto de pelea real (intentos con `fightMs`, desde la liga sin tope de
+   * 1,5 s); null si ningún intento la trae.
+   */
+  decisionsPerFightMin: number | null;
   /** Latencia estado -> acción: media exacta (ponderada por decisiones) y mediana de los p50/p95 de cada partida. */
   latencyMeanMs: number | null;
   latencyP50Ms: number | null;
@@ -74,6 +80,7 @@ export type SpeedReport = {
 export const CORRELATED: ReadonlyArray<{ metric: keyof SpeedRow; label: string }> = [
   { metric: "decisionShare", label: "Parte de las decisiones" },
   { metric: "decisionsPerMatch", label: "Decisiones por partida" },
+  { metric: "decisionsPerFightMin", label: "Decisiones por minuto de pelea" },
   { metric: "latencyMeanMs", label: "Latencia media" },
   { metric: "latencyP50Ms", label: "Latencia p50" },
   { metric: "invalidRate", label: "Tasa de inválidas" },
@@ -132,6 +139,9 @@ type Acc = {
   decisions: number;
   shares: number[];
   wallMs: number;
+  /** Solo de los intentos que traen fightMs, con sus decisiones. */
+  fightMs: number;
+  fightDecisions: number;
   latencySum: number;
   latencyCount: number;
   p50s: number[];
@@ -152,6 +162,8 @@ const emptyAcc = (): Acc => ({
   decisions: 0,
   shares: [],
   wallMs: 0,
+  fightMs: 0,
+  fightDecisions: 0,
   latencySum: 0,
   latencyCount: 0,
   p50s: [],
@@ -188,6 +200,10 @@ export function buildSpeedReport(
       acc.decisions += s.decisions;
       if (both > 0) acc.shares.push(s.decisions / both);
       acc.wallMs += Math.max(0, a.endedAt - a.startedAt);
+      if (typeof a.fightMs === "number" && a.fightMs > 0) {
+        acc.fightMs += a.fightMs;
+        acc.fightDecisions += s.decisions;
+      }
       if (s.latencyMs.count > 0) {
         acc.latencySum += s.latencyMs.mean * s.latencyMs.count;
         acc.latencyCount += s.latencyMs.count;
@@ -223,6 +239,7 @@ export function buildSpeedReport(
       decisionsPerMatch: ratio(acc.decisions, acc.matches),
       decisionShare: shares.length > 0 ? shares.reduce((s, x) => s + x, 0) / shares.length : null,
       decisionsPerWallMin: ratio(acc.decisions, acc.wallMs / 60_000),
+      decisionsPerFightMin: ratio(acc.fightDecisions, acc.fightMs / 60_000),
       latencyMeanMs: ratio(acc.latencySum, acc.latencyCount),
       latencyP50Ms: median(acc.p50s),
       latencyP95Ms: median(acc.p95s),

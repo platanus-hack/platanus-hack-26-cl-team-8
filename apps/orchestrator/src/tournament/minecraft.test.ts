@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BENCHMARK_PROMPT, type MatchSpec } from "@phack/protocol";
 import type { MatchOutcome, RunOnceOptions, SideOutcome } from "../match";
 import { REF_KEY, fakeModel } from "./fixtures";
-import { attemptFromOutcome, classifyOutcome, createMinecraftRunner, routingFor, sideStats } from "./minecraft";
+import { attemptFromOutcome, classifyOutcome, createMinecraftRunner, fightMs, routingFor, sideStats } from "./minecraft";
 
 const spec: MatchSpec = {
   id: "calibration:platanus:s1:a/x~b/y:vuelta",
@@ -115,6 +115,27 @@ describe("sideStats y costo", () => {
     expect(a).toMatchObject({ matchId: spec.id, attempt: 2, status: "valid", startedAt: 10, endedAt: 20 });
     expect(a.sides.red.model).toBe("b/y");
     expect(a.sides.blue.model).toBe("a/x");
+    // Sin registro (no llegó a guardarse), sin duración de pelea.
+    expect(a.fightMs).toBeNull();
+  });
+
+  it("guarda el id del registro, la duración real de la pelea y la latencia de cada decisión", () => {
+    const models = { "a/x": fakeModel("a/x"), "b/y": fakeModel("b/y") };
+    const fin = { health: 5, damageDealt: 9 };
+    const record = { durationMs: 21_500, series: null, final: { red: fin, blue: fin } } as unknown as NonNullable<MatchOutcome["record"]>;
+    const o = outcome({
+      id: "00000000-0000-4000-8000-000000000009",
+      record,
+      sides: { red: side({ decisionLatenciesMs: [900, 1100, 1300] }), blue: side() },
+    });
+    const a = attemptFromOutcome(spec, models, o, 1, 0, 40_000);
+    expect(a.recordId).toBe(o.id);
+    expect(a.fightMs).toBe(21_500);
+    expect(a.sides.red.latenciesMs).toEqual([900, 1100, 1300]);
+    // En una serie, la suma de sus rondas (sin las pausas entre ellas).
+    const series = { durationMs: 99_000, final: { red: fin, blue: fin }, series: { rounds: [{ durationMs: 20_000 }, { durationMs: 15_000 }] } };
+    expect(fightMs(outcome({ record: series as unknown as NonNullable<MatchOutcome["record"]> }))).toBe(35_000);
+    expect(attemptFromOutcome(spec, models, outcome({ reachedRunning: false }), 1, 0, 1).recordId).toBeNull();
   });
 });
 

@@ -24,7 +24,7 @@ import {
   type SideStats,
 } from "@phack/protocol";
 import { applyWorldRules } from "../arena";
-import { MatchManager, NOOP_HUB, type MatchOutcome, type RunOnceOptions, type SideOutcome } from "../match";
+import { MatchManager, NOOP_HUB, type MatchDeps, type MatchOutcome, type RunOnceOptions, type SideOutcome } from "../match";
 import { RconClient } from "../rcon";
 import { defaultPrompts } from "../store";
 import type { LogFn } from "../util";
@@ -114,7 +114,16 @@ export function sideStats(model: FrozenModel, side: SideOutcome, final: { health
     costSource,
     latencyMs: side.latencyMs,
     llmErrors: side.llmErrors,
+    latenciesMs: [...side.decisionLatenciesMs],
   };
+}
+
+/** Duración de la pelea sin la preparación (ms): la suma de sus rondas o la pelea suelta. */
+export function fightMs(outcome: MatchOutcome): number | null {
+  const record = outcome.record;
+  if (!record) return null;
+  const ms = record.series ? record.series.rounds.reduce((sum, r) => sum + r.durationMs, 0) : record.durationMs;
+  return Math.max(0, ms);
 }
 
 /** Convierte el resultado de runOnce en un MatchAttempt. */
@@ -140,6 +149,8 @@ export function attemptFromOutcome(
     outcome: c.status === "valid" ? c.outcome : null,
     error: c.status === "infra" ? c.error : null,
     sides: { red: sideStats(red, outcome.sides.red, final("red")), blue: sideStats(blue, outcome.sides.blue, final("blue")) },
+    recordId: outcome.reachedRunning ? outcome.id : null,
+    fightMs: fightMs(outcome),
   };
 }
 
@@ -178,10 +189,22 @@ export function createMinecraftRunner(manager: OnceRunner, matchSeconds: number)
  * Arma un MatchManager propio para el CLI (sin web ni historial de peleas) con el RCON
  * del entorno, y deja el mundo con sus reglas. `close` libera el RCON.
  */
+/**
+ * Lo que se le puede conectar al MatchManager del CLI. Sin nada, las peleas no dejan rastro
+ * fuera del intento; el torneo pasa un historial y transcripciones en su propia carpeta.
+ */
+export type RealManagerOptions = {
+  history?: MatchDeps["history"];
+  transcripts?: MatchDeps["transcripts"];
+  /** Dólares por token de un modelo, para el costo de cada ronda en el registro. */
+  price?: (id: string) => { input: number; output: number } | null;
+};
+
 export async function createRealMatchManager(
   env: Env,
   tickMs: number,
   log: LogFn,
+  opts: RealManagerOptions = {},
 ): Promise<{ manager: MatchManager; close: () => Promise<void> }> {
   const rcon = new RconClient({ host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD, log });
   await rcon.waitUntilReady();
@@ -194,10 +217,10 @@ export async function createRealMatchManager(
     prompts: { get: () => defaultPrompts() },
     // runOnce fija sus propios ajustes (ver tournamentSettings); estos solo cubren start().
     settings: { get: () => DEFAULT_SETTINGS },
-    history: { append: async () => {}, update: async () => false },
-    // Sin web: ni transcripciones ni lista de permitidos (los modelos del torneo ya vienen congelados).
-    transcripts: { append: () => {} },
-    models: { isAllowed: () => true },
+    history: opts.history ?? { append: async () => {}, update: async () => false },
+    // Sin lista de permitidos: los modelos del torneo ya vienen congelados.
+    transcripts: opts.transcripts ?? { append: () => {} },
+    models: { isAllowed: () => true, ...(opts.price ? { price: opts.price } : {}) },
     createFighter,
     createLlmClient,
     log,
