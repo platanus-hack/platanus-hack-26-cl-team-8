@@ -1,4 +1,19 @@
-# Prompt Arena
+# team-8 Platanus Hack 26: Santiago ft. Buk Project
+
+**Current project logo:** project-logo.png
+
+<img src="./project-logo.png" alt="Project Logo" width="200" />
+
+Track: 🌐 Simulations
+
+team-8
+
+- Sebastián Torrealba ([@storrealbac](https://github.com/storrealbac))
+- Tito Vicente Orellana Barra ([@titin90](https://github.com/titin90))
+- Alberto Esteban Ferrada Rivas ([@albfr](https://github.com/albfr))
+- Carlos Pinto Urtubia ([@CxrlosKenobi](https://github.com/CxrlosKenobi))
+
+## Prompt Arena
 
 Simulación para la **Platanus Hackathon 2026** (track Simulaciones).
 
@@ -554,6 +569,22 @@ Para dejarlo corriendo solo desde Claude Code:
 La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarga de Paper y generación del mundo) el sitio muestra "sin señal" y el orquestador reintenta RCON hasta que el servidor responda. Iniciar una pelea antes de eso termina con error.
 
 `scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, `/api/models` con al menos un modelo, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
+
+### Copia en el repo de la hackathon
+
+El trabajo se hace en este repo. El repo del equipo en la organización de la hackathon ([platanus-hack/platanus-hack-26-cl-team-8](https://github.com/platanus-hack/platanus-hack-26-cl-team-8), público) es una copia de `main`: los dos comparten el mismo historial, así que ponerlo al día es empujar `main` y nada más.
+
+```bash
+bash scripts/mirror.sh    # copia origin/main al otro repo si cambió
+```
+
+Para no tener que acordarse, `DEPLOY_MIRROR=1` en `.env.deploy` hace que `scripts/deploy-main.sh` lo corra en cada vuelta.
+
+Tres cuidados:
+
+- Solo viaja `main`. Las ramas de trabajo se quedan aquí.
+- Los PR a `main` se mezclan con un commit de merge, no con squash: un squash rompe el historial compartido y el script deja de poder empujar.
+- Los archivos de la entrega (`platanus-hack-project.jsonc`, `project-description.md`, `project-logo.png` y el encabezado del README) se editan aquí, como cualquier otro. Si alguien commitea directo en el otro repo, el script falla y avisa en vez de pisarlo.
 
 ## Transmisión con el cliente real de Minecraft
 
