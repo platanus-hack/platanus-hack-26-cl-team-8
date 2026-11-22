@@ -76,7 +76,7 @@ const MATCH_DURATION_MS = 180_000;
 /** Cuánto lleva la pelea "en curso" al abrir la página. */
 const ELAPSED_MS = 72_000;
 /** Cuánto "tarda" en prepararse la arena antes de que parta la cuenta regresiva. */
-const PREPARE_MS = 1500;
+const PREPARE_MS = 2600;
 
 const params = new URLSearchParams(window.location.search);
 
@@ -364,7 +364,8 @@ function buildState(phase: MatchPhase): MatchState {
       seed: null,
       startedAt: runningSince,
       endsAt: null,
-      countdownEndsAt: null,
+      // Como el servidor: durante la pausa ya se sabe a qué hora parte la ronda siguiente.
+      countdownEndsAt: pauseEndsAt,
       agents: {
         red: { ...structuredClone(running.red), health: MAX_HEALTH },
         blue: { ...structuredClone(running.blue), health: MAX_HEALTH },
@@ -470,6 +471,9 @@ const initialPhase = MatchPhaseSchema.safeParse(params.get("mock"));
 let phase: MatchPhase = initialPhase.success ? initialPhase.data : "running";
 let emit: ((event: ArenaEvent) => void) | null = null;
 let phaseTimer: number | undefined;
+/** Lo que dura la pausa entre rondas de la maqueta, y a qué hora termina la que está en curso. */
+const PAUSE_MS = 9000;
+let pauseEndsAt: number | null = null;
 
 function broadcastState(): MatchState {
   const state = buildState(phase);
@@ -490,6 +494,8 @@ function setPhase(next: MatchPhase): MatchState {
   countdownEndsAt = null;
   // Como el servidor real: tras preparar viene la cuenta regresiva y la pelea empieza sola.
   if (next === "preparing") phaseTimer = window.setTimeout(startCountdown, PREPARE_MS);
+  pauseEndsAt = null;
+  if (next === "intermission") startPause();
   if (next === "running") {
     running = freshRunning();
     runningSince = Date.now() - ELAPSED_MS;
@@ -498,6 +504,14 @@ function setPhase(next: MatchPhase): MatchState {
   scheduleExplanation();
   return broadcastState();
 }
+
+/** La pausa entre rondas termina sola y parte la ronda siguiente. */
+function startPause(): void {
+  pauseEndsAt = Date.now() + PAUSE_MS;
+  phaseTimer = window.setTimeout(() => setPhase("running"), PAUSE_MS);
+}
+// La maqueta puede abrir directo en la pausa (?mock=intermission).
+if (phase === "intermission") startPause();
 
 /** En "finished", el "por qué ganó" llega 3 s después del resultado. */
 function scheduleExplanation(): void {

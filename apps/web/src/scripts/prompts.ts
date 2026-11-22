@@ -17,6 +17,7 @@ import {
   type UpdatePromptBody,
 } from "@phack/protocol";
 import { describeError, fetchPrompts, savePrompt } from "./api";
+import { setNextFight } from "./stagecards";
 import { notePresetPrompts } from "./presetpicker";
 import { byId, setText } from "./dom";
 import { SIDE_LABEL } from "./format";
@@ -185,6 +186,8 @@ function applyRemote(editor: Editor, config: AgentConfig): void {
 
 export function applyRemotePrompts(prompts: PromptsResponse): void {
   notePresetPrompts(prompts);
+  // Con lo guardado se pelea la próxima: lo muestra el cartel "Próxima pelea".
+  setNextFight(prompts);
   if (!editors) return;
   for (const side of SIDES) applyRemote(editors[side], prompts[side]);
 }

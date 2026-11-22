@@ -1,7 +1,14 @@
 /**
  * Textos y números del leaderboard del torneo. Funciones puras: sin DOM.
  */
-import type { CalibrationVerdict, MatchAttempt, TournamentProgress, TournamentStage } from "@phack/protocol";
+import {
+  REFERENCE_RATING,
+  type CalibrationVerdict,
+  type MatchAttempt,
+  type StandingRow,
+  type TournamentProgress,
+  type TournamentStage,
+} from "@phack/protocol";
 
 export const STAGE_LABEL: Record<TournamentProgress["stage"], string> = {
   created: "Creado, sin partidas",
@@ -85,12 +92,6 @@ export function fraction(done: number, total: number): number {
   return Math.min(1, Math.max(0, done / total));
 }
 
-/** Intervalo de un rating: semiancho redondeado ("±48") y extremos ("[952, 1048]"). */
-export function formatInterval(lo: number, hi: number): { half: string; range: string } {
-  const half = Math.round((hi - lo) / 2);
-  return { half: `±${half}`, range: `[${Math.round(lo)}, ${Math.round(hi)}]` };
-}
-
 /**
  * Color divergente para un puntaje (V + 0,5·E)/válidas, centrado en 50 %: hacia el
  * verde azulado cuando la fila le gana a la columna, hacia el naranjo cuando pierde.
@@ -111,4 +112,32 @@ export function scoreColor(score: number): string {
 export function formatDuration(startedAt: number, endedAt: number): string {
   const s = Math.round((endedAt - startedAt) / 1000);
   return s > 0 ? `${s} s` : "–";
+}
+
+/** Minutos como duración: "48 min", "2 h 17 min". */
+export function formatSpan(minutes: number): string {
+  if (!Number.isFinite(minutes)) return "–";
+  const total = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(total / 60);
+  return hours === 0 ? `${total} min` : `${hours} h ${total % 60} min`;
+}
+
+/** Promedio con un decimal ("14.9"); sin datos, una raya. */
+export function formatAverage(total: number, count: number): string {
+  if (!(count > 0) || !Number.isFinite(total)) return "–";
+  return (total / count).toFixed(1);
+}
+
+export type Tier = "above" | "level" | "below";
+
+/**
+ * Dónde queda un modelo respecto de la referencia. Está sobre o bajo ella cuando todo su
+ * intervalo queda a ese lado de 1000; si lo cruza, con estas peleas no se distinguen y
+ * quedan a la par. La referencia está, por definición, a la par de sí misma.
+ */
+export function tierOf(row: Pick<StandingRow, "isReference" | "lo" | "hi">): Tier {
+  if (row.isReference) return "level";
+  if (row.lo > REFERENCE_RATING) return "above";
+  if (row.hi < REFERENCE_RATING) return "below";
+  return "level";
 }

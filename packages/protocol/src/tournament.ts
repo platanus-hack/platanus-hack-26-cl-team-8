@@ -216,6 +216,25 @@ export type StandingRow = {
   losses: number;
   costUsd: number;
   latencyMs: { p50: number; p95: number; count: number };
+  /** Cómo fueron sus peleas de la liga. Opcional: un orquestador anterior no lo informa. */
+  fight?: FightReadings;
+};
+
+/** Lecturas de las peleas válidas de la liga de un modelo, sumadas. */
+export type FightReadings = {
+  /** Victorias y derrotas que terminaron por K.O. (el resto se decidió por vida al acabar el tiempo). */
+  koWins: number;
+  koLosses: number;
+  /** Daño hecho al rival y daño recibido, en puntos de vida. */
+  damageDealt: number;
+  damageTaken: number;
+  /** Decisiones tomadas y cuántas pidieron una acción que el juego rechazó. */
+  decisions: number;
+  invalidActions: number;
+  /** Tokens de entrada + salida. */
+  tokens: number;
+  /** USD gastados en esas peleas (sin calibración ni intentos fallidos, que sí cuentan en `costUsd`). */
+  costUsd: number;
 };
 
 export type MatrixCell = {

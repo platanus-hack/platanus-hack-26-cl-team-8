@@ -5,6 +5,7 @@ import { initArenaPicker, setMatchArena } from "./arenapicker";
 import { initControls, setPhase } from "./controls";
 import { initSettingControls } from "./controls-enhance";
 import { initCountdown, updateCountdown } from "./countdown";
+import { initStageCards, updateStageCards } from "./stagecards";
 import { byId, setText } from "./dom";
 import { addFeed, initFeed } from "./feed";
 import { addToHistory, initHistory, syncHistory } from "./history";
@@ -67,6 +68,7 @@ function applyState(state: MatchState): void {
   setTranscriptMatch(state.id);
   syncHistory(state);
   updateCountdown(state);
+  updateStageCards(state);
 
   if (lastPhase !== null && lastPhase !== state.phase) {
     if (state.phase === "preparing") {
@@ -283,6 +285,7 @@ function init(): void {
   initScoreboard();
   initThoughts();
   initCountdown(announceStart);
+  initStageCards();
   initFeed();
   initTranscriptLink();
   initPrompts();

@@ -71,6 +71,17 @@ describe("buildReport", () => {
     expect(report.standings.find((s) => s.isReference)?.rating).toBe(1000);
     expect(report.standings.every((s) => s.ciMethod === "laplace")).toBe(true);
 
+    // Lecturas de pelea: salen de las mismas partidas de la liga y cuadran entre los modelos.
+    const fights = report.standings.map((s) => s.fight!);
+    for (const [i, s] of report.standings.entries()) {
+      expect(fights[i]!.koWins).toBeLessThanOrEqual(s.wins);
+      expect(fights[i]!.koLosses).toBeLessThanOrEqual(s.losses);
+      expect(fights[i]!.decisions).toBeGreaterThan(0);
+    }
+    const sum = (pick: (f: (typeof fights)[number]) => number) => fights.reduce((total, f) => total + pick(f), 0);
+    expect(sum((f) => f.koWins)).toBe(sum((f) => f.koLosses));
+    expect(sum((f) => f.damageDealt)).toBeCloseTo(sum((f) => f.damageTaken));
+
     const order = report.standings.map((s) => s.model);
     expect(report.matrix.map((c) => [c.row, c.col])).toEqual(
       order.flatMap((row) => order.filter((col) => col !== row).map((col) => [row, col])),

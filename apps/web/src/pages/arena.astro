@@ -14,10 +14,10 @@ import "../styles/arena.css";
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#101113" />
-    <title>Leaderboard de modelos</title>
+    <title>Leaderboard · Prompt Arena</title>
     <meta
       name="description"
-      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelos juegan parecido a DeepSeek V4.1 Flash, su ranking y quién le gana a quién."
+      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelo pelea mejor, cómo gana y quién le gana a quién."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
@@ -25,118 +25,153 @@ import "../styles/arena.css";
     <header class="arena-top">
       <a class="brand arena-top__brand" href="/">
         <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
-        <span class="brand__title">Arena de prompts</span>
+        <span class="brand__title">Prompt Arena</span>
       </a>
       <span class="arena-top__crumb" aria-hidden="true">/</span>
       <h1 class="arena-top__title">Leaderboard</h1>
+      <span class="arena-top__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
       <a class="arena-top__back" href="/">Pelea en vivo</a>
     </header>
 
     <main class="arena">
-      <div class="arena-pick">
-        <label class="field arena-pick__field">
-          <span class="field__label">Torneo</span>
-          <select id="arena-select" disabled>
-            <option>Cargando…</option>
-          </select>
-        </label>
-        <span class="arena-pick__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
-      </div>
-
       <p class="arena-status" id="arena-status" role="status" data-kind="info">Cargando…</p>
 
-      <div id="arena-content" hidden>
-        <!-- (1) Cabecera: nombre, estado y progreso del torneo. -->
+      <div id="arena-content" class="arena-content" hidden>
+        <!-- (1) Cabecera: quién va primero y cómo quedan todos respecto de la referencia. -->
         <section class="summary" aria-labelledby="t-name">
-          <h2 class="summary__name" id="t-name"></h2>
-          <div class="summary__meta" id="t-meta"></div>
-          <div class="summary__progress" id="t-progress"></div>
+          <h2 class="summary__name" id="t-name">Qué modelo pelea mejor</h2>
+          <p class="summary__sub" id="t-sub"></p>
+
+          <div class="verdict-board" id="t-board">
+            <div class="lead" id="t-lead"></div>
+            <div class="tiers" id="t-tiers"></div>
+            <p class="verdict-board__note" id="t-ref"></p>
+          </div>
+
+          <div class="summary__progress" id="t-progress" hidden></div>
           <p class="summary__stop" id="t-stop" hidden></p>
-          <aside class="provisional" id="t-provisional" hidden>
-            <strong class="provisional__title">Provisional</strong>
-            <ul class="provisional__why" id="t-provisional-why"></ul>
-          </aside>
+          <div class="summary__meta" id="t-meta"></div>
         </section>
 
-        <!-- (2) Tabla de posiciones. -->
+        <!-- (2) Tabla de posiciones: cada fila dibuja su rating y su intervalo sobre un eje común. -->
         <section class="section arena-section" aria-labelledby="standings-title">
           <header class="section__head">
             <h2 class="section__title" id="standings-title">Posiciones</h2>
             <p class="section__hint">
-              Rating Bradley–Terry en escala Elo, solo con partidas válidas de la liga (victoria 1, empate ½,
-              derrota 0). DeepSeek V4.1 Flash es la referencia, fija en 1000.
+              Rating en escala Elo, calculado con las peleas válidas de la liga. El cuadrado es el rating de cada
+              modelo y la línea, su intervalo; la línea ámbar es la referencia, fija en 1000. A la derecha, cómo pelea
+              cada uno: cuánto gana, cuánto daño hace, cuánto decide, qué tan rápido y cuánto cuesta cada victoria.
             </p>
           </header>
-          <div class="scroll-x">
-            <table class="board standings">
+          <div class="scroll-x" id="standings-table">
+            <div class="axis axis--solo" id="standings-axis-solo" aria-hidden="true"></div>
+            <table class="board board--cards standings">
               <thead>
                 <tr>
-                  <th scope="col" class="num">#</th>
+                  <th scope="col" class="board__rank">#</th>
                   <th scope="col">Modelo</th>
                   <th scope="col" class="num">Rating</th>
-                  <th scope="col" class="num">Intervalo</th>
-                  <th scope="col" class="num">Partidas</th>
-                  <th scope="col" class="num"><abbr title="Victorias / empates / derrotas">V / E / D</abbr></th>
-                  <th scope="col" class="num">Costo</th>
-                  <th scope="col" class="num">
-                    <abbr title="Latencia por decisión: mediana / percentil 95">Latencia p50 / p95</abbr>
+                  <th scope="col" class="board__plothead">
+                    <span class="sr-only">Rating e intervalo en el eje</span>
+                    <div class="axis" id="standings-axis" aria-hidden="true"></div>
                   </th>
+                  <th scope="col">Ganadas</th>
+                  <th scope="col" class="num board__damage"><abbr title="Daño que hace por pelea, y el que recibe debajo">Daño</abbr></th>
+                  <th scope="col" class="num"><abbr title="Decisiones por pelea, y la parte que el juego rechazó debajo">Decisiones</abbr></th>
+                  <th scope="col" class="num">
+                    <abbr title="Latencia por decisión: mediana, y percentil 95 debajo">Latencia</abbr>
+                  </th>
+                  <th scope="col" class="num"><abbr title="Costo de cada victoria en la liga, y el total del torneo debajo">Costo</abbr></th>
                 </tr>
               </thead>
               <tbody id="standings-body"></tbody>
             </table>
           </div>
+          <p class="board__note" id="standings-note" hidden></p>
           <p class="empty" id="standings-empty" hidden>La liga todavía no tiene partidas válidas.</p>
         </section>
 
-        <!-- (3) Matriz fila vs columna; (4) clic en una celda abre sus partidas. -->
+        <!-- (3) Rating frente a velocidad, costo y actividad: cada modelo es su logo. -->
+        <section class="section arena-section" id="scatter" aria-labelledby="scatter-title">
+          <header class="section__head scatter__head">
+            <div>
+              <h2 class="section__title" id="scatter-title">Rating frente a velocidad y costo</h2>
+              <p class="section__hint" id="scatter-hint"></p>
+            </div>
+            <div class="axis-pick" id="scatter-metrics" role="group" aria-label="Qué se compara con el rating"></div>
+          </header>
+          <div class="scatter">
+            <div class="scatter__y" id="scatter-y" aria-hidden="true"></div>
+            <div class="scatter__area" id="scatter-area"></div>
+            <div class="scatter__x" id="scatter-x" aria-hidden="true"></div>
+          </div>
+        </section>
+
+        <!-- (4) Matriz fila vs columna; clic en una celda abre sus partidas al lado. -->
         <section class="section arena-section" aria-labelledby="matrix-title">
           <header class="section__head">
             <h2 class="section__title" id="matrix-title">Quién le gana a quién</h2>
             <p class="section__hint">
-              Puntaje de la fila contra la columna en la liga: (victorias + ½ empates) / partidas válidas. Haz clic en
-              una celda para ver sus partidas.
+              Puntaje de la fila contra la columna en la liga: victorias más medio punto por empate, sobre las partidas
+              válidas. El número chico es cuántas partidas jugaron.
             </p>
           </header>
-          <div class="legend" aria-hidden="true">
-            <span class="legend__end">0 %</span>
-            <span class="legend__ramp"></span>
-            <span class="legend__end">100 %</span>
-            <span class="legend__empty"><span class="legend__swatch"></span>Sin partidas</span>
-          </div>
-          <div class="matrix-wrap" id="matrix-wrap">
-            <table class="matrix" id="matrix"></table>
-          </div>
-          <p class="empty" id="matrix-empty" hidden>Hacen falta al menos dos modelos en la liga.</p>
-
-          <section class="pair" id="pair" aria-labelledby="pair-title" hidden>
-            <header class="pair__head">
-              <div>
-                <h3 class="pair__title" id="pair-title" tabindex="-1"></h3>
-                <p class="section__hint" id="pair-summary"></p>
+          <div class="h2h">
+            <div class="h2h__matrix">
+              <div class="legend" aria-hidden="true">
+                <span class="legend__end">La fila pierde</span>
+                <span class="legend__ramp"></span>
+                <span class="legend__end">La fila gana</span>
+                <span class="legend__empty"><span class="legend__swatch"></span>Sin partidas</span>
               </div>
-              <button type="button" class="btn btn--small" id="pair-close">Cerrar</button>
-            </header>
-            <div class="pair__body scroll-x" id="pair-body"></div>
-          </section>
+              <div class="matrix-wrap" id="matrix-wrap">
+                <table class="matrix" id="matrix"></table>
+              </div>
+              <p class="empty" id="matrix-empty" hidden>Hacen falta al menos dos modelos en la liga.</p>
+            </div>
+
+            <div class="h2h__detail">
+              <div class="pair-empty" id="pair-empty">
+                <p class="pair-empty__title">Elige un cruce</p>
+                <p class="section__hint">
+                  Cada celda abre las partidas de esa pareja: de qué lado partió cada modelo, cómo terminó y con cuánta
+                  vida.
+                </p>
+              </div>
+              <section class="pair" id="pair" aria-labelledby="pair-title" hidden>
+                <header class="pair__head">
+                  <div>
+                    <h3 class="pair__title" id="pair-title" tabindex="-1"></h3>
+                    <p class="section__hint" id="pair-summary"></p>
+                  </div>
+                  <button type="button" class="btn btn--small" id="pair-close">Cerrar</button>
+                </header>
+                <div class="pair__body scroll-x" id="pair-body"></div>
+              </section>
+            </div>
+          </div>
         </section>
 
-        <!-- (5) Calibración y catálogo. -->
-        <section class="section arena-section" aria-labelledby="calibration-title">
-          <header class="section__head">
-            <h2 class="section__title" id="calibration-title">Calibración</h2>
-            <p class="section__hint" id="calibration-rule"></p>
-          </header>
-          <div class="scroll-x">
-            <table class="board calib">
+        <!-- (5) Calibración y catálogo: plegado, es el detalle de cómo se armó la liga. -->
+        <details class="fold arena-section">
+          <summary class="fold__title">
+            <span class="section__title">Calibración</span>
+            <span class="fold__brief" id="calibration-brief"></span>
+          </summary>
+          <p class="section__hint" id="calibration-rule"></p>
+          <div class="scroll-x" id="calibration-table">
+            <div class="axis axis--solo" id="calibration-axis-solo" aria-hidden="true"></div>
+            <table class="board board--cards calib">
               <thead>
                 <tr>
                   <th scope="col">Modelo</th>
+                  <th scope="col" class="board__plothead">
+                    <span class="sr-only">Diferencia con la referencia e intervalo en el eje</span>
+                    <div class="axis" id="calibration-axis" aria-hidden="true"></div>
+                  </th>
+                  <th scope="col" class="num"><abbr title="Diferencia con la referencia ± error estándar, y el intervalo de decisión debajo">Diferencia</abbr></th>
+                  <th scope="col" class="num">Partidas</th>
                   <th scope="col">Veredicto</th>
-                  <th scope="col">Liga</th>
-                  <th scope="col" class="num"><abbr title="Diferencia con DeepSeek ± error estándar (Elo)">Dif. ± ee</abbr></th>
-                  <th scope="col" class="num"><abbr title="Intervalo de decisión de la diferencia con DeepSeek (dif. ± z·ee)">Intervalo dif.</abbr></th>
-                  <th scope="col" class="num"><abbr title="Partidas · rivales distintos">Partidas · rivales</abbr></th>
                   <th scope="col">Por qué</th>
                 </tr>
               </thead>
@@ -144,12 +179,13 @@ import "../styles/arena.css";
             </table>
           </div>
           <p class="empty" id="calibration-empty" hidden>Todavía no hay resultados de calibración.</p>
+          <p class="board__note" id="catalog-meta"></p>
 
-          <h3 class="omitted__title">Líneas omitidas del catálogo</h3>
-          <p class="section__hint" id="catalog-meta"></p>
-          <ul class="omitted" id="omitted-list"></ul>
-          <p class="empty" id="omitted-empty" hidden>Ninguna línea quedó fuera por incompatibilidad.</p>
-        </section>
+          <div class="omitted-box" id="omitted" hidden>
+            <h3 class="omitted__title" id="omitted-title"></h3>
+            <ul class="omitted" id="omitted-list"></ul>
+          </div>
+        </details>
       </div>
     </main>
 

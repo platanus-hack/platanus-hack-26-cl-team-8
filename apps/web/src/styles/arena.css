@@ -3,16 +3,26 @@
  * section__head, btn, field, data-tip) y suma lo propio de esta página.
  *
  *  - Rojo y azul siguen siendo solo los lados del juego (quién partió en cada spawn).
- *  - La matriz usa un color divergente aparte: verde azulado = la fila gana, naranjo =
- *    la fila pierde, gris en 50 %. "Sin partidas" va rayado y con "—", nunca gris liso.
- *  - La referencia (DeepSeek) se marca en ámbar.
- *  - La página nunca scrollea de lado: tablas y matriz scrollean dentro de su caja.
+ *  - Ganar y perder usan un par aparte: verde azulado y naranjo. En la matriz, gris = 50 %;
+ *    "sin partidas" va rayado y con "—", nunca gris liso.
+ *  - La referencia se marca en ámbar: su fila, su rombo y la línea que cruza los gráficos.
+ *  - Las tablas de posiciones y de calibración llevan un gráfico de intervalos por fila,
+ *    todas sobre el mismo eje (plot.ts). En pantallas angostas cada fila pasa a ser una
+ *    tarjeta: nada scrollea de lado, salvo la matriz dentro de su caja.
  */
 
 .arena-page {
   --win: rgb(38, 150, 116);
   --mid: rgb(42, 44, 49);
   --loss: rgb(196, 98, 52);
+  /* Los mismos dos colores, más claros, para texto y líneas finas sobre el fondo. */
+  --win-ink: #56c9a4;
+  --loss-ink: #e88d5c;
+  /* Fondo de una fila: el cuadrado del gráfico lo usa como borde para despegarse de su línea. */
+  --row: var(--bg);
+  /* Aire a cada lado del gráfico de una fila. El eje del encabezado usa el mismo. */
+  --plot-inset: 14px;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   overflow-x: hidden;
 }
 
@@ -38,6 +48,26 @@
 
 .empty.is-error {
   color: var(--amber);
+}
+
+/* Marca sin logo: su inicial en un cuadro del tamaño del logo. */
+.model-tag__letter {
+  display: grid;
+  place-items: center;
+  width: 1.85em;
+  height: 1.85em;
+  border: 1px solid var(--faint);
+  color: var(--muted);
+  font: 600 0.62em/1 var(--sans);
+}
+
+/* Solo el logo: el nombre queda para lectores de pantalla. */
+.model-tag--mark .model-tag__name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 /* ---------- Barra superior ---------- */
@@ -73,14 +103,32 @@
   white-space: nowrap;
 }
 
+.arena-top__mock {
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px dashed var(--faint);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.arena-top__mock:not([hidden]) + .arena-top__back {
+  margin-left: 0;
+}
+
 .arena-top__back:hover {
   color: var(--text);
 }
 
 @media (max-width: 520px) {
   .arena-top__brand .brand__title,
-  .arena-top__crumb {
+  .arena-top__crumb,
+  .arena-top__mock {
     display: none;
+  }
+
+  .arena-top__mock:not([hidden]) + .arena-top__back {
+    margin-left: auto;
   }
 }
 
@@ -90,26 +138,6 @@
   max-width: 1440px;
   margin: 0 auto;
   padding: 12px var(--gutter) 0;
-}
-
-.arena-pick {
-  --side: var(--text);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 8px 16px;
-}
-
-.arena-pick__field {
-  flex: 1 1 280px;
-  max-width: 560px;
-}
-
-.arena-pick__mock {
-  padding: 4px 8px;
-  border: 1px dashed var(--faint);
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .arena-status {
@@ -125,6 +153,11 @@
   margin-top: 72px;
 }
 
+.arena-section .section__hint {
+  max-width: 88ch;
+  text-wrap: pretty;
+}
+
 /* position: relative para que los textos .sr-only (absolutos) queden dentro de la caja. */
 .scroll-x,
 .matrix-wrap {
@@ -133,30 +166,193 @@
 
 .scroll-x {
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
 }
 
-/* Dentro de una caja que scrollea, la ayuda flotante se cortaría: en pantallas anchas
-   las tablas no necesitan scroll, así que solo se activa en pantallas angostas. */
-@media (min-width: 1000px) {
-  .scroll-x {
-    overflow-x: visible;
-  }
-}
-
-/* ---------- (1) Cabecera del torneo ---------- */
+/* ---------- (1) Cabecera ---------- */
 
 .summary {
-  margin-top: 36px;
+  margin-top: 20px;
+}
+
+.summary + .arena-section {
+  margin-top: 64px;
 }
 
 .summary__name {
-  font-size: clamp(24px, 3.4vw, 34px);
+  font-size: clamp(28px, 4.2vw, 46px);
+  font-weight: 600;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.summary__sub {
+  max-width: 62ch;
+  margin-top: 14px;
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+/*
+ * El resultado de un vistazo: a la izquierda quién va primero, con su logo grande; a la
+ * derecha todos los modelos en tres grupos según cómo quedan respecto de la referencia.
+ */
+.verdict-board {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  margin-top: 32px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.lead {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  padding: 28px 32px 28px 0;
+  border-right: 1px solid var(--line);
+}
+
+.lead__label,
+.lead__won {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lead__model {
+  gap: 14px;
+  font-size: 24px;
   font-weight: 600;
   line-height: 1.15;
-  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.lead__model .model-tag__icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.lead__model .model-tag__letter {
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+}
+
+.lead__score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+
+.lead__points {
+  font: 400 56px/0.9 var(--pixel);
+}
+
+.lead__diff {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* Un modelo nombrado dentro de una frase: su logo y su nombre, sin cortar la línea. */
+.lead__diff .model-tag,
+.verdict-board__note .model-tag {
+  display: inline-flex;
+  gap: 5px;
+  margin-left: 3px;
+  vertical-align: -0.2em;
+  color: var(--text);
+}
+
+.tiers {
+  display: grid;
+}
+
+.tier {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 20px;
+  padding: 16px 0 16px 32px;
+}
+
+.tier + .tier {
+  border-top: 1px solid var(--line);
+}
+
+.tier__label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.tier__label::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--faint);
+}
+
+.tier[data-tier="above"] .tier__label::before {
+  background: var(--win-ink);
+}
+
+.tier[data-tier="below"] .tier__label::before {
+  background: var(--loss-ink);
+}
+
+.tier__models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tier__none {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* Un modelo dentro de un grupo: logo, nombre y rating. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px 7px 9px;
+  border: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chip__points {
+  font: 400 12px/1 var(--pixel);
+  color: var(--muted);
+}
+
+.chip.is-reference {
+  border-color: rgba(232, 184, 74, 0.6);
+}
+
+.chip.is-reference .chip__points {
+  color: var(--amber);
+}
+
+.verdict-board__note {
+  grid-column: 1 / -1;
+  padding: 12px 0 13px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+.verdict-board__note .model-tag {
+  color: var(--muted);
 }
 
 .summary__meta {
@@ -164,9 +360,14 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 14px;
-  margin-top: 10px;
+  margin-top: 16px;
   font-size: 13px;
   color: var(--muted);
+}
+
+.summary__tournament {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .summary__meta .mono {
@@ -187,32 +388,59 @@
   color: var(--ok);
 }
 
+/* Mientras el torneo corre, un cuadrito que parpadea: la página se actualiza sola. */
+.badge[data-stage="calibration"]::before,
+.badge[data-stage="league"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  background: currentColor;
+  vertical-align: 1px;
+  animation: badge-blink 1.6s steps(2, jump-none) infinite;
+}
+
+@keyframes badge-blink {
+  to {
+    opacity: 0.25;
+  }
+}
+
 .badge[data-stage="paused"] {
   border-color: var(--amber);
   color: var(--amber);
 }
 
-.badge[data-mode="simulated"] {
-  border-style: dashed;
-}
-
+/*
+ * Mientras el torneo no termina: cinco barras en una fila. Las tres primeras son avance
+ * (llena = listo, en verde); las dos últimas, cuánto se ha gastado de cada límite (se
+ * ponen ámbar cuando queda poco).
+ */
 .summary__progress {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 18px 28px;
-  margin-top: 28px;
+  margin-top: 24px;
 }
 
 .progress {
   display: grid;
-  gap: 6px;
+  align-content: start;
+  gap: 7px;
   min-width: 0;
+}
+
+.progress--split {
+  padding-left: 28px;
+  border-left: 1px solid var(--line);
 }
 
 .progress__head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 8px;
+  gap: 2px 8px;
   font-size: 13px;
 }
 
@@ -226,7 +454,7 @@
 }
 
 .progress__track {
-  height: 6px;
+  height: 4px;
   background: var(--surface);
 }
 
@@ -236,35 +464,73 @@
   background: var(--text);
 }
 
-.progress__note {
-  font-size: 12px;
+.progress[data-state="done"] .progress__fill {
+  background: var(--ok);
+}
+
+.progress[data-kind="budget"] .progress__fill {
+  background: var(--muted);
+}
+
+.progress[data-state="tight"] .progress__fill {
+  background: var(--amber);
+}
+
+.progress[data-state="tight"] .progress__value {
   color: var(--amber);
 }
 
+.progress__note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .summary__stop {
-  margin-top: 18px;
+  margin-top: 16px;
   font-size: 14px;
   color: var(--muted);
 }
 
-.provisional {
-  display: grid;
-  gap: 6px;
-  margin-top: 24px;
-  padding: 12px 16px;
-  border-left: 2px solid var(--amber);
-  background: rgba(232, 184, 74, 0.07);
+@media (max-width: 1099px) {
+  .summary__progress {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .progress--split {
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 
-.provisional__title {
-  font: 400 16px/1 var(--pixel);
-  color: var(--amber);
+@media (max-width: 899px) {
+  .verdict-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lead {
+    padding: 24px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tier {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 0;
+  }
 }
 
-.provisional__why {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 14px;
+@media (max-width: 599px) {
+  .summary__sub {
+    font-size: 16px;
+  }
+
+  .lead__points {
+    font-size: 44px;
+  }
+
+  .summary__progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* ---------- Tablas ---------- */
@@ -277,7 +543,7 @@
 
 .board th,
 .board td {
-  padding: 10px 12px;
+  padding: 12px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: middle;
@@ -285,13 +551,16 @@
 
 .board thead th {
   padding-top: 0;
+  padding-bottom: 10px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   white-space: nowrap;
+  vertical-align: bottom;
 }
 
-.board thead th.num {
+.board th.num,
+.board td.num {
   text-align: right;
 }
 
@@ -304,35 +573,59 @@
   font-weight: 500;
 }
 
-.standings,
-.calib {
-  min-width: 760px;
+.board tbody tr > * {
+  background: var(--row);
 }
 
-.board__rank {
-  width: 1%;
-  color: var(--muted);
+.board tbody tr:not(.board__group):hover {
+  --row: #15161a;
 }
 
-.board__model {
-  min-width: 200px;
+.board tbody tr.is-reference {
+  --row: #1e1c17;
 }
 
-.board__model > * {
-  vertical-align: middle;
+.standings .is-reference > td:first-child {
+  box-shadow: inset 2px 0 0 var(--amber);
 }
 
-.board__model > * + * {
-  margin-left: 8px;
+/* Posición: en la fuente de píxeles, como en una tabla de récords. */
+.board tbody .board__rank {
+  width: 40px;
+  padding-right: 2px;
+  font: 400 16px/1 var(--pixel);
+  color: var(--faint);
+  text-align: right;
+}
+
+.board thead .board__rank {
+  text-align: right;
+}
+
+.standings tbody tr:first-child .board__rank {
+  color: var(--text);
 }
 
 .board__model .model-tag {
+  display: flex;
+  font-size: 15px;
   font-weight: 600;
 }
 
-.board__version {
-  display: inline-block;
+.board__model .model-tag__name {
+  max-width: clamp(170px, 20vw, 340px);
+}
+
+/* Versión del modelo, bajo el nombre y alineada con él (después del logo). */
+.board__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 3px;
+  padding-left: 24px;
   font-size: 12px;
+  font-weight: 400;
   color: var(--muted);
 }
 
@@ -344,59 +637,653 @@
   font-weight: 600;
 }
 
-.is-reference > td,
-.is-reference > th {
-  background: rgba(232, 184, 74, 0.07);
+.board__points {
+  display: block;
+  font: 400 20px/1 var(--pixel);
 }
 
-.standings .is-reference > td:first-child {
-  box-shadow: inset 2px 0 0 var(--amber);
+.board__diff {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.board__rating {
-  font-size: 17px;
+.board__diff[data-tone="above"] {
+  color: var(--win-ink);
+}
+
+.board__diff[data-tone="below"] {
+  color: var(--loss-ink);
+}
+
+/* Número principal de una celda; la estrella marca al mejor de la columna. */
+.board__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.board__star {
+  display: inline-flex;
+}
+
+.board__star .pixel-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.board td.is-best .board__main {
   font-weight: 600;
 }
 
-.board__ci > span + span,
-.board__latency .sep,
-.board__wdl .sep {
-  color: var(--faint);
-}
-
-.board__range {
-  margin-left: 8px;
-  font-size: 12px;
-}
-
-.board__method {
-  display: block;
-  font-size: 11px;
-  color: var(--faint);
-}
-
-.board__method:empty {
+/* Sin lecturas de pelea en el reporte, la columna de daño no tiene nada que mostrar. */
+.no-readings .board__damage {
   display: none;
 }
 
-.board__wdl .w {
-  color: var(--win);
-  filter: brightness(1.3);
+/* Peleas ganadas: el porcentaje y, al lado, la barra de cómo le fue. */
+.board__won {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.board__wdl .l {
-  color: var(--loss);
-  filter: brightness(1.25);
+.board__won .board__main {
+  min-width: 4ch;
+  font-weight: 600;
 }
 
-/* Las ayudas de la última columna salen hacia la izquierda. */
+.board__won .record__bar {
+  flex: 1 1 auto;
+  min-width: 72px;
+  max-width: 120px;
+}
+
+.board__fights .board__p95 {
+  white-space: nowrap;
+}
+
+/* Segunda línea de una celda numérica (percentil 95, intervalo, rivales). */
+.board__p95 {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.board__note {
+  max-width: 96ch;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* Las ayudas de las últimas columnas salen hacia la izquierda. */
 .board td:last-child[data-tip]::after,
-.board td:nth-last-child(2)[data-tip]::after {
+.board td:nth-last-child(2)[data-tip]::after,
+.board td.num[data-tip]::after {
   left: auto;
   right: 0;
 }
 
-/* ---------- (3) Matriz ---------- */
+/*
+ * Barra de peleas: victorias, empates y derrotas. El color lleno son las que terminaron por
+ * K.O.; el suave, las que se decidieron por vida al acabar el tiempo.
+ */
+.record__bar {
+  display: flex;
+  gap: 1px;
+  height: 6px;
+  background: var(--surface);
+}
+
+.record__bar i {
+  display: block;
+  min-width: 2px;
+}
+
+.record__bar .w {
+  background: var(--win-ink);
+}
+
+.record__bar .d {
+  background: var(--faint);
+}
+
+.record__bar .l {
+  background: var(--loss-ink);
+}
+
+.record__bar .is-soft {
+  opacity: 0.4;
+}
+
+/* ---------- Gráfico de intervalos ---------- */
+
+/* Eje: los números del encabezado, cada uno centrado sobre su marca. */
+.axis {
+  position: relative;
+  height: 14px;
+}
+
+.axis__tick {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.axis__tick.is-anchor {
+  color: var(--amber);
+}
+
+/* Copia del eje para la vista de tarjetas, donde no hay encabezado de tabla. */
+.axis--solo {
+  display: none;
+}
+
+.board thead .board__plothead {
+  width: 34%;
+  min-width: 200px;
+  padding-right: var(--plot-inset);
+  padding-left: var(--plot-inset);
+}
+
+/* La celda del gráfico no lleva aire arriba ni abajo: las marcas forman líneas continuas entre filas. */
+.board td.board__plot {
+  position: relative;
+  padding: 0;
+}
+
+.plot {
+  position: absolute;
+  inset: 0 var(--plot-inset);
+  color: var(--text);
+}
+
+.plot__tick,
+.plot__anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.plot__anchor {
+  background: rgba(232, 184, 74, 0.55);
+}
+
+/* Banda de la calibración: quien cabe adentro juega parecido a la referencia. */
+.plot__band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(111, 207, 142, 0.07);
+  box-shadow:
+    inset 1px 0 0 rgba(111, 207, 142, 0.32),
+    inset -1px 0 0 rgba(111, 207, 142, 0.32);
+}
+
+/* Intervalo: una línea con un tope en cada extremo. */
+.plot__range {
+  position: absolute;
+  top: 50%;
+  box-sizing: border-box;
+  min-width: 4px;
+  height: 11px;
+  margin-top: -5.5px;
+  border-right: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  background: linear-gradient(currentColor, currentColor) center / 100% 2px no-repeat;
+  opacity: 0.5;
+  transform-origin: var(--origin, 50%) 50%;
+}
+
+.plot__dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px var(--row);
+}
+
+/* Posiciones: verde o naranjo solo si todo el intervalo queda a un lado de la referencia. */
+.plot[data-tone="above"] {
+  color: var(--win-ink);
+}
+
+.plot[data-tone="below"] {
+  color: var(--loss-ink);
+}
+
+.plot[data-tone="above"] .plot__range,
+.plot[data-tone="below"] .plot__range,
+.plot[data-tone="inside"] .plot__range,
+.plot[data-tone="pending"] .plot__range {
+  opacity: 0.8;
+}
+
+/* La referencia es un rombo ámbar sobre su propia línea. */
+.plot[data-tone="reference"] {
+  color: var(--amber);
+}
+
+.plot[data-tone="reference"] .plot__dot {
+  transform: rotate(45deg);
+}
+
+/* Calibración: el color del veredicto. */
+.plot[data-tone="inside"] {
+  color: var(--ok);
+}
+
+.plot[data-tone="pending"] {
+  color: var(--amber);
+}
+
+.plot[data-tone="outside"] {
+  color: var(--muted);
+}
+
+/* La primera vez que se muestra un torneo, cada intervalo se abre desde su cuadrado, fila por fila. */
+.is-fresh .plot__range {
+  animation: range-in 0.6s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 45ms + 140ms);
+}
+
+.is-fresh .plot__dot {
+  animation: dot-in 0.3s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@keyframes range-in {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+/* ---------- Tablas como tarjetas (pantallas angostas) ---------- */
+
+/*
+ * Bajo 1100 px las columnas no caben. Cada fila pasa a ser una tarjeta: arriba el modelo y
+ * su número principal, luego el gráfico a todo el ancho y al final los datos chicos, cada
+ * uno con su nombre (el encabezado de la tabla queda solo para lectores de pantalla).
+ */
+@media (max-width: 1099px) {
+  .arena-page {
+    --plot-inset: 8px;
+  }
+
+  .axis--solo {
+    display: block;
+    margin: 0 calc(12px + var(--plot-inset)) 6px;
+  }
+
+  .board--cards,
+  .board--cards tbody {
+    display: block;
+  }
+
+  .board--cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .board--cards tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 22px;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--row);
+  }
+
+  .board--cards tbody tr:first-child {
+    border-top: 1px solid var(--line);
+  }
+
+  .board--cards tbody tr > * {
+    display: block;
+    order: 5;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .board--cards tbody tr.is-reference {
+    box-shadow: inset 2px 0 0 var(--amber);
+  }
+
+  .standings .is-reference > td:first-child {
+    box-shadow: none;
+  }
+
+  .board--cards tbody .board__rank {
+    order: 1;
+    width: 22px;
+    padding: 0;
+    text-align: left;
+  }
+
+  .board--cards .board__model {
+    flex: 1 1 0;
+    order: 2;
+  }
+
+  .board--cards .board__model .model-tag__name {
+    max-width: none;
+  }
+
+  .board--cards .board__rating,
+  .board--cards .calib__verdict {
+    order: 3;
+    margin-left: auto;
+  }
+
+  .board--cards td.board__plot {
+    flex: 0 0 100%;
+    order: 4;
+    height: 30px;
+  }
+
+  /* Datos chicos: "Partidas 20", "Costo $0.44"… */
+  .board--cards [data-label] {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+  }
+
+  .board--cards [data-label]::before {
+    content: attr(data-label);
+    font-size: 12px;
+    color: var(--faint);
+  }
+
+  .board--cards .board__p95 {
+    display: inline;
+    margin: 0;
+  }
+
+  .board--cards .board__won .record__bar {
+    width: 72px;
+  }
+
+  .board--cards .board__fights {
+    flex-wrap: wrap;
+  }
+
+  .board--cards .calib__why {
+    flex: 0 0 100%;
+    order: 6;
+    min-width: 0;
+    max-width: none;
+  }
+
+  /* Título de grupo de la calibración. */
+  .board--cards tbody tr.board__group {
+    padding: 22px 12px 8px;
+    border-top: 0;
+  }
+
+  .board--cards tbody tr.board__group:first-child {
+    padding-top: 0;
+  }
+
+  .board--cards .board__group th {
+    flex: 0 0 100%;
+  }
+}
+
+/*
+ * En pantallas angostas las ayudas flotantes de los grupos y del plano se saldrían por el
+ * borde, y con el dedo no hay puntero que las abra: no se muestran.
+ */
+@media (max-width: 899px) {
+  .chip[data-tip]::after,
+  .scatter__point[data-tip]::after {
+    display: none;
+  }
+}
+
+/* ---------- (3) Rating frente a otra lectura ---------- */
+
+.scatter__head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px 32px;
+}
+
+.scatter__head > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+/* Botones para elegir qué va en el eje horizontal. */
+.axis-pick {
+  display: inline-flex;
+  border: 1px solid var(--line);
+}
+
+.axis-pick__item {
+  padding: 8px 12px 9px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font: 500 13px/1 var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.axis-pick__item:first-child {
+  border-left: 0;
+}
+
+.axis-pick__item:hover {
+  color: var(--text);
+}
+
+.axis-pick__item[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.scatter {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: clamp(300px, 46vh, 420px) 28px;
+}
+
+.scatter__y,
+.scatter__x,
+.scatter__area {
+  position: relative;
+}
+
+.scatter__x,
+.scatter__area {
+  grid-column: 2;
+}
+
+.scatter__area {
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.scatter__ytick,
+.scatter__xtick {
+  position: absolute;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.scatter__ytick {
+  right: 10px;
+  transform: translateY(50%);
+}
+
+.scatter__ytick.is-anchor {
+  color: var(--amber);
+}
+
+.scatter__xtick {
+  top: 8px;
+  transform: translateX(-50%);
+}
+
+.scatter__line {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 1px;
+  margin-bottom: -0.5px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.scatter__line.is-anchor {
+  background: rgba(232, 184, 74, 0.55);
+}
+
+/* Cada modelo: su logo en un cuadro, centrado en su punto. */
+.scatter__point {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 -14px -14px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 15px;
+  transition:
+    left 0.6s var(--ease-out),
+    bottom 0.6s var(--ease-out);
+}
+
+.scatter__point.is-reference {
+  border-color: var(--amber);
+}
+
+.scatter__point:hover,
+.scatter__point:focus-visible {
+  z-index: 5;
+  border-color: var(--text);
+}
+
+/* En la mitad derecha la ayuda sale hacia la izquierda, para no salirse de la página. */
+.scatter__point.is-right[data-tip]::after {
+  right: 0;
+  left: auto;
+}
+
+/* Intervalo del rating, el mismo de la tabla. */
+.scatter__whisker {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(237, 236, 232, 0.26);
+  transition: left 0.6s var(--ease-out);
+}
+
+.scatter__label {
+  position: absolute;
+  z-index: 3;
+  padding: 0 3px;
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    left 0.6s var(--ease-out),
+    top 0.6s var(--ease-out),
+    opacity 0.2s;
+}
+
+.scatter__label.is-hidden {
+  opacity: 0;
+}
+
+@media (max-width: 899px) {
+  .scatter__head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .axis-pick {
+    justify-self: start;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+/* ---------- (4) Matriz ---------- */
+
+/* A la izquierda la matriz; a la derecha, las partidas del cruce elegido. */
+.h2h {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px 48px;
+}
+
+.h2h__matrix,
+.h2h__detail {
+  min-width: 0;
+}
+
+.pair-empty {
+  display: none;
+}
+
+@media (min-width: 1360px) {
+  .h2h {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .h2h__detail {
+    padding-left: 32px;
+    border-left: 1px solid var(--line);
+  }
+
+  .pair-empty {
+    display: grid;
+    align-content: center;
+    gap: 6px;
+    max-width: 40ch;
+    height: 100%;
+  }
+}
+
+.pair-empty__title {
+  font: 400 15px/1.2 var(--pixel);
+}
 
 .legend {
   display: flex;
@@ -409,7 +1296,7 @@
 }
 
 .legend__ramp {
-  width: 160px;
+  width: 120px;
   height: 10px;
   background: linear-gradient(to right, var(--loss), var(--mid) 50%, var(--win));
 }
@@ -570,12 +1457,33 @@
   color: var(--faint);
 }
 
-/* ---------- (4) Panel de una pareja ---------- */
+/* Fila y columna de la celda bajo el puntero (o con el foco). */
+.matrix__rowhead.is-hot {
+  background: var(--surface);
+}
+
+.matrix__colhead.is-hot {
+  box-shadow: inset 0 -2px 0 var(--text);
+}
+
+.matrix__colhead .model-tag__letter {
+  font-size: 11px;
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- Panel de una pareja ---------- */
 
 .pair {
-  margin-top: 28px;
-  padding-top: 20px;
+  padding-top: 24px;
   border-top: 1px solid var(--line);
+}
+
+@media (min-width: 1360px) {
+  .pair {
+    padding-top: 0;
+    border-top: 0;
+  }
 }
 
 .pair__head {
@@ -587,27 +1495,71 @@
 }
 
 .pair__title {
-  margin: 0 0 4px;
-  font-size: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 6px;
+  font-size: 17px;
   font-weight: 600;
-  overflow-wrap: anywhere;
 }
 
 .pair__title:focus {
   outline: none;
 }
 
+.pair__vs {
+  font: 400 12px/1 var(--pixel);
+  color: var(--faint);
+}
+
 .pair__table {
-  min-width: 820px;
   font-size: 13px;
 }
 
-.pair__table .model-tag__name {
-  max-width: 180px;
+/* En teléfonos la tabla puede no caber: se desplaza dentro de su caja. */
+@media (max-width: 519px) {
+  .pair__body {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+
+  .hp {
+    grid-template-columns: 16px minmax(36px, 1fr) 2ch;
+    gap: 6px;
+  }
+
+  .pair__table th,
+  .pair__table td {
+    padding-right: 6px;
+    padding-left: 6px;
+  }
 }
 
-.pair__side {
-  box-shadow: inset 2px 0 0 var(--side);
+.pair__match > span {
+  display: block;
+}
+
+.pair__seed {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pair__sideword {
+  color: var(--side);
+}
+
+.pair__dup {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--amber);
+}
+
+.is-duplicate {
+  opacity: 0.5;
 }
 
 .pair__result {
@@ -615,26 +1567,67 @@
 }
 
 .pair__outcome {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-weight: 600;
 }
 
-.pair__outcome[data-result="draw"] {
+.pair__outcome::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--faint);
+}
+
+.pair__result[data-result="win"] .pair__outcome::before {
+  background: var(--win-ink);
+}
+
+.pair__result[data-result="loss"] .pair__outcome::before {
+  background: var(--loss-ink);
+}
+
+.pair__result[data-result="draw"] .pair__outcome {
   color: var(--muted);
 }
 
 .pair__reason {
   display: block;
+  margin-top: 2px;
+  padding-left: 15px;
   font-size: 12px;
   color: var(--muted);
 }
 
-.is-duplicate {
-  opacity: 0.5;
+/* Vida al final: logo del modelo, barra del color del lado en que jugó y el número. */
+.hp {
+  display: grid;
+  grid-template-columns: 16px minmax(48px, 110px) 2ch;
+  align-items: center;
+  gap: 8px;
 }
 
-.pair__dup {
+.hp + .hp {
+  margin-top: 6px;
+}
+
+.hp__bar {
+  height: 6px;
+  background: var(--surface);
+}
+
+.hp__bar i {
+  display: block;
+  height: 100%;
+  background: var(--side);
+}
+
+.hp__num {
   font-size: 12px;
-  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .infra__box {
@@ -677,6 +1670,24 @@
 
 /* ---------- (5) Calibración ---------- */
 
+/* Título de grupo: los que entran a la liga y los que quedan fuera. */
+.board .board__group th {
+  padding: 26px 10px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.board .board__group:first-child th {
+  padding-top: 4px;
+}
+
+.board__count {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
 .verdict {
   display: inline-block;
   padding: 2px 7px 3px;
@@ -685,8 +1696,7 @@
   white-space: nowrap;
 }
 
-.verdict[data-verdict="inside"],
-.verdict[data-league="yes"] {
+.verdict[data-verdict="inside"] {
   border-color: var(--ok);
   color: var(--ok);
 }
@@ -696,27 +1706,76 @@
   color: var(--amber);
 }
 
-.verdict[data-verdict="outside"],
-.verdict[data-league="no"] {
+.verdict[data-verdict="outside"] {
   color: var(--muted);
 }
 
 .calib__why {
-  min-width: 240px;
+  min-width: 180px;
+  max-width: 380px;
   font-size: 13px;
   color: var(--muted);
 }
 
+/* La calibración va plegada: es el detalle de cómo se armó la liga. */
+.fold {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.fold[open] {
+  padding-bottom: 28px;
+}
+
+.fold__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 22px 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.fold__title::-webkit-details-marker {
+  display: none;
+}
+
+.fold__title::before {
+  content: "+";
+  width: 14px;
+  font: 400 16px/1 var(--pixel);
+  color: var(--muted);
+}
+
+.fold[open] .fold__title::before {
+  content: "-";
+}
+
+.fold__brief {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.fold > .section__hint {
+  margin-bottom: 24px;
+}
+
+/* Líneas del catálogo que no llegaron a jugar. */
+.omitted-box {
+  margin-top: 28px;
+}
+
 .omitted__title {
-  margin: 40px 0 6px;
-  font-size: 16px;
+  margin-bottom: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .omitted {
   display: grid;
   gap: 12px;
-  margin: 16px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -725,8 +1784,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
   gap: 4px 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
 

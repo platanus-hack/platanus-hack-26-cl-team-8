@@ -31,6 +31,18 @@ export function roundTitle(result: RoundResult): string {
   return result.winner ? `Ronda ${result.round}: gana ${SIDE_LABEL[result.winner]}` : `Ronda ${result.round}: empate`;
 }
 
+/** "Gana Azul" o "Empate": el título de la tarjeta de ronda, que ya dice qué ronda es. */
+export function roundWinner(result: RoundResult): string {
+  return result.winner ? `Gana ${SIDE_LABEL[result.winner]}` : "Empate";
+}
+
+/** Cómo terminó la ronda, en una frase corta: "Por K.O.", "Porque el otro se rindió." */
+export function roundHow(result: RoundResult): string {
+  if (!result.winner) return "Se acabó el tiempo con la misma vida.";
+  const how = ROUND_REASON[result.reason];
+  return `${how.charAt(0).toUpperCase()}${how.slice(1)}${how.endsWith(".") ? "" : "."}`;
+}
+
 /** Cómo terminó la ronda y cómo queda la serie, en una frase. */
 export function roundDetail(
   result: RoundResult,
