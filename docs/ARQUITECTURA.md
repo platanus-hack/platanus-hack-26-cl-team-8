@@ -37,7 +37,7 @@ Hay **una sola sala**: una pelea a la vez, los mismos prompts y el mismo video p
    |                        | startedAt, endsAt         |                 |
    |<-- WS "state" ---------| fighter.start() x2        |                 |
    |                        |                           |                 |
-   |                        |   cada AGENT_TICK_MS, por agente:           |
+   |                        |   en bucle (≥ AGENT_TICK_MS), por agente:   |
    |                        |     percibir (posición, vida, rival) <------|
    |                        |     llm.complete(messages, tools) --------->|
    |                        |     <-------- texto + toolCalls ------------|
@@ -68,7 +68,7 @@ La cámara no depende del orquestador ni del estado de la pelea: transmite la ar
 2. **Iniciar.** `POST /api/match/start`. Si ya hay una pelea en `preparing` o `running`, responde `409`. Si no, crea un `MatchState` nuevo en fase `preparing` y **congela** los prompts pendientes en `state.configs`.
 3. **Preparar.** Por RCON el orquestador deja lista la arena del mapa de la pelea (el pedido al iniciar, el de los ajustes o `ARENA_SCENARIO`; ver [Escenarios de arena](#escenarios-de-arena-mapas)): carga con `forceload` el piso y ambas cámaras y la reconstruye o restaura entre peleas. Crea un `LlmClient` por agente (el `provider`/`model` del `AgentConfig`, o `LLM_PROVIDER`/`LLM_MODEL` si vienen vacíos; si el modelo ya no está permitido, el modelo por defecto del servidor) y un `Fighter` por lado con los nombres de `AGENT_USERNAMES` y el kit de su `AgentConfig`. Tras `connect()`, teletransporta a cada uno a los `spawns[side]` del escenario, le da su kit y fija el modo de juego.
 4. **Cuenta regresiva.** Con los dos peleadores listos, el orquestador pone `state.countdownEndsAt = ahora + COUNTDOWN_SECONDS` (3 segundos), envía el `state` de inmediato y espera hasta ese instante. La fase sigue siendo `preparing` y dentro del juego no se muestra nada: la web dibuja el "3, 2, 1" a partir de `countdownEndsAt`. La pausa cubre además la invulnerabilidad inicial de un jugador que acaba de entrar al mundo. Si la pelea se detiene o falla durante la cuenta, `countdownEndsAt` vuelve a `null` y la pelea no empieza.
-5. **Pelear.** Fase `running`, con `startedAt` y `endsAt = startedAt + MATCH_DURATION_SECONDS`; en esa misma actualización `countdownEndsAt` vuelve a `null`. Cada `Fighter` corre su ciclo cada `AGENT_TICK_MS`: arma una observación, llama al LLM con el prompt del usuario y las herramientas de su kit, y ejecuta lo que el LLM pide. Todo lo que ocurre vuelve al orquestador por `FighterEvents`, que actualiza `AgentStatus` (vida, comida, `damageDealt`, `decisions`, `lastThought`, `lastAction`) y lo retransmite por websocket.
+5. **Pelear.** Fase `running`, con `startedAt` y `endsAt = startedAt + MATCH_DURATION_SECONDS`; en esa misma actualización `countdownEndsAt` vuelve a `null`. Cada `Fighter` corre su ciclo en cuanto termina el anterior, con una pausa mínima de `AGENT_TICK_MS` (300 ms por defecto): arma una observación, llama al LLM con el prompt del usuario y las herramientas de su kit, y ejecuta lo que el LLM pide. Todo lo que ocurre vuelve al orquestador por `FighterEvents`, que actualiza `AgentStatus` (vida, comida, `damageDealt`, `decisions`, `lastThought`, `lastAction`) y lo retransmite por websocket.
 6. **Terminar.** La pelea termina por una de estas razones (`WinReason`):
 
    | `reason` | Cuándo | `winner` |

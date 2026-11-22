@@ -52,7 +52,12 @@ const EnvSchema = z.object({
    * 0 = sin tope.
    */
   MATCH_MAX_SECONDS: z.coerce.number().int().min(0).default(1800),
-  AGENT_TICK_MS: z.coerce.number().int().positive().default(1500),
+  /**
+   * Pausa mínima entre dos decisiones de un agente (ms). 300 no frena a ningún modelo de la
+   * lista (el más rápido tarda ~0,8 s): cada uno decide al ritmo de su propia latencia. Existe
+   * solo para que un LLM que falla al instante no reintente en un bucle de 50 ms.
+   */
+  AGENT_TICK_MS: z.coerce.number().int().positive().default(300),
   AGENT_OBSERVATION_RADIUS: z.coerce.number().int().min(8).max(64).default(16),
   DATA_DIR: z.string().default("./data"),
 

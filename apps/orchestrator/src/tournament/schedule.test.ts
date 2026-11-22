@@ -258,6 +258,11 @@ describe("estimateMatch", () => {
     expect(est.assumptions.length).toBeGreaterThan(0);
   });
 
+  it("con un tick menor que la latencia, la cota sale de la latencia mínima, no del tick", () => {
+    expect(estimateMatch([frozen("a")], 60, 300, 20).decisionsPerSide).toBe(60);
+    expect(estimateMatch([frozen("a")], 60, 2000, 20).decisionsPerSide).toBe(30);
+  });
+
   it("los modelos sin precio cuentan como 0 y se informan", () => {
     const est = estimateMatch([{ ...frozen("a"), pricing: null }], 60, 1500, 20);
     expect(est.usdPerMatch).toBe(0);

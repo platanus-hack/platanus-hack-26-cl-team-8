@@ -257,6 +257,12 @@ export function adaptiveBudget(cap: number, baseMatches: number, calibrationShar
  * La salida es una tool call con un "reason" corto: 150 tokens. No se descuenta caché.
  */
 export const EST_TOKENS_IN_PER_DECISION = 2500;
+/**
+ * Lo mínimo que tarda una decisión para estimar (ms): el modelo más rápido de la liga del
+ * 21-11 (DeepSeek V4.1 Flash) promedió ~940 ms. Solo cuenta antes de la primera partida;
+ * después el runner usa la media observada.
+ */
+export const EST_MIN_DECISION_MS = 1000;
 export const EST_TOKENS_OUT_PER_DECISION = 150;
 
 export type MatchEstimate = {
@@ -284,7 +290,10 @@ export function estimateMatch(
   tickMs: number,
   overheadSeconds: number,
 ): MatchEstimate {
-  const decisionsPerSide = tickMs > 0 ? Math.ceil((matchSeconds * 1000) / tickMs) : 0;
+  // Una decisión tarda lo que sea mayor: el tick o la latencia del LLM. Con un tick chico,
+  // la cota sale de la latencia (EST_MIN_DECISION_MS), no del tick.
+  const cycleMs = Math.max(tickMs, EST_MIN_DECISION_MS);
+  const decisionsPerSide = tickMs > 0 ? Math.ceil((matchSeconds * 1000) / cycleMs) : 0;
   const tokensIn = EST_TOKENS_IN_PER_DECISION;
   const tokensOut = EST_TOKENS_OUT_PER_DECISION;
   const unpriced = models.filter((m) => !m.pricing).map((m) => m.key);
@@ -300,7 +309,7 @@ export function estimateMatch(
     tokensOutPerDecision: tokensOut,
     unpriced,
     assumptions: [
-      `${decisionsPerSide} decisiones por lado (${matchSeconds} s de pelea cada ${tickMs} ms)`,
+      `${decisionsPerSide} decisiones por lado (${matchSeconds} s de pelea, una cada ${cycleMs} ms: tick ${tickMs} ms o latencia)`,
       `${tokensIn} tokens de entrada y ${tokensOut} de salida por decisión, sin caché`,
       `${matchSeconds + overheadSeconds} s de reloj por partida (${overheadSeconds} s de preparación)`,
       "precio por token del catálogo congelado",

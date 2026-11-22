@@ -299,7 +299,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     "- El otro agente y tú pueden hacerse daño con el equipo que lleven.",
     '- Tu observación puede traer "notices": avisos que llegan de fuera de la arena (no son del otro agente). El sistema los entrega tal cual.',
     `- La vida va de 0 a ${MAX_HEALTH} y la comida de 0 a 20.`,
-    `- Decides aproximadamente cada ${seconds} segundos. Entre decisiones tu cuerpo sigue ejecutando la última acción por su cuenta.`,
+    `- Decides de nuevo en cuanto respondes, con al menos ${seconds} segundos entre una decisión y la siguiente: lo que tardas en responder es tiempo que pasa en la arena. Mientras piensas y entre decisiones, tu cuerpo sigue ejecutando la última acción por su cuenta.`,
     "- En cada turno recibes una observación en JSON: segundos transcurridos, tu vida, comida, posición, distancia al otro agente (null si no lo ves), su vida si se conoce, objeto en la mano, inventario, acción actual y resultado de la última acción.",
     "- Cada respuesta tuya puede llamar una herramienta, varias o ninguna.",
     `- Si llamas varias, se ejecutan en orden: cada una empieza cuando termina la anterior. Las que no terminan solas (${openEnded}) duran lo que diga su argumento "seconds"; sin él, ${QUEUE_STEP_DEFAULT_MS / 1000} segundos si hay otra acción después, o hasta que la reemplaces si es la última.`,

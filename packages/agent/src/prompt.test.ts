@@ -39,7 +39,7 @@ describe("buildSystemPrompt", () => {
     const first = prompt.split("\n")[0] ?? "";
     expect(first).toContain('Eres "AgenteRojo", el agente rojo');
     expect(first).toContain('junto a otro agente, "AgenteAzul"');
-    expect(prompt).toContain("Decides aproximadamente cada 1.5 segundos");
+    expect(prompt).toContain("Decides de nuevo en cuanto respondes, con al menos 1.5 segundos entre una decisión y la siguiente");
     expect(prompt).toContain("La partida dura 120 segundos");
   });
 
