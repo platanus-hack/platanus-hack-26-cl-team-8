@@ -157,6 +157,11 @@ export type SideStats = {
   /** Latencia por decisión: desde que el agente recibe el estado hasta que entrega una acción válida. */
   latencyMs: { count: number; mean: number; p50: number; p95: number };
   llmErrors: number;
+  /**
+   * Latencia de cada decisión válida, en orden (ms). Los intentos de antes no la traen.
+   * Sirve para ver si un modelo se pone más lento a medida que crece la pelea.
+   */
+  latenciesMs?: number[];
 };
 
 export type MatchAttempt = {
@@ -171,6 +176,17 @@ export type MatchAttempt = {
   /** Solo si status = "infra". */
   error: string | null;
   sides: { red: SideStats; blue: SideStats };
+  /**
+   * Id de la pelea: su registro está en tournaments/<id>/matches.jsonl y su transcripción en
+   * tournaments/<id>/transcripts/<recordId>.jsonl. null si no llegó a empezar; los intentos de
+   * antes no lo traen.
+   */
+  recordId?: string | null;
+  /**
+   * Duración real de la pelea (ms), sin la preparación: startedAt/endedAt del intento sí la
+   * incluyen. null si no llegó a empezar; los intentos de antes no la traen.
+   */
+  fightMs?: number | null;
 };
 
 // ---------- Reporte (lo que dibuja la web) ----------

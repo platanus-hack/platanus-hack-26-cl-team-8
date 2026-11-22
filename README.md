@@ -64,7 +64,7 @@ Rutas públicas (un solo origen, todo pasa por Caddy):
 | `/api/*` (incluye el websocket `/api/ws`) | `orchestrator:8787`, ruta sin cambios |
 | `/live/*` | `mediamtx:8888`, ruta sin cambios. Playlist HLS: `/live/arena/index.m3u8` |
 
-Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios) en [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md).
+Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios) en [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md). Los algoritmos y las decisiones de ingeniería de cada capa (arquitectura cognitiva del agente, compresión volumétrica del contexto, modelado balístico, sincronía de telemetría con el video, rating de Bradley–Terry y diseño experimental del torneo) están en [docs/DISENO-TECNICO.md](docs/DISENO-TECNICO.md).
 
 ## Estructura del repo
 
