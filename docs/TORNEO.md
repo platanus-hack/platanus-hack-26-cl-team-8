@@ -24,7 +24,8 @@ apps/orchestrator/src/tournament/
   sim.ts         MatchRunner simulado (ratings ocultos + RNG con semilla)
   minecraft.ts   MatchRunner real sobre MatchManager.runOnce
   report.ts      TournamentReport (lo que dibujan la web y el CLI)
-  cli.ts         pnpm tournament <plan|create|run|pause|status|leaderboard|list>
+  speed.ts       velocidad y eficiencia por modelo junto al Elo (pnpm tournament speed)
+  cli.ts         pnpm tournament <plan|create|run|pause|status|leaderboard|speed|list>
 apps/orchestrator/src/server.ts            GET /api/tournaments… y 409 en "Iniciar pelea" con lock vivo
 apps/web/src/pages/arena.astro             leaderboard (/arena)
 ```
@@ -147,6 +148,27 @@ La matriz es fila-vs-columna con `(V + 0.5·E) / válidas`; una celda sin partid
   muerto se ignora.
 - **Concurrencia > 1** exige un servidor de Minecraft por partida; por ahora el modo real
   solo acepta 1 (el simulado acepta cualquiera).
+
+## 5b. Velocidad por modelo (solo lectura)
+
+`pnpm tournament speed <id>` (o `--dir <carpeta>` con `tournament.json`, `attempts.jsonl` y
+`state.json` sueltos, p. ej. descargados del servidor) junta cada modelo con su Elo oficial y
+lo que ya guardan los intentos: decisiones, latencia, inválidas, tokens, daño y costo. No
+cambia el torneo ni el rating, y se puede correr con la liga en curso. `--stage league`
+(por defecto), `calibration` o `all`; `--json` da el `SpeedReport` crudo.
+
+- **Parte de las decisiones** (`decisionShare`): mis decisiones / las de los dos en la misma
+  partida, promediada. Es la medida de velocidad que no depende de la duración: los dos
+  pelearon el mismo tiempo. 50 % = igual de rápido que el rival.
+- **Decisiones por minuto de reloj** (`decisionsPerWallMin`): aproximada. `startedAt`/`endedAt`
+  de un intento incluyen preparar la arena, conectar los bots y la cuenta regresiva, así que
+  subestima.
+- **Latencia**: media exacta (ponderada por decisiones) y mediana de los p50/p95 de cada partida.
+- **Correlación** de Spearman entre el Elo y cada métrica. Con 9 modelos es indicativa, no
+  prueba de causa.
+
+El cálculo es puro (`buildSpeedReport` en `apps/orchestrator/src/tournament/speed.ts`): se puede
+sumar al `TournamentReport` o servir en una ruta propia para el leaderboard de la web.
 
 ## 6. Archivos
 

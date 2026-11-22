@@ -430,6 +430,7 @@ pnpm tournament run <id>            # reanuda sin repetir partidas
 # 4. Mirar
 pnpm tournament status <id>         # progreso + calibración (quién entró, quién no y por qué)
 pnpm tournament leaderboard <id>    # ranking oficial (solo liga) y matriz
+pnpm tournament speed <id>          # velocidad por modelo junto al Elo y su correlación (--dir <carpeta> para archivos sueltos)
 pnpm tournament list
 ```
 
