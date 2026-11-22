@@ -1253,6 +1253,16 @@ export function seriesByPoints(settings: { seriesWin: SeriesWin; scenario: Scena
   return settings.seriesWin === "points";
 }
 
+/**
+ * Pares de voces entre los que se puede elegir: las habituales del servidor o las
+ * japonesas, pensadas para cuando los agentes hablan en japonés. Cada par tiene una voz
+ * por lado.
+ */
+export const VOICE_SETS = ["default", "japanese"] as const;
+export const VoiceSetSchema = z.enum(VOICE_SETS);
+export type VoiceSet = z.infer<typeof VoiceSetSchema>;
+export const VOICE_SET_LABELS: Record<VoiceSet, string> = { default: "Habituales", japanese: "Japonesas" };
+
 /** Ajustes de la pelea (no de un lado): se editan en la web y valen desde la próxima. */
 export const MatchSettingsSchema = z.object({
   comms: CommsModeSchema.catch(DEFAULT_COMMS).default(DEFAULT_COMMS),
@@ -1297,6 +1307,8 @@ export const MatchSettingsSchema = z.object({
    * efecto si el servidor tiene la clave configurada (ver ServerDefaults.voice).
    */
   voice: z.boolean().catch(false).default(false),
+  /** Con qué voces hablan (ver VOICE_SETS). Solo importa con la voz encendida. */
+  voiceSet: VoiceSetSchema.catch("default").default("default"),
   /**
    * Mapa de las próximas peleas (uno de SELECTABLE_ARENA_SCENARIOS); null = el por defecto
    * del servidor (ServerDefaults.arena). Lo elige el selector "Mapa" de la web. Todas las
@@ -1311,6 +1323,7 @@ export const DEFAULT_SETTINGS: MatchSettings = {
   timerSeconds: null,
   mode: DEFAULT_MODE,
   voice: false,
+  voiceSet: "default",
   scenario: DEFAULT_SCENARIO,
   rounds: 1,
   horizon: "known",
@@ -1331,6 +1344,8 @@ export function syncMode<T extends Pick<MatchSettings, "mode" | "rounds">>(setti
 
 export const VOICE_LABELS = {
   on: "Lo que los agentes se dicen también se oye, con una voz distinta por lado.",
+  /** Encendida y con el par japonés (VOICE_SETS). */
+  onJapanese: "Lo que los agentes se dicen también se oye, con una voz japonesa distinta por lado.",
   off: "Lo que los agentes se dicen solo se lee.",
   /** El servidor no tiene clave de ElevenLabs: el interruptor no hace nada. */
   unavailable: "Este servidor no tiene voz configurada.",
@@ -1349,6 +1364,7 @@ export const UpdateSettingsBodySchema = z
     timerSeconds: TimerSecondsSchema.nullable().optional(),
     mode: MatchModeSchema.optional(),
     voice: z.boolean().optional(),
+    voiceSet: VoiceSetSchema.optional(),
     scenario: ScenarioIdSchema.optional(),
     rounds: z.number().int().min(1).max(MAX_ROUNDS).optional(),
     horizon: HorizonSchema.optional(),
@@ -1873,7 +1889,7 @@ export function parseTranscript(raw: string): TranscriptEntry[] {
 //   PUT  /api/prompts/:side          body UpdatePromptBody { prompt, provider?, model?, kit?, customKit? } -> AgentConfig
 //                                    (400 si el modelo no está en la lista de permitidos)
 //   GET  /api/settings               -> MatchSettings     (ajustes pendientes para la próxima pelea)
-//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } -> MatchSettings
+//   PUT  /api/settings               body UpdateSettingsBody { comms?, timer?, timerSeconds?, mode?, voice?, voiceSet?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } -> MatchSettings
 //                                    (400 si arena no es un mapa de este servidor)
 //   POST /api/match/start            body StartMatchBody? { arena? } -> MatchState (409 si ya hay una pelea en curso;
 //                                    400 si el mapa no es de este servidor)

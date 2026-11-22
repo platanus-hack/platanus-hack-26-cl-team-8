@@ -261,6 +261,15 @@ describe("PUT /api/settings", () => {
     expect((await put(s, { voice: false })).json()).toMatchObject({ comms: "chat", voice: false });
   });
 
+  it("acepta el par de voces y cambia solo eso", async () => {
+    const s = await server();
+    expect((await put(s, { voice: true })).json()).toMatchObject({ voice: true, voiceSet: "default" });
+    expect((await put(s, { voiceSet: "japanese" })).json()).toMatchObject({ voice: true, voiceSet: "japanese" });
+    expect((await put(s, { timer: false })).json()).toMatchObject({ timer: false, voiceSet: "japanese" });
+    expect((await put(s, { voiceSet: "klingon" })).statusCode).toBe(400);
+    expect((await put(s, { voiceSet: "default" })).json()).toMatchObject({ voice: true, voiceSet: "default" });
+  });
+
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
     const s = await server();
     for (const payload of [{}, { timer: "no" }, { comms: "telepatía" }, { rounds: 0 }, { rounds: 11 }, { rounds: 2.5 }, { scenario: "batalla" }, { rules: { red: ["volar"] } }]) {

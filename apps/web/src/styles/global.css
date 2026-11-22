@@ -2803,6 +2803,15 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   opacity: 0.5;
 }
 
+/* Voces de los agentes (habituales o japonesas): junto al interruptor, solo con la voz encendida. */
+.voice-set {
+  display: flex;
+}
+
+.voice-set[hidden] {
+  display: none;
+}
+
 /* Duración de la pelea: la cantidad y su unidad, junto al interruptor. */
 .duration {
   display: flex;

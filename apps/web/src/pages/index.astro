@@ -12,6 +12,8 @@ import {
   MAX_HEALTH,
   TIMER_LABELS,
   VOICE_LABELS,
+  VOICE_SETS,
+  VOICE_SET_LABELS,
   MAX_ROUNDS,
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
@@ -398,6 +400,12 @@ const stats = [
                 <p class="setting__help" id="voice-description">{VOICE_LABELS.off}</p>
               </div>
               <div class="setting__control">
+                <!-- Con qué voces hablan, cuando la voz está encendida. -->
+                <div class="voice-set" id="voice-set-box" hidden>
+                  <select id="voice-set" aria-label="Voces de los agentes" aria-describedby="voice-description" data-segmented>
+                    {VOICE_SETS.map((set) => <option value={set}>{VOICE_SET_LABELS[set]}</option>)}
+                  </select>
+                </div>
                 <label class="toggle">
                   <span class="sr-only" id="voice-state">Apagado</span>
                   <input type="checkbox" role="switch" id="voice" aria-describedby="voice-description" />

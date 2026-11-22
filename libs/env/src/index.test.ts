@@ -49,6 +49,9 @@ describe("voz de los agentes", () => {
     expect(env.ELEVENLABS_API_KEY).toBe("");
     expect(env.ELEVENLABS_VOICE_RED).toBe("");
     expect(env.ELEVENLABS_VOICE_BLUE).toBe("");
+    // Las voces japonesas vienen puestas: el par alternativo anda sin tocar el .env.
+    expect(env.ELEVENLABS_VOICE_JAPANESE_RED).toBe("jyogAI7BN5DyoykAgSk6");
+    expect(env.ELEVENLABS_VOICE_JAPANESE_BLUE).toBe("nkmkwBCNHgzLGGnbmMTD");
     expect(env.ELEVENLABS_MODEL).toBe("eleven_flash_v2_5");
     expect(env.ELEVENLABS_SPEED).toBe(1.1);
     expect(env.ELEVENLABS_OUTPUT_FORMAT).toBe("mp3_44100_64");

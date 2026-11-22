@@ -57,6 +57,7 @@ async function main(): Promise<void> {
     config: {
       apiKey: env.ELEVENLABS_API_KEY,
       voices: { red: env.ELEVENLABS_VOICE_RED, blue: env.ELEVENLABS_VOICE_BLUE },
+      japaneseVoices: { red: env.ELEVENLABS_VOICE_JAPANESE_RED, blue: env.ELEVENLABS_VOICE_JAPANESE_BLUE },
       model: env.ELEVENLABS_MODEL,
       speed: env.ELEVENLABS_SPEED,
       outputFormat: env.ELEVENLABS_OUTPUT_FORMAT,

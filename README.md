@@ -345,6 +345,7 @@ En el modo `chat`, lo que un agente le dice al otro también se puede **oír**, 
 |---|---|---|
 | `ELEVENLABS_API_KEY` | vacía | Clave de la API. Sin ella no hay voz. |
 | `ELEVENLABS_VOICE_RED`, `ELEVENLABS_VOICE_BLUE` | vacías | Id de la voz de cada lado. |
+| `ELEVENLABS_VOICE_JAPANESE_RED`, `ELEVENLABS_VOICE_JAPANESE_BLUE` | ya puestas | Voces japonesas: un segundo par, que se elige en la web junto al interruptor de la voz. |
 | `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | El modelo rápido (~100 ms); habla español. |
 | `ELEVENLABS_SPEED` | `1.1` | Velocidad del habla, de 0.7 a 1.2. |
 | `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_64` | Formato MP3. Más calidad tarda más. |

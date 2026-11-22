@@ -293,7 +293,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           .code(400)
           .send(
             errorBody(
-              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
+              `Cuerpo inválido: se espera un JSON { comms?, timer?, timerSeconds?, mode?, voice?, voiceSet?, scenario?, rounds?, horizon?, seriesWin?, refillKit?, judge?, rules?, arena? } con comms = none, thoughts o chat, timer = true o false, timerSeconds entre ${MIN_TIMER_SECONDS} y ${MAX_TIMER_SECONDS} (o null), mode = single o rounds, voice = true o false y rounds de 2 a 5`,
             ),
           );
       }
@@ -309,6 +309,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         change.rounds = body.data.mode === "single" ? 1 : current > 1 ? current : LEGACY_SERIES_ROUNDS;
       }
       if (body.data.voice !== undefined) change.voice = body.data.voice;
+      if (body.data.voiceSet !== undefined) change.voiceSet = body.data.voiceSet;
       const b = body.data;
       if (b.scenario !== undefined) change.scenario = b.scenario;
       if (b.rounds !== undefined) change.rounds = b.rounds;

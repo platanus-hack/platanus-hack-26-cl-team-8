@@ -66,6 +66,12 @@ const EnvSchema = z.object({
   /** Id de la voz de cada lado (la página de la voz en la app de ElevenLabs). */
   ELEVENLABS_VOICE_RED: z.string().default(""),
   ELEVENLABS_VOICE_BLUE: z.string().default(""),
+  /**
+   * Voces japonesas: un segundo par que se puede elegir en los ajustes de la pelea, para
+   * cuando los agentes hablan en japonés. Vienen puestas; aquí se pueden cambiar.
+   */
+  ELEVENLABS_VOICE_JAPANESE_RED: textOr("jyogAI7BN5DyoykAgSk6"),
+  ELEVENLABS_VOICE_JAPANESE_BLUE: textOr("nkmkwBCNHgzLGGnbmMTD"),
   ELEVENLABS_MODEL: textOr("eleven_flash_v2_5"),
   /** Velocidad del habla; donde se usa se deja entre 0.7 y 1.2. */
   ELEVENLABS_SPEED: optionalNumber(z.coerce.number().default(1.1)),

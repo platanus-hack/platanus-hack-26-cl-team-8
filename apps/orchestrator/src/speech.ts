@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Side } from "@phack/protocol";
+import type { Side, VoiceSet } from "@phack/protocol";
 import { SIDE_LABEL } from "./result";
 import { errorMessage, sleep as realSleep, type LogFn, type SleepFn } from "./util";
 
@@ -67,6 +67,8 @@ const WARM_TEXT = "Hola.";
 export type SpeechConfig = {
   apiKey: string;
   voices: Record<Side, string>;
+  /** Voces japonesas: el par alternativo (VoiceSet "japanese"). Un lado sin voz aquí usa la habitual. */
+  japaneseVoices?: Record<Side, string>;
   model: string;
   /** Se deja entre 0.7 y 1.2 (lo que admite ElevenLabs). */
   speed: number;
@@ -199,11 +201,8 @@ export class SpeechService {
   /** Ya se avisó que ElevenLabs va atrasado (se vuelve a avisar tras una frase con audio). */
   private behindWarned = false;
   private lastCreditsCheck = Number.NEGATIVE_INFINITY;
-  /** Cuándo respondió con audio cada voz por última vez (para saber si sigue despierta). */
-  private readonly lastSpokeAt: Record<Side, number> = {
-    red: Number.NEGATIVE_INFINITY,
-    blue: Number.NEGATIVE_INFINITY,
-  };
+  /** Cuándo respondió con audio cada voz (por su id) por última vez, para saber si sigue despierta. */
+  private readonly lastSpokeAt = new Map<string, number>();
   private pruning = false;
   private pruneAgain = false;
 
@@ -222,15 +221,23 @@ export class SpeechService {
    * se descarta: cuesta un par de créditos por voz. No hace nada con las que se usaron
    * hace poco, ni espera la respuesta.
    */
-  warm(): void {
+  warm(set: VoiceSet = "default"): void {
     if (!this.available()) return;
     for (const side of ["red", "blue"] as const) {
-      if (this.now() - this.lastSpokeAt[side] < this.limits.warmForMs) continue;
+      const voice = this.voiceOf(side, set);
+      if (this.now() - (this.lastSpokeAt.get(voice) ?? Number.NEGATIVE_INFINITY) < this.limits.warmForMs) continue;
       // Se anota de inmediato: dos llamadas seguidas no la calientan dos veces.
-      this.lastSpokeAt[side] = this.now();
+      this.lastSpokeAt.set(voice, this.now());
       const deadline: Deadline = { at: this.now() + this.limits.requestTimeoutMs };
-      void this.fetchAudio(side, this.deps.config.voices[side], WARM_TEXT, deadline).catch(() => {});
+      void this.fetchAudio(side, voice, WARM_TEXT, deadline).catch(() => {});
     }
+  }
+
+  /** La voz de un lado en el par pedido. Si ese par no tiene voz para el lado, la habitual. */
+  private voiceOf(side: Side, set: VoiceSet): string {
+    const { voices, japaneseVoices } = this.deps.config;
+    const other = set === "japanese" ? (japaneseVoices?.[side] ?? "").trim() : "";
+    return other !== "" ? other : voices[side].trim();
   }
 
   /** Hay clave y una voz por lado (lo que dice ServerDefaults.voice.available). */
@@ -255,14 +262,17 @@ export class SpeechService {
     if (this.configured()) void this.refreshCredits();
   }
 
-  /** Pide el audio de una frase. No espera ni lanza: el id, o null si no hay voz. */
-  request(side: Side, text: string): string | null {
+  /**
+   * Pide el audio de una frase, con la voz de ese lado en el par `set`. No espera ni lanza:
+   * el id, o null si no hay voz.
+   */
+  request(side: Side, text: string, set: VoiceSet = "default"): string | null {
     if (!this.available()) return null;
     const trimmed = text.trim();
     if (trimmed === "") return null;
     const { config } = this.deps;
     const spoken = cutAtWord(trimmed, config.maxChars);
-    const voice = config.voices[side].trim();
+    const voice = this.voiceOf(side, set);
     const key = this.cacheKey(voice, spoken);
     const id = randomUUID();
     const line: Line = {
@@ -553,7 +563,7 @@ export class SpeechService {
           this.say("warn", `ElevenLabs devolvió un audio vacío para ${SIDE_LABEL[side]}`);
           return { audio: null };
         }
-        this.lastSpokeAt[side] = this.now();
+        this.lastSpokeAt.set(voice, this.now());
         return { audio };
       }
       const detail = readErrorDetail(await res.text().catch(() => ""));
@@ -589,7 +599,9 @@ export class SpeechService {
     if (status === 404 || (status === 400 && BAD_VOICE.includes(detail.code))) {
       if (!this.badVoices.has(voice)) {
         this.badVoices.add(voice);
-        const variable = side === "red" ? "ELEVENLABS_VOICE_RED" : "ELEVENLABS_VOICE_BLUE";
+        // La variable que hay que revisar: la del par al que pertenece esa voz.
+        const pair = voice === this.deps.config.voices[side].trim() ? "ELEVENLABS_VOICE" : "ELEVENLABS_VOICE_JAPANESE";
+        const variable = `${pair}_${side === "red" ? "RED" : "BLUE"}`;
         this.say("error", `ElevenLabs no reconoce la voz de ${SIDE_LABEL[side]} ("${voice}")${why}. Revisa ${variable}`);
       }
       return { audio: null };

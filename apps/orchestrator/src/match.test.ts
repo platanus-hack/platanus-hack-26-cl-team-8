@@ -714,13 +714,13 @@ describe("MatchManager: comunicación entre agentes", () => {
 describe("MatchManager: voz de los mensajes", () => {
   /** Servicio de voz falso: anota lo pedido y devuelve ids en orden. */
   function fakeSpeech(available = true) {
-    const requested: { side: Side; text: string }[] = [];
+    const requested: { side: Side; text: string; set?: string }[] = [];
     return {
       requested,
       speech: {
         available: () => available,
-        request: (side: Side, text: string) => {
-          requested.push({ side, text });
+        request: (side: Side, text: string, set?: string) => {
+          requested.push({ side, text, set });
           return `00000000-0000-4000-8000-00000000000${requested.length}`;
         },
       },
@@ -762,12 +762,28 @@ describe("MatchManager: voz de los mensajes", () => {
     await t.manager.stop();
   });
 
+  it("con las voces japonesas elegidas, se calientan y se piden con ese par", async () => {
+    const voice = fakeSpeech();
+    const warmed: (string | undefined)[] = [];
+    const t = setup({
+      comms: "chat",
+      voice: true,
+      settings: { voiceSet: "japanese" },
+      speech: { ...voice.speech, warm: (set) => void warmed.push(set) },
+    });
+    await startRunning(t);
+    expect(warmed).toEqual(["japanese"]);
+    t.ev("blue").onMessage("ikuzo");
+    expect(voice.requested).toEqual([{ side: "blue", text: "ikuzo", set: "japanese" }]);
+    await t.manager.stop();
+  });
+
   it("con la voz encendida el mensaje trae speechId, también en la transcripción", async () => {
     const voice = fakeSpeech();
     const t = setup({ ...DEFAULT_SETTINGS, comms: "chat", voice: true, speech: voice.speech });
     await startRunning(t);
     t.ev("red").onMessage("ríndete ya");
-    expect(voice.requested).toEqual([{ side: "red", text: "ríndete ya" }]);
+    expect(voice.requested).toEqual([{ side: "red", text: "ríndete ya", set: "default" }]);
     const message = { type: "message", side: "red", text: "ríndete ya", speechId: "00000000-0000-4000-8000-000000000001" };
     expect(t.hub.broadcast).toHaveBeenCalledWith(expect.objectContaining(message));
     expect(t.entries.map((e) => e.entry)).toContainEqual(expect.objectContaining(message));
