@@ -11,7 +11,7 @@
  *   pnpm tournament list                  torneos guardados
  */
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { loadEnv, type Env } from "@phack/env";
 import {
@@ -36,12 +36,14 @@ import {
   resolveCatalog,
 } from "./catalog";
 import { eligibleModels, parseCatalog } from "../models";
-import { buildReport, summarize } from "./report";
+import { allModels, buildReport, summarize } from "./report";
 import { BenchmarkMismatchError, DEFAULT_OVERHEAD_SECONDS, runTournament } from "./runner";
 import { DEFAULT_SEEDS, estimateMatch, planPreview } from "./schedule";
 import { createSimRunner } from "./sim";
 import { buildSpeedReport, type SpeedReport } from "./speed";
-import { FileTournamentStore, TournamentLockedError, acquireLock, parseAttemptLines, readLiveLock } from "./store";
+import { FileTournamentStore, TournamentLockedError, acquireLock, parseAttemptLines, readLiveLock, tournamentsDir } from "./store";
+import { MatchStore } from "../store";
+import { TranscriptStore } from "../transcript";
 import type { CatalogModel, MatchRunner, ResolvedLine, RunnerState } from "./types";
 
 // ---------- Opciones ----------
@@ -415,11 +417,29 @@ async function cmdRun(id: string, env: Env, store: FileTournamentStore, dataDir:
     if (config.mode === "real") {
       // Import diferido: el modo simulado no carga mineflayer ni RCON.
       const { createMinecraftRunner, createRealMatchManager } = await import("./minecraft");
-      const real = await createRealMatchManager(env, config.benchmark.tickMs, (level, text) => {
+      const log = (level: string, text: string): void => {
         if (level !== "info") out(`[${level}] ${text}`);
+      };
+      // Registro y transcripción de cada pelea, en la carpeta del torneo (no en el historial
+      // de la web, para no mezclarse con sus peleas en /bench).
+      const folder = join(tournamentsDir(dataDir), id);
+      const history = new MatchStore(folder, log);
+      await history.load();
+      const transcripts = new TranscriptStore(folder, log);
+      const prices = new Map(allModels(config).map((m) => [m.gatewayId, m.pricing] as const));
+      const real = await createRealMatchManager(env, config.benchmark.tickMs, log, {
+        history,
+        transcripts,
+        price: (modelId) => {
+          const p = prices.get(modelId);
+          return p ? { input: p.input, output: p.output } : null;
+        },
       });
       runner = createMinecraftRunner(real.manager, config.benchmark.matchSeconds);
-      close = real.close;
+      close = async () => {
+        await transcripts.flush();
+        await real.close();
+      };
     }
     await store.clearPause(id);
 
@@ -590,7 +610,7 @@ function printSpeed(r: SpeedReport): void {
   out();
   out(
     table(
-      ["#", "Modelo", "Elo", "V-E-D", "Parte decis.", "Decis/part.", "Lat. media", "p50", "p95", "Inválidas", "Tok in/dec", "Daño/dec", "USD/dec"],
+      ["#", "Modelo", "Elo", "V-E-D", "Parte decis.", "Decis/part.", "Decis/min", "Lat. media", "p50", "p95", "Inválidas", "Tok in/dec", "Daño/dec", "USD/dec"],
       r.rows.map((row) => [
         row.rank === null ? "—" : String(row.rank),
         `${row.name}${row.isReference ? " (ref)" : ""}`,
@@ -598,6 +618,7 @@ function printSpeed(r: SpeedReport): void {
         `${row.wins}-${row.draws}-${row.losses}`,
         pct(row.decisionShare),
         f(row.decisionsPerMatch, 1),
+        f(row.decisionsPerFightMin, 1),
         f(row.latencyMeanMs),
         f(row.latencyP50Ms),
         f(row.latencyP95Ms),
@@ -606,7 +627,7 @@ function printSpeed(r: SpeedReport): void {
         f(row.damagePerDecision, 2),
         row.costPerDecisionUsd === null ? "—" : row.costPerDecisionUsd.toFixed(5),
       ]),
-      [0, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      [0, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     ),
   );
   out();
@@ -620,6 +641,7 @@ function printSpeed(r: SpeedReport): void {
   );
   out();
   out("Parte decis. = mis decisiones / las de los dos en la misma partida (50% = igual de rápido que el rival).");
+  out("Decis/min = por minuto de pelea real; \"—\" en ligas de antes, que no guardaban la duración de la pelea.");
   out("Latencias en ms (estado -> acción válida). Con pocos modelos, una rho no es prueba de causa.");
 }
 

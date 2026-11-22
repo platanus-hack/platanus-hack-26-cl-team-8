@@ -46,6 +46,19 @@ describe("ranks y spearman", () => {
 });
 
 describe("buildSpeedReport", () => {
+  it("decisiones por minuto de pelea real cuando el intento trae fightMs", () => {
+    const config = fakeConfig(1);
+    const a = config.candidates[0]!.key;
+    const attempts = [
+      attempt("n1", side(a, { decisions: 20 }), side(REF_KEY, { decisions: 10 }), a, { fightMs: 20_000 }),
+      // Sin fightMs: no entra a la cuenta exacta.
+      attempt("n2", side(a, { decisions: 99 }), side(REF_KEY), a),
+    ];
+    const r = buildSpeedReport(config, attempts, null, "league");
+    expect(r.rows.find((x) => x.model === a)!.decisionsPerFightMin).toBeCloseTo(60);
+    expect(r.rows.find((x) => x.model === REF_KEY)!.decisionsPerFightMin).toBeCloseTo(30);
+  });
+
   const config = fakeConfig(2);
   const [a, b] = config.candidates.map((m) => m.key) as [string, string];
 
@@ -80,6 +93,8 @@ describe("buildSpeedReport", () => {
     expect(ra.damagePerDecision).toBeCloseTo(40 / 25);
     // 25 decisiones en 1 minuto de reloj (2 intentos de 30 s).
     expect(ra.decisionsPerWallMin).toBeCloseTo(25);
+    // Intentos de antes, sin la duración de la pelea: no hay decisiones por minuto exactas.
+    expect(ra.decisionsPerFightMin).toBeNull();
     expect(r.rows[1]).toMatchObject({ matches: 1, losses: 1, decisionShare: 0.25 });
 
     const share = r.correlations.find((c) => c.metric === "decisionShare")!;
