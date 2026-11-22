@@ -1,0 +1,8 @@
+# Mirar es público: la pelea en vivo y el leaderboard se pueden indexar.
+# La API y el video no son páginas.
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /live/
+
+Sitemap: https://prompt-arena.si/sitemap.xml

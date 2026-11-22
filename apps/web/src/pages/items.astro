@@ -1,4 +1,5 @@
 ---
+import PageHead from "../components/PageHead.astro";
 // Ítems que se pueden pedir en el kit "Personalizado", con imagen y nombre en español. Sirve
 // para escribir prompts: dice el id de cada cosa. El catálogo lo genera scripts/items/catalog.mjs; las imágenes (texturas de Mojang)
 // las copia ese mismo script a public/items/ y no van al repositorio: si faltan, la página
@@ -26,13 +27,12 @@ const items = (catalog.items as CatalogItem[])
 <!doctype html>
 <html lang="es">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#101113" />
-    <title>Ítems del kit</title>
-    <meta name="description" content={`Los ${items.length} ítems que se pueden pedir en un kit personalizado, con su id.`} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <PageHead
+      title="Ítems del kit · Prompt Arena"
+      description={`Los ${items.length} ítems que se pueden pedir en un kit personalizado, con su id.`}
+      path="/items"
+      noindex
+    />
   </head>
   <body>
     <main class="page items-page">

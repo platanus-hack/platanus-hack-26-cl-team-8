@@ -4,7 +4,10 @@
     python3 scripts/marca.py
 
 Escribe los SVG en apps/web/public/brand/ y el favicon en apps/web/public/favicon.svg.
-El logo de la entrega (project-logo.png, 1000 x 1000) es brand/logo.svg pasado a PNG.
+Los PNG se sacan de estos SVG con cualquier navegador, al tamaño que se indica:
+  project-logo.png (1000 x 1000) <- brand/logo.svg     og.png (1200 x 630) <- brand/og.svg
+  apple-touch-icon.png (180), icon-192.png, icon-512.png <- brand/icono.svg
+  favicon-32.png <- brand/icono-simple.svg
 
 Todo sale de una grilla de píxeles. El isotipo son dos cuadrados de 5 x 5 píxeles, rojo y
 azul, separados por un tercio de su lado: los dos agentes, frente a frente. Cada uno tiene
@@ -24,6 +27,29 @@ WORD = [
  "#.....#..#...##...#...#..#......#.......#..#..#..#..###..#...#..#..#",
 ]
 PROMPT = [r[:34] for r in WORD]; ARENA = [r[40:] for r in WORD]
+# Para la tarjeta que se ve al compartir el enlace: la frase y el dominio, también en Silkscreen.
+TAG_A = [
+ "###....##....###.......##....###..###..#...#..###..###...###......###...###......#...##....",
+ "#..#..#..#..#.........#..#..#.....#....##..#...#...#....#.........#..#..#........#..#..#...",
+ "#..#..#..#...##.......####..#.##..###..#.#.#...#...###...##.......#..#..###......#..####...",
+ "#..#..#..#.....#......#..#..#..#..#....#..##...#...#.......#......#..#..#........#..#..#...",
+ "###....##...###.......#..#...##...###..#...#...#...###..###.......###...###......#..#..#..#",
+]  # DOS AGENTES DE IA.
+TAG_B = [
+ "#..#..#...#......###...#..#..###..#.....##.......###..#...#......#...#..#..#...#..###...##...###....##...###..###...",
+ "#..#..##..#......#..#..#..#..#....#....#..#......#....##..#......##.##..#..##..#..#....#..#..#..#..#..#..#.....#....",
+ "#..#..#.#.#......#..#..#..#..###..#....#..#......###..#.#.#......#.#.#..#..#.#.#..###..#.....###...####..###...#....",
+ "#..#..#..##......#..#..#..#..#....#....#..#......#....#..##......#...#..#..#..##..#....#..#..#.#...#..#..#.....#....",
+ ".##...#...#......###....##...###..###...##.......###..#...#......#...#..#..#...#..###...##...#..#..#..#..#.....#...#",
+]  # UN DUELO EN MINECRAFT.
+DOMAIN = [
+ "###...###....##...#...#..###...###........##...###...###..#...#...##.......###..#",
+ "#..#..#..#..#..#..##.##..#..#...#........#..#..#..#..#....##..#..#..#.....#.....#",
+ "###...###...#..#..#.#.#..###....#...###..####..###...###..#.#.#..####......##...#",
+ "#.....#.#...#..#..#...#..#......#........#..#..#.#...#....#..##..#..#........#..#",
+ "#.....#..#...##...#...#..#......#........#..#..#..#..###..#...#..#..#..#..###...#",
+]  # PROMPT-ARENA.SI
+MUTED = "#8d9098"
 
 def n(v): return f"{v:g}"
 
@@ -74,6 +100,12 @@ def horizontal(text_fill, bg=None, pad=0):
 P["horizontal.svg"] = horizontal(TEXT)                 # para fondos oscuros
 P["horizontal-claro.svg"] = horizontal(BG)             # para fondos claros
 P["nombre.svg"] = svg(68*u, 5*u, glyphs(WORD, 0, 0, u, TEXT))
+# Tarjeta para compartir (1200 x 630): isotipo, nombre, la frase y el dominio. Se pasa a PNG (og.png).
+P["og.svg"] = svg(1200, 630,
+    mark(80, 80, 180, True, 60)
+    + glyphs(DOMAIN, 1120 - 81*4, 80, 4, MUTED)
+    + glyphs(WORD, 80, 325, 15, TEXT)
+    + glyphs(TAG_A, 80, 455, 5, MUTED) + glyphs(TAG_B, 80, 500, 5, MUTED), BG)
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "apps", "web", "public")
 os.makedirs(os.path.join(ROOT, "brand"), exist_ok=True)

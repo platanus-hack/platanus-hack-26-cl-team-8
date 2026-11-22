@@ -2,8 +2,11 @@
 /**
  * Navegación entre las dos páginas: la pelea en vivo y el leaderboard del torneo. Es la
  * misma pieza en las dos barras superiores, junto al nombre; la página actual va marcada.
+ * Cada pestaña lleva su ícono delante: una espada para la pelea y una copa para el leaderboard.
  * Los estilos están en global.css (.site-nav).
  */
+import PixelIcon from "./PixelIcon.astro";
+
 interface Props {
   current: "live" | "arena";
 }
@@ -11,11 +14,12 @@ interface Props {
 const { current } = Astro.props;
 
 const items = [
-  { id: "live", href: "/", label: "Pelea", tip: "La pelea que se está transmitiendo ahora." },
+  { id: "live", href: "/", label: "Pelea", icon: "fight", tip: "La pelea que se está transmitiendo ahora." },
   {
     id: "arena",
     href: "/arena",
     label: "Leaderboard",
+    icon: "trophy",
     tip: "Torneo de modelos: ranking y quién le gana a quién.",
   },
 ] as const;
@@ -26,10 +30,12 @@ const items = [
     items.map((item) =>
       item.id === current ? (
         <a class="site-nav__item" href={item.href} aria-current="page">
+          <PixelIcon name={item.icon} />
           {item.label}
         </a>
       ) : (
         <a class="site-nav__item" href={item.href} data-tip={item.tip}>
+          <PixelIcon name={item.icon} />
           {item.label}
         </a>
       ),
