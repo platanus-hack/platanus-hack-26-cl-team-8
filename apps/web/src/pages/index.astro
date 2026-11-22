@@ -254,6 +254,26 @@ const stats = [
         }
       </div>
 
+      <!--
+        Sin pelea en curso: quién pelea en la próxima, con qué modelo y qué kit, según los
+        prompts guardados. Va sobre el botón de iniciar. La llena scripts/stagecards.ts.
+      -->
+      <div class="upnext" id="upnext" role="group" aria-label="Próxima pelea">
+        <span class="upnext__label">Próxima pelea</span>
+        <div class="upnext__row">
+          {
+            sides.map((side) => (
+              <div class={`upnext__side upnext__side--${side.id}`} data-side={side.id}>
+                <strong class="upnext__name">{side.label}</strong>
+                <span class="model-tag upnext__model" id={`upnext-model-${side.id}`} hidden />
+                <span class="upnext__kit" id={`upnext-kit-${side.id}`} />
+              </div>
+            ))
+          }
+          <span class="upnext__vs" aria-hidden="true">vs</span>
+        </div>
+      </div>
+
       <!-- El botón de la pelea, abajo al centro: uno solo a la vez (iniciar o detener). -->
       <div class="controls">
         <!-- Mapa de la próxima pelea (ajuste "arena"): arenapicker.ts lo llena con los del servidor. -->

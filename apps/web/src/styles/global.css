@@ -443,6 +443,8 @@ textarea {
 .hud__side {
   position: relative;
   display: grid;
+  /* Lo de adentro mide lo que mide el lado, no lo que pida su fila más larga. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
   grid-row: 1;
@@ -617,8 +619,8 @@ textarea {
   }
 }
 
-/* Desde 1280 px de ancho los 15 corazones caben con píxeles de 4 px. */
-@media (min-width: 1280px) {
+/* Desde 1360 px de ancho los 15 corazones caben con píxeles de 4 px. */
+@media (min-width: 1360px) {
   .hearts {
     --px: 4px;
   }
@@ -890,6 +892,109 @@ textarea {
 .versus__ready[data-ready="true"]::before {
   background: var(--ok);
   animation: none;
+}
+
+/* ---------- Próxima pelea ---------- */
+
+/*
+ * Sin pelea en curso, sobre el botón de iniciar: quién pelea en la próxima, con qué modelo
+ * y qué kit. Es la versión en reposo de la presentación: el mismo "Rojo vs Azul", pero
+ * chico, oscuro y abajo, para no tapar la arena. Aparece al quedar en espera y se va al
+ * iniciar (ahí entra la franja grande).
+ */
+.upnext {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  z-index: 3;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: calc(100% - 2 * var(--gutter));
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 0.2s ease-in,
+    transform 0.2s ease-in,
+    visibility 0s linear 0.2s;
+  pointer-events: none;
+}
+
+body[data-phase="idle"] .upnext {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition:
+    opacity 0.35s ease-out 0.1s,
+    transform 0.35s var(--ease-out) 0.1s,
+    visibility 0s;
+}
+
+/* El resultado de la pelea anterior sigue en pantalla hasta la siguiente: no compiten. */
+.stage:has(.winner:not([hidden])) .upnext {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.upnext__label {
+  color: rgba(237, 236, 232, 0.72);
+  font: 400 10px/1 var(--pixel);
+  letter-spacing: 0.06em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+}
+
+.upnext__row {
+  position: relative;
+  display: grid;
+  /* Las dos mitades miden lo mismo (lo que pide la más larga): el "vs" queda al centro. */
+  grid-template-columns: minmax(max-content, 1fr) minmax(max-content, 1fr);
+  /* El hueco del medio es del "vs". */
+  column-gap: 52px;
+  background: rgba(6, 7, 9, 0.8);
+}
+
+.upnext__side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 7px 0 7px 7px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* Azul es el espejo: su nombre queda en el borde derecho. */
+.upnext__side--blue {
+  flex-direction: row-reverse;
+  padding: 7px 7px 7px 0;
+}
+
+.upnext__name {
+  flex: none;
+  padding: 4px 8px 5px;
+  background: var(--side);
+  color: #0b0b0d;
+  font: 400 16px/1 var(--pixel);
+}
+
+.upnext__model {
+  font-weight: 600;
+}
+
+.upnext__kit {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+}
+
+.upnext__vs {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--muted);
+  font: 400 13px/1 var(--pixel);
+  transform: translate(-50%, -60%);
 }
 
 /* ---------- Resultado ---------- */
@@ -1927,6 +2032,13 @@ textarea {
   display: flex;
   gap: 22px;
   margin-top: 2px;
+}
+
+/* Entre 1280 y 1359 px la fila de estadísticas cabe justa: va un poco más apretada. */
+@media (min-width: 1280px) and (max-width: 1359px) {
+  .stats {
+    gap: 17px;
+  }
 }
 
 /* Azul es el espejo: el casillero queda en su borde (la derecha) y el resto hacia el centro. */
@@ -3661,6 +3773,456 @@ button.inv__slot {
 
 .toast--ok {
   border-left-color: var(--ok);
+}
+
+/* ---------- Pantallas medianas y angostas ---------- */
+
+/*
+ * La página se diseñó para una pantalla ancha: el video con el marcador encima y, debajo,
+ * los prompts junto a los eventos. Aquí se reordena para tabletas y teléfonos, sin quitar
+ * nada importante:
+ *  - hasta 1279 px, el marcador pone el reloj arriba y un lado junto al otro debajo (los
+ *    15 corazones y las estadísticas no caben a los lados del reloj);
+ *  - hasta 1023 px, los eventos bajan debajo de los prompts;
+ *  - hasta 699 px, todo se achica y los ajustes y los dos editores quedan en una sola columna.
+ */
+@media (max-width: 1279px) {
+  /* ----- Marcador: el reloj arriba, y debajo un lado junto al otro ----- */
+
+  /* El velo de arriba cubre el marcador, que aquí es más alto. */
+  .stage::before {
+    height: 350px;
+  }
+
+  .hud {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 28px;
+  }
+
+  .hud__clock {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    gap: 6px;
+  }
+
+  .hud__side {
+    grid-row: 2;
+  }
+
+  /* Las estadísticas que no caben en la fila bajan a otra. */
+  .stats {
+    flex-wrap: wrap;
+    gap: 6px 18px;
+  }
+
+  .hud__side--red {
+    grid-column: 1;
+  }
+
+  .hud__side--blue {
+    grid-column: 2;
+  }
+
+  /* Las columnas de pensamientos y los carteles parten bajo el marcador. */
+  .thoughts {
+    top: 270px;
+  }
+
+  .winner {
+    padding-top: 270px;
+  }
+
+  .winner[data-kind="round"] {
+    top: 270px;
+  }
+}
+
+/* Con el marcador apilado y poco alto, el resultado se queda con lo esencial. */
+@media (max-width: 1279px) and (max-height: 859px) {
+  .winner[data-kind="match"] .tape {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  /*
+   * Las ayudas (data-tip) se abren hacia un lado y, cerca del borde, ensanchan la página
+   * aunque estén ocultas. Aquí la página nunca se desplaza de lado.
+   */
+  .page {
+    overflow-x: clip;
+  }
+
+  .workbench {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 56px 0;
+  }
+
+  /* Los eventos, a todo el ancho y con alto fijo: la lista se desplaza adentro. */
+  .feed {
+    height: 440px;
+    min-height: 0;
+    padding-top: 28px;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .feed__list {
+    inset: 72px 0 0 0;
+  }
+
+  /* Aquí las estadísticas del marcador ocupan dos filas: lo de abajo parte un poco después. */
+  .thoughts {
+    top: 300px;
+  }
+
+  .winner {
+    padding-top: 300px;
+  }
+
+  .winner[data-kind="round"] {
+    top: 300px;
+  }
+
+  /* ----- Ajustes ----- */
+
+  .setting__label {
+    white-space: nowrap;
+  }
+
+  /* El límite de tiempo tiene tres controles: van en su propia línea, bajo el nombre. */
+  .setting:has(.duration) .setting__control {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
+  .setting:has(.duration) .toggle {
+    margin-left: auto;
+  }
+
+  .setting__control .select {
+    width: 100%;
+    max-width: 190px;
+  }
+}
+
+/* Con menos de 820 px, los 15 corazones de cada lado caben solo a 2 px por píxel. */
+@media (max-width: 819px) {
+  .hearts {
+    --px: 2px;
+  }
+}
+
+@media (max-width: 699px) {
+  /* ----- Barra superior ----- */
+
+  .top {
+    gap: 10px;
+    height: 46px;
+  }
+
+  .brand {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .brand__title {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* "En vivo" queda solo con su punto: el texto no cabe junto al nombre. */
+  .live {
+    gap: 0;
+    padding: 6px;
+    font-size: 0;
+  }
+
+  .top__arena {
+    font-size: 12px;
+  }
+
+  /* ----- Marcador: el reloj arriba, y debajo un lado junto al otro ----- */
+
+  .stage {
+    min-height: 600px;
+  }
+
+  .stage::before {
+    height: 280px;
+  }
+
+  .hud {
+    inset: 46px 12px auto 12px;
+    gap: 8px 12px;
+  }
+
+  .hud__clock {
+    gap: 5px;
+  }
+
+  .hud__side {
+    gap: 6px;
+  }
+
+  .clock {
+    font-size: 34px;
+    line-height: 26px;
+  }
+
+  .phase {
+    font-size: 12px;
+  }
+
+  .rounds {
+    gap: 4px;
+  }
+
+  .rounds__pip {
+    width: 10px;
+    height: 10px;
+  }
+
+  .hud__row {
+    gap: 7px;
+    height: 24px;
+  }
+
+  .hud__name {
+    padding: 4px 6px 5px;
+    font-size: 15px;
+  }
+
+  .hud__model {
+    font-size: 12px;
+  }
+
+  /* Con poco ancho basta el logo y el nombre del modelo; el estado se nota en el nombre tachado. */
+  .hud__state {
+    display: none;
+  }
+
+  .hud__hp {
+    font-size: 18px;
+  }
+
+  /* Los 15 corazones no caben en una fila: van en dos. */
+  .hearts {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .hud__side--blue .hearts {
+    flex-wrap: wrap;
+  }
+
+  .stats {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 0;
+  }
+
+  .stats div {
+    gap: 5px;
+  }
+
+  .stats dd {
+    font-size: 12px;
+  }
+
+  .stats .pixel-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .slot dd {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Comida, tiempo por decisión y costo no caben: quedan el ítem en la mano, el daño y las decisiones. */
+  .stats [id^="stat-food-"],
+  .stats [id^="stat-speed-"],
+  .stats [id^="stat-cost-"] {
+    display: none;
+  }
+
+  .hud__pop {
+    top: auto;
+    bottom: -30px;
+    font-size: 22px;
+  }
+
+  /* ----- Pensamientos, botón y carteles ----- */
+
+  /* Las columnas parten bajo el marcador. */
+  .thoughts {
+    top: 232px;
+    right: 12px;
+    left: 12px;
+  }
+
+  .stage:has(.countdown:not([hidden])) .thoughts {
+    top: calc(50% + 70px);
+  }
+
+  .thoughts__caption {
+    font-size: 9px;
+  }
+
+  .thought__who {
+    font-size: 9px;
+  }
+
+  /* "Próxima pelea": un lado sobre el otro, a todo el ancho. */
+  .upnext {
+    width: calc(100% - 24px);
+    max-width: none;
+  }
+
+  .upnext__row {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .upnext__side {
+    gap: 9px;
+    padding: 6px;
+    font-size: 13px;
+  }
+
+  .upnext__side--blue {
+    padding: 0 6px 6px;
+  }
+
+  .upnext__name {
+    font-size: 13px;
+  }
+
+  .upnext__vs {
+    display: none;
+  }
+
+  .winner {
+    padding: 236px 0 92px;
+    gap: 10px;
+  }
+
+  .winner__band {
+    padding: 12px 12px 14px;
+  }
+
+  .winner__title {
+    font-size: clamp(26px, 8.4vw, 44px);
+  }
+
+  .winner__detail {
+    padding: 0 16px;
+    font-size: 15px;
+  }
+
+  .tape {
+    margin-top: 2px;
+  }
+
+  .tape__label,
+  .tape__value {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .tape__value {
+    padding-top: 3px;
+    padding-bottom: 7px;
+  }
+
+  .winner[data-kind="round"] {
+    top: 236px;
+  }
+
+  /* ----- Debajo del video: una sola columna ----- */
+
+  .page {
+    padding-top: 8px;
+  }
+
+  .section {
+    margin-top: 56px;
+  }
+
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .setting {
+    gap: 6px 12px;
+  }
+
+  /* Las opciones a la vista se reparten el ancho, con letra más chica. */
+  .setting--wide .segmented__option {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 4px;
+    overflow: hidden;
+    font-size: 12.5px;
+    text-overflow: ellipsis;
+  }
+
+  .editors {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+
+  .editor__head {
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+
+  .editor__text {
+    min-height: 12em;
+  }
+
+  /* El inventario usa todo el ancho: nueve casilleros iguales por fila. */
+  .inv {
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+
+  .feed__head {
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+
+  /* ----- Historial ----- */
+
+  /* Cada pelea: los dos lados frente a frente y, debajo, cuánto duró y cuándo fue. */
+  .row {
+    grid-template-columns: 8px minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 4px 10px;
+  }
+
+  .row__meta {
+    grid-column: 2 / -1;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .bout__body {
+    padding-left: 18px;
+  }
+
+  .bout__sides {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+
+/* Teléfonos bajos: el resultado se queda con lo esencial. */
+@media (max-width: 699px) and (max-height: 739px) {
+  .winner[data-kind="match"] .tape {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

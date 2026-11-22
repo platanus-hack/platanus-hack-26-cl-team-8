@@ -8,11 +8,23 @@
  *  - La comparación de los dos lados que acompaña al resultado final (vida, daño,
  *    decisiones…) y el marcador de la serie en la tarjeta de ronda.
  *  - Lo que falta para la ronda siguiente, en la pausa entre rondas.
+ *  - "Próxima pelea", sin pelea en curso: quién pelea, con qué modelo y qué kit, según
+ *    los prompts guardados.
  *
  * El cartel de resultado en sí (quién ganó y por qué) lo llena scoreboard.ts; aquí están
  * las partes que necesitan más que un texto. Cómo entra y sale cada cosa lo decide global.css.
  */
-import { DEFAULT_SETTINGS, SIDES, kitOf, seriesTally, type MatchSettings, type MatchState, type Series, type Side } from "@phack/protocol";
+import {
+  DEFAULT_SETTINGS,
+  SIDES,
+  kitOf,
+  seriesTally,
+  type MatchSettings,
+  type MatchState,
+  type PromptsResponse,
+  type Series,
+  type Side,
+} from "@phack/protocol";
 import { byId, el, setText } from "./dom";
 import { SIDE_LABEL, formatNumber } from "./format";
 import { onDefaultsChange, renderModelTag, resolveModel } from "./models";
@@ -134,6 +146,25 @@ function renderNext(): void {
   next.root.hidden = false;
 }
 
+// ---------- Próxima pelea ----------
+
+let upnext: Record<Side, { model: HTMLElement; kit: HTMLElement }> | null = null;
+let saved: PromptsResponse | null = null;
+
+function renderUpNext(): void {
+  if (!upnext || !saved) return;
+  for (const side of SIDES) {
+    renderModelTag(upnext[side].model, resolveModel(saved[side]));
+    setText(upnext[side].kit, `Kit ${kitOf(saved[side]).name}`);
+  }
+}
+
+/** Los prompts guardados (carga inicial, o alguien guardó): con ellos se pelea la próxima. */
+export function setNextFight(prompts: PromptsResponse): void {
+  saved = prompts;
+  renderUpNext();
+}
+
 // ---------- Entradas del módulo ----------
 
 export function initStageCards(): void {
@@ -144,10 +175,16 @@ export function initStageCards(): void {
   });
   versus = { root: byId("versus"), sides: { red: versusSide("red"), blue: versusSide("blue") } };
   next = { root: byId("winner-next"), text: byId("winner-next-text"), bar: byId("winner-next-bar") };
+  upnext = {
+    red: { model: byId("upnext-model-red"), kit: byId("upnext-kit-red") },
+    blue: { model: byId("upnext-model-blue"), kit: byId("upnext-kit-blue") },
+  };
   window.setInterval(renderNext, 200);
+  renderUpNext();
   // El nombre del modelo por defecto llega con los datos del servidor.
   onDefaultsChange(() => {
     if (lastState) renderVersus(lastState);
+    renderUpNext();
   });
 }
 
