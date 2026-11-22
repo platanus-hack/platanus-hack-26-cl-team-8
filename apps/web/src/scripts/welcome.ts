@@ -46,7 +46,11 @@ export function initWelcome(): void {
   });
   document.getElementById("welcome-open")?.addEventListener("click", open);
 
-  // "?welcome" la fuerza, para revisarla. En la maqueta no sale sola: taparía lo que se prueba.
-  const forced = new URLSearchParams(window.location.search).has("welcome");
-  if (forced || (!MOCK && !alreadySeen())) open();
+  // "?welcome" la fuerza, para revisarla, y "?welcome=0" la calla: así el sitio se puede
+  // mostrar dentro de otra página (las láminas del demo) sin que la hoja tape la pelea.
+  // En la maqueta no sale sola: taparía lo que se prueba.
+  const param = new URLSearchParams(window.location.search).get("welcome");
+  const forced = param !== null && param !== "0";
+  const silenced = param === "0";
+  if (forced || (!MOCK && !silenced && !alreadySeen())) open();
 }
