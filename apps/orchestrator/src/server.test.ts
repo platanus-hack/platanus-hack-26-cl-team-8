@@ -100,6 +100,8 @@ type ServerOptions = {
   flags?: FlagStore;
   /** Audio de las frases; sin esto la ruta de audio siempre da 404. */
   speech?: { get(speechId: string): Promise<Buffer | null> };
+  /** Claves del equipo y de invitados; sin esto no hay control de acceso. */
+  access?: { adminKey: string; playerKey: string };
 };
 
 /** Ajustes guardados por PUT /api/settings; cada servidor de prueba parte de los de por defecto. */
@@ -162,6 +164,7 @@ async function server(opts: ServerOptions = {}): Promise<FastifyInstance> {
     judge: async (id) =>
       id === ID ? { ok: false as const, reason: "el juez necesita un LLM real", status: 400 as const } : id === JUDGED ? { ok: true as const, judgement: JUDGEMENT } : null,
     ...(opts.speech ? { speech: opts.speech } : {}),
+    ...(opts.access ? { access: opts.access } : {}),
     settings: {
       get: () => ({ ...settings }),
       update: async (change) => {
@@ -259,6 +262,15 @@ describe("PUT /api/settings", () => {
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error).toContain("voice = true o false");
     expect((await put(s, { voice: false })).json()).toMatchObject({ comms: "chat", voice: false });
+  });
+
+  it("acepta el par de voces y cambia solo eso", async () => {
+    const s = await server();
+    expect((await put(s, { voice: true })).json()).toMatchObject({ voice: true, voiceSet: "default" });
+    expect((await put(s, { voiceSet: "japanese" })).json()).toMatchObject({ voice: true, voiceSet: "japanese" });
+    expect((await put(s, { timer: false })).json()).toMatchObject({ timer: false, voiceSet: "japanese" });
+    expect((await put(s, { voiceSet: "klingon" })).statusCode).toBe(400);
+    expect((await put(s, { voiceSet: "default" })).json()).toMatchObject({ voice: true, voiceSet: "default" });
   });
 
   it("rechaza un cuerpo vacío o con valores que no son", async () => {
@@ -693,5 +705,88 @@ describe("pre-ajustes y borrar el historial", () => {
     const ok = await s.inject({ method: "DELETE", url: "/api/history", payload: { confirm: "BORRAR" } });
     expect(ok.json()).toEqual({ archived: "matches-x.jsonl" });
     expect(archived).toBe(1);
+  });
+});
+
+describe("acceso: quién puede cambiar la arena", () => {
+  const KEYS = { adminKey: "clave-del-equipo", playerKey: "clave-del-jurado" };
+  const call = (s: FastifyInstance, method: "GET" | "PUT" | "POST" | "DELETE", url: string, key?: string, payload?: Record<string, unknown>) =>
+    s.inject({ method, url, ...(payload ? { payload } : {}), ...(key ? { headers: { "x-arena-key": key } } : {}) });
+
+  it("sin clave del equipo no hay control: todo anda como siempre", async () => {
+    const s = await server();
+    expect((await call(s, "GET", "/api/access")).json()).toEqual({ enabled: false, role: "admin" });
+    expect((await call(s, "POST", "/api/match/stop")).statusCode).toBe(200);
+  });
+
+  it("dice el rol de cada clave; una clave equivocada es un visitante", async () => {
+    const s = await server({ access: KEYS });
+    expect((await call(s, "GET", "/api/access")).json()).toEqual({ enabled: true, role: "visitor" });
+    expect((await call(s, "GET", "/api/access", "clave-del-equipo")).json().role).toBe("admin");
+    expect((await call(s, "GET", "/api/access", "clave-del-jurado")).json().role).toBe("player");
+    expect((await call(s, "GET", "/api/access", "otra")).json().role).toBe("visitor");
+    // Sin clave de invitados configurada, una clave vacía no entra por ahí.
+    const only = await server({ access: { adminKey: "clave-del-equipo", playerKey: "" } });
+    expect((await call(only, "GET", "/api/access", " ")).json().role).toBe("visitor");
+  });
+
+  it("quien visita mira todo y no cambia nada", async () => {
+    const s = await server({ access: KEYS });
+    for (const url of ["/api/state", "/api/prompts", "/api/settings", "/api/matches", "/api/presets", "/api/defaults"]) {
+      expect((await call(s, "GET", url)).statusCode).toBe(200);
+    }
+    const prompt = await call(s, "PUT", "/api/prompts/red", undefined, { prompt: "ataca" });
+    expect(prompt.statusCode).toBe(403);
+    expect(prompt.json().error).toContain("modo espectador");
+    expect((await call(s, "POST", "/api/match/start")).statusCode).toBe(403);
+    expect((await call(s, "PUT", "/api/settings", undefined, { comms: "chat" })).statusCode).toBe(403);
+    expect(saved).toEqual([]);
+    expect(starts).toEqual([]);
+  });
+
+  it("un invitado escribe prompts, elige la comunicación e inicia; lo demás es del equipo", async () => {
+    const s = await server({ access: KEYS });
+    const key = "clave-del-jurado";
+    expect((await call(s, "PUT", "/api/prompts/red", key, { prompt: "ataca" })).statusCode).toBe(200);
+    expect((await call(s, "POST", "/api/match/start", key)).statusCode).toBe(200);
+    expect((await call(s, "PUT", "/api/settings", key, { comms: "chat" })).json()).toMatchObject({ comms: "chat" });
+
+    const denied: [("PUT" | "POST" | "DELETE"), string, Record<string, unknown>?][] = [
+      ["POST", "/api/match/stop"],
+      ["PUT", "/api/settings", { voice: true }],
+      ["PUT", "/api/settings", { comms: "none", timer: false }],
+      ["PUT", "/api/settings", { publicPlay: true }],
+      ["POST", "/api/presets/todos", { start: true }],
+      ["POST", "/api/presets/stop"],
+      ["DELETE", "/api/history", { confirm: "BORRAR" }],
+      ["POST", `/api/matches/${ID}/judge`],
+      ["PUT", `/api/matches/${ID}/flags/red`, { tags: [], note: "" }],
+    ];
+    for (const [method, url, payload] of denied) {
+      const res = await call(s, method, url, key, payload);
+      expect(res.statusCode, `${method} ${url}`).toBe(403);
+      expect(res.json().error).toContain("solo lo puede hacer el equipo");
+    }
+    expect(settings).toMatchObject({ comms: "chat", timer: true, voice: false, publicPlay: false });
+  });
+
+  it("con la arena abierta, quien visita puede lo mismo que un invitado, y al cerrarla deja de poder", async () => {
+    const s = await server({ access: KEYS });
+    expect((await call(s, "PUT", "/api/settings", "clave-del-equipo", { publicPlay: true })).json()).toMatchObject({ publicPlay: true });
+    expect((await call(s, "PUT", "/api/prompts/blue", undefined, { prompt: "defiende" })).statusCode).toBe(200);
+    expect((await call(s, "POST", "/api/match/start")).statusCode).toBe(200);
+    expect((await call(s, "POST", "/api/match/stop")).statusCode).toBe(403);
+    expect((await call(s, "PUT", "/api/settings", undefined, { publicPlay: false })).statusCode).toBe(403);
+
+    await call(s, "PUT", "/api/settings", "clave-del-equipo", { publicPlay: false });
+    expect((await call(s, "POST", "/api/match/start")).statusCode).toBe(403);
+  });
+
+  it("el equipo puede todo", async () => {
+    const s = await server({ access: KEYS });
+    const key = "clave-del-equipo";
+    expect((await call(s, "POST", "/api/match/stop", key)).statusCode).toBe(200);
+    expect((await call(s, "PUT", "/api/settings", key, { voice: true, timer: false })).json()).toMatchObject({ voice: true, timer: false });
+    expect((await call(s, "DELETE", "/api/history", key, { confirm: "BORRAR" })).statusCode).toBe(200);
   });
 });

@@ -48,6 +48,7 @@ import {
   type RoundResult,
   type Series,
   type Side,
+  type VoiceSet,
   type TranscriptEntry,
 } from "@phack/protocol";
 import {
@@ -177,9 +178,10 @@ export type MatchDeps = {
    */
   speech?: {
     available(): boolean;
-    request(side: Side, text: string): string | null;
+    /** `set` = con qué par de voces (MatchSettings.voiceSet). */
+    request(side: Side, text: string, set?: VoiceSet): string | null;
     /** Despierta las voces antes de la pelea; opcional. */
-    warm?(): void;
+    warm?(set?: VoiceSet): void;
     /** Lo que dura de verdad el audio de ese id, en ms, cuando esté listo; null si no se sabe. */
     durationMs?(speechId: string): Promise<number | null>;
   };
@@ -1241,10 +1243,10 @@ export class MatchManager {
    * prepara la arena: así la primera frase no llega tarde. No espera ni puede fallar la pelea.
    */
   private warmVoices(ctx: MatchContext): void {
-    const { voice, comms } = this.state.settings;
+    const { voice, comms, voiceSet } = this.state.settings;
     if (!voice || comms !== "chat") return;
     try {
-      this.deps.speech?.warm?.();
+      this.deps.speech?.warm?.(voiceSet);
     } catch (err) {
       this.log(ctx, "warn", `No se pudieron preparar las voces: ${errorMessage(err)}`);
     }
@@ -1255,7 +1257,7 @@ export class MatchManager {
     const speech = this.deps.speech;
     if (!speech || !this.state.settings.voice) return null;
     try {
-      return speech.available() ? speech.request(side, message) : null;
+      return speech.available() ? speech.request(side, message, this.state.settings.voiceSet) : null;
     } catch (err) {
       this.log(ctx, "warn", `No se pudo pedir la voz de un mensaje: ${errorMessage(err)}`);
       return null;

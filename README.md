@@ -345,6 +345,7 @@ En el modo `chat`, lo que un agente le dice al otro también se puede **oír**, 
 |---|---|---|
 | `ELEVENLABS_API_KEY` | vacía | Clave de la API. Sin ella no hay voz. |
 | `ELEVENLABS_VOICE_RED`, `ELEVENLABS_VOICE_BLUE` | vacías | Id de la voz de cada lado. |
+| `ELEVENLABS_VOICE_JAPANESE_RED`, `ELEVENLABS_VOICE_JAPANESE_BLUE` | ya puestas | Voces japonesas: un segundo par, que se elige en la web junto al interruptor de la voz. |
 | `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | El modelo rápido (~100 ms); habla español. |
 | `ELEVENLABS_SPEED` | `1.1` | Velocidad del habla, de 0.7 a 1.2. |
 | `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_64` | Formato MP3. Más calidad tarda más. |
@@ -472,6 +473,23 @@ Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wran
 `127.0.0.1` se resuelve en la máquina que corre `cloudflared`, así que el túnel debe correr donde estén el orquestador y MediaMTX, con esos puertos alcanzables en loopback. Requiere `cloudflared` >= 2025.7.0 con transporte QUIC (UDP 7844 de salida).
 
 El Worker lleva dentro el contrato de `packages/protocol` y se despliega aparte del orquestador. Cuando el contrato cambia (proveedores, kits, rutas de la API), despliega primero el orquestador y la web justo después: mientras las dos versiones no coinciden, la web puede descartar el estado o los valores por defecto que no entiende.
+
+## Acceso: quién puede cambiar la arena
+
+Mirar nunca pide nada: la transmisión, el marcador, los pensamientos, el historial y el leaderboard son públicos. Cambiar algo pide una clave cuando el servidor tiene `ADMIN_PASSPHRASE` en su `.env`; sin ella no hay control (cómodo en local, peligroso en un sitio público).
+
+| Quién | Cómo entra | Qué puede |
+|---|---|---|
+| Equipo | `ADMIN_PASSPHRASE` | Todo: detener peleas, todos los ajustes, voz, baterías, juez, marcas y borrar el historial. |
+| Invitado (un jurado) | `PLAYER_PASSPHRASE`, opcional | Escribir los prompts (con kit y modelo), elegir cómo se comunican los agentes e iniciar peleas. |
+| Visitante | sin clave | Solo mirar. Con el ajuste **Arena abierta** encendido por el equipo, lo mismo que un invitado. |
+
+La clave se le da a un navegador de dos maneras:
+
+- **Con un enlace** (sirve para un QR): `https://tu-sitio/#key=LA_CLAVE`. La página la guarda en `localStorage` y la borra de la dirección. Lo que va tras el `#` no viaja al servidor ni queda en sus registros.
+- **A mano**, en la consola del navegador: `localStorage.setItem("prompt-arena.access", JSON.stringify({ key: "LA_CLAVE" }))`.
+
+En la barra de arriba aparece "Equipo" o "Invitado"; dos clics ahí quitan la clave de ese navegador. El servidor es el que decide (`apps/orchestrator/src/access.ts`): la web solo esconde lo que igual sería rechazado. Para probar cómo se ve cada rol sin servidor: `/?mock&as=visitor`, `/?mock&as=player` o `/?mock&as=admin`.
 
 ## Cloudflare Tunnel (sitio en tu dominio y SSH sin Tailscale)
 

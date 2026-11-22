@@ -15,6 +15,7 @@ import {
   type SeriesBench,
   type Side,
 } from "@phack/protocol";
+import { initAccess } from "./access";
 import { clearHistory, describeError, fetchBench, judgeMatch } from "./api";
 import { MOCK, apiUrl } from "./config";
 import { byId, el, setText } from "./dom";
@@ -305,13 +306,16 @@ function renderJudge(report: BenchReport): void {
       link.rel = "noopener";
       const button = el("button", "btn btn--small", r.judged ? "Volver a calificar" : "Calificar");
       button.type = "button";
+      // Calificar llama al LLM juez: es del equipo (ver access.ts).
+      button.dataset.needs = "admin";
       button.addEventListener("click", () => {
         button.disabled = true;
         setText(button, "Calificando…");
         judgeMatch(r.id)
           .then((j) => {
             showToast(`Juez: ${j.summary || "calificación guardada"}`, "ok");
-            void load();
+            initAccess();
+void load();
           })
           .catch((err) => {
             showToast(describeError(err));

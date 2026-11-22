@@ -255,6 +255,31 @@ describe("SpeechService: calentar las voces", () => {
     expect(warmUps.map((c) => c.url.includes("voz-azul"))).toEqual([false, true, true]);
   });
 
+  it("con el par japonés, calienta y habla con esas voces; un lado sin voz japonesa usa la habitual", async () => {
+    const t = await setup({ config: { japaneseVoices: { red: "voz-ja-roja", blue: "voz-ja-azul" } } });
+    const voiceOf = (c: { url: string }) => c.url.split("/text-to-speech/")[1]?.split("/")[0];
+    t.service.warm("japanese");
+    await settle();
+    expect(t.tts().map(voiceOf)).toEqual(["voz-ja-roja", "voz-ja-azul"]);
+    // Las habituales no quedaron despiertas por eso: se calientan aparte.
+    t.service.warm();
+    await settle();
+    expect(t.tts().map(voiceOf).slice(2)).toEqual(["voz-roja", "voz-azul"]);
+
+    expect((await t.service.get(t.service.request("red", "konnichiwa", "japanese") ?? ""))?.toString()).toBe("mp3:konnichiwa");
+    expect(voiceOf(t.tts().at(-1)!)).toBe("voz-ja-roja");
+    // La misma frase con la voz habitual es otra solicitud (otra voz, otro audio).
+    await t.service.get(t.service.request("red", "konnichiwa") ?? "");
+    expect(voiceOf(t.tts().at(-1)!)).toBe("voz-roja");
+
+    const half = await setup({ config: { japaneseVoices: { red: "voz-ja-roja", blue: " " } } });
+    await half.service.get(half.service.request("blue", "hola", "japanese") ?? "");
+    expect(voiceOf(half.tts().at(-1)!)).toBe("voz-azul");
+    const none = await setup();
+    await none.service.get(none.service.request("red", "hola", "japanese") ?? "");
+    expect(voiceOf(none.tts().at(-1)!)).toBe("voz-roja");
+  });
+
   it("sin clave o en pausa por un error no pide nada", async () => {
     const off = await setup({ config: { apiKey: "" } });
     off.service.warm();
@@ -402,6 +427,14 @@ describe("SpeechService: fallos", () => {
     expect(await invalid.service.get(invalid.service.request("blue", "uno") ?? "")).toBeNull();
     expect(invalid.logs.filter((l) => l.level === "error")[0]?.text).toMatch(/ELEVENLABS_VOICE_BLUE/);
     expect(invalid.service.available()).toBe(true);
+
+    // Una voz japonesa desconocida apunta a su propia variable.
+    const japanese = await setup({
+      config: { japaneseVoices: { red: "voz-ja-roja", blue: "voz-ja-azul" } },
+      tts: () => failure(404, { code: "voice_not_found" }),
+    });
+    expect(await japanese.service.get(japanese.service.request("red", "uno", "japanese") ?? "")).toBeNull();
+    expect(japanese.logs.filter((l) => l.level === "error")[0]?.text).toMatch(/ELEVENLABS_VOICE_JAPANESE_RED/);
   });
 
   it("429: reintenta una vez; si vuelve a pasar, esa frase queda sin voz", async () => {

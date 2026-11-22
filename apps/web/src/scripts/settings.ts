@@ -4,11 +4,14 @@ import {
   CommsModeSchema,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
+  PUBLIC_PLAY_LABELS,
   TIMER_LABELS,
   VOICE_LABELS,
+  VoiceSetSchema,
   type MatchSettings,
   type UpdateSettingsBody,
 } from "@phack/protocol";
+import { accessEnabled, onAccessChange, setPublicPlay } from "./access";
 import { ApiError, describeError, fetchSettings, saveSettings } from "./api";
 import { byId, setText } from "./dom";
 import { getDefaults, onDefaultsChange } from "./models";
@@ -20,7 +23,7 @@ import { showToast } from "./toast";
 /**
  * Ajustes de la próxima pelea: el formato de la partida (una pelea o una serie por
  * rondas), el modo de comunicación entre agentes, el límite de tiempo y la voz de los
- * agentes. Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
+ * agentes (encendida o no, y con qué voces). Igual que los prompts: cualquiera los cambia y valen desde la próxima pelea. Se
  * guardan al elegir; si otro visitante los cambia, llega por el websocket (evento "settings").
  */
 
@@ -41,6 +44,14 @@ type Elements = {
   voice: HTMLInputElement;
   voiceState: HTMLElement;
   voiceDescription: HTMLElement;
+  /** Con qué voces hablan (solo se ve con la voz encendida). */
+  voiceSetBox: HTMLElement;
+  voiceSet: HTMLSelectElement;
+  /** Arena abierta: quien visita puede jugar. Solo existe en un servidor que pide clave. */
+  publicPlayRow: HTMLElement;
+  publicPlay: HTMLInputElement;
+  publicPlayState: HTMLElement;
+  publicPlayDescription: HTMLElement;
 };
 
 /** Lo que dura una pelea si nadie eligió otra cosa y el servidor aún no dice la suya. */
@@ -82,7 +93,7 @@ function voiceUnavailable(): boolean {
 function voiceLine(settings: MatchSettings): string {
   if (voiceUnavailable()) return VOICE_LABELS.unavailable;
   if (!settings.voice) return VOICE_LABELS.off;
-  const parts: string[] = [VOICE_LABELS.on];
+  const parts: string[] = [settings.voiceSet === "japanese" ? VOICE_LABELS.onJapanese : VOICE_LABELS.on];
   // Sin el modo "chat" los agentes no se mandan mensajes: no hay nada que decir.
   if (settings.comms !== "chat") parts.push(`Solo suena con "${COMMS_LABELS.chat.name}": en los otros modos no se hablan.`);
   if (!isSoundOn()) parts.push("Para oírla, enciende el sonido con el botón de arriba.");
@@ -128,13 +139,22 @@ function render(settings: MatchSettings): void {
   setText(els.voiceState, unavailable ? "No disponible" : settings.voice ? "Encendido" : "Apagado");
   setText(els.voiceDescription, voiceLine(settings));
   setVoiceHint(settings.voice && !unavailable);
+  els.voiceSetBox.hidden = !settings.voice || unavailable;
+  if (els.voiceSet.value !== settings.voiceSet) els.voiceSet.value = settings.voiceSet;
+
+  // Qué se le muestra a quien visita depende de esto (access.ts).
+  setPublicPlay(settings.publicPlay);
+  els.publicPlayRow.hidden = !accessEnabled();
+  els.publicPlay.checked = settings.publicPlay;
+  setText(els.publicPlayState, settings.publicPlay ? "Encendido" : "Apagado");
+  setText(els.publicPlayDescription, settings.publicPlay ? PUBLIC_PLAY_LABELS.on : PUBLIC_PLAY_LABELS.off);
 }
 
 /** Bloquea los controles mientras se guarda; la voz sigue bloqueada si el servidor no la tiene. */
 function lockControls(locked: boolean): void {
   if (!els) return;
-  const { rounds, comms, timer, amount, unit, voice } = els;
-  for (const control of [rounds, comms, timer, amount, unit]) control.disabled = locked;
+  const { rounds, comms, timer, amount, unit, voice, voiceSet, publicPlay } = els;
+  for (const control of [rounds, comms, timer, amount, unit, voiceSet, publicPlay]) control.disabled = locked;
   voice.disabled = locked || voiceUnavailable();
 }
 
@@ -196,8 +216,19 @@ export function initSettings(): void {
     voice: byId<HTMLInputElement>("voice"),
     voiceState: byId("voice-state"),
     voiceDescription: byId("voice-description"),
+    voiceSetBox: byId("voice-set-box"),
+    voiceSet: byId<HTMLSelectElement>("voice-set"),
+    publicPlayRow: byId("public-play-row"),
+    publicPlay: byId<HTMLInputElement>("public-play"),
+    publicPlayState: byId("public-play-state"),
+    publicPlayDescription: byId("public-play-description"),
   };
-  const { rounds, comms, timer, amount, unit, voice } = els;
+  const { rounds, comms, timer, amount, unit, voice, voiceSet, publicPlay } = els;
+
+  // Al saberse si el servidor pide clave, aparece o no el ajuste de arena abierta.
+  onAccessChange(() => {
+    if (els) els.publicPlayRow.hidden = !accessEnabled();
+  });
 
   // La duración por defecto y si hay voz los dice el servidor: al llegar, se vuelve a dibujar.
   onDefaultsChange(() => {
@@ -241,5 +272,12 @@ export function initSettings(): void {
   });
   voice.addEventListener("change", () => {
     save({ voice: voice.checked }, "la voz de los agentes");
+  });
+  publicPlay.addEventListener("change", () => {
+    save({ publicPlay: publicPlay.checked }, "si la arena está abierta");
+  });
+  voiceSet.addEventListener("change", () => {
+    const parsed = VoiceSetSchema.safeParse(voiceSet.value);
+    if (parsed.success) save({ voiceSet: parsed.data }, "las voces de los agentes");
   });
 }

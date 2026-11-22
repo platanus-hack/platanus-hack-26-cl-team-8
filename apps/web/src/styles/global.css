@@ -2803,6 +2803,54 @@ body:not([data-phase="preparing"]):not([data-phase="running"]):not([data-phase="
   opacity: 0.5;
 }
 
+/*
+ * Acceso (scripts/access.ts): lo que pide la clave del equipo, o poder jugar, no se muestra
+ * a quien no puede; los editores quedan a la vista, sin poder tocarse.
+ */
+body:not([data-role="admin"]) [data-needs="admin"],
+body:not([data-play="yes"]) [data-needs="play"] {
+  display: none !important;
+}
+
+[data-lock="play"][inert] {
+  opacity: 0.6;
+}
+
+.access-note {
+  max-width: 76ch;
+  padding: 10px 14px;
+  border-left: 2px solid var(--amber);
+  background: rgba(232, 184, 74, 0.07);
+  font-size: 14px;
+}
+
+.access-note[hidden] {
+  display: none;
+}
+
+/* Con qué clave está este navegador, en la barra de arriba. */
+.access-chip {
+  padding: 4px 9px 5px;
+  border: 1px solid var(--amber);
+  background: none;
+  color: var(--amber);
+  font: 400 12px/1 var(--pixel);
+  cursor: pointer;
+}
+
+.access-chip:hover {
+  background: rgba(232, 184, 74, 0.12);
+}
+
+/* Voces de los agentes (habituales o japonesas): junto al interruptor, solo con la voz encendida. */
+.voice-set {
+  display: flex;
+}
+
+.voice-set[hidden] {
+  display: none;
+}
+
 /* Duración de la pelea: la cantidad y su unidad, junto al interruptor. */
 .duration {
   display: flex;
