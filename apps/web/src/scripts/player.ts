@@ -8,6 +8,29 @@ const RETRY_MS = 3000;
 const STALL_MS = 12_000;
 const WATCHDOG_MS = 2000;
 
+// ---------- Bajo atraso solo cuando el camino lo aguanta ----------
+//
+// MediaMTX publica el video en pedazos de 0,2 s (LL-HLS). Pedirlos de a uno deja la imagen
+// a cerca de 1,5 s del juego, pero solo si cada pedido va y vuelve rápido: en la red del
+// equipo tarda unos 30 ms. Por el dominio público cada pedido pasa por Cloudflare y el túnel
+// y tarda 200 ms o más: los pedazos llegan más lento de lo que se reproducen y la imagen se
+// congela a cada rato. Ahí conviene pedir segmentos enteros de 1 s y quedar unos 4 s atrás,
+// sin cortes. Los eventos se aplican con el reloj del video, así que siguen calzando.
+
+/** Ida y vuelta de un pedido del playlist bajo la cual se usa el modo de bajo atraso. */
+const FAST_PATH_MS = 150;
+/** Congelamientos en modo de bajo atraso tras los cuales se deja de usar en esta visita. */
+const LOW_LATENCY_STALLS = 3;
+/** Segmentos de distancia al borde en vivo en modo normal: con 4 no hubo cortes por el túnel. */
+const STEADY_SYNC_SEGMENTS = 4;
+
+/**
+ * Si el camino aguanta el modo de bajo atraso; null = todavía no se mide. Se mide con el
+ * primer pedido del playlist del video, sin pedir nada extra: el reproductor parte en modo
+ * normal y, si el camino resulta rápido, se rearma en bajo atraso antes de mostrar imagen.
+ */
+let fastPath: boolean | null = null;
+
 // ---------- Reloj de la transmisión ----------
 //
 // Cada evento del servidor trae la hora en que ocurrió (`at`, reloj del servidor), y la
@@ -201,14 +224,19 @@ export function initPlayer(): void {
     lastProgressAt = Date.now();
 
     if (useHlsJs) {
+      const lowLatency = fastPath === true;
       const instance = new Hls({
-        lowLatencyMode: true,
+        lowLatencyMode: lowLatency,
         enableWorker: true,
         backBufferLength: 10,
+        // En modo normal, la distancia al borde en vivo. En bajo atraso no se fija: hls.js
+        // usa la que anuncia el playlist (fijarla aquí la pisaría y dejaría de pedir partes).
+        ...(lowLatency ? {} : { liveSyncDurationCount: STEADY_SYNC_SEGMENTS }),
         // Permite acelerar un poco para volver al borde en vivo si se atrasa.
         maxLiveSyncPlaybackRate: 1.5,
       });
       hls = instance;
+      let lowLatencyStalls = 0;
       videoProbe = (now) => {
         if (container.dataset.signal !== "on" || video.paused) return null;
         // Lo más exacto: la hora que trae el cuadro en pantalla (EXT-X-PROGRAM-DATE-TIME),
@@ -225,10 +253,27 @@ export function initPlayer(): void {
         if (!Number.isFinite(latency) || latency <= 0) return null;
         return { at: now - (latency * 1000 + FALLBACK_PIPELINE_MS), source: "latency" };
       };
+      instance.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+        if (fastPath !== null) return;
+        // Lo que tardó en llegar la respuesta, con la conexión ya abierta: el viaje de un pedido.
+        const roundTrip = data.stats.loading.first - data.stats.loading.start;
+        if (!(roundTrip > 0)) return;
+        fastPath = roundTrip < FAST_PATH_MS;
+        if (fastPath) start();
+      });
       instance.on(Hls.Events.MANIFEST_PARSED, () => {
         tryPlay();
       });
       instance.on(Hls.Events.ERROR, (_event, data) => {
+        if (lowLatency && data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+          lowLatencyStalls += 1;
+          if (lowLatencyStalls >= LOW_LATENCY_STALLS) {
+            // El camino midió rápido pero no aguanta: se sigue en modo normal.
+            fastPath = false;
+            start();
+            return;
+          }
+        }
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && !mediaRecoveryTried) {
           mediaRecoveryTried = true;
