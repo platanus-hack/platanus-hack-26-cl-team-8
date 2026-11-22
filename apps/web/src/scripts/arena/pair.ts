@@ -1,10 +1,11 @@
 /**
- * Panel de una pareja: todas sus partidas (calibración y liga), con lados, resultado y
- * motivo. Los intentos con fallo de infraestructura van aparte: no cuentan para el rating.
+ * Panel de una pareja: todas sus partidas (calibración y liga), contadas desde el lado del
+ * modelo de la fila: de qué color jugó, si ganó y con cuánta vida terminó cada uno. Los
+ * intentos con fallo de infraestructura van aparte: no cuentan para el rating.
  */
-import type { FrozenModel, MatchAttempt, MatrixCell } from "@phack/protocol";
+import { MAX_HEALTH, type FrozenModel, type MatchAttempt, type MatrixCell, type Side } from "@phack/protocol";
 import { el } from "../dom";
-import { formatTime } from "../format";
+import { SIDE_LABEL, formatTime } from "../format";
 import { MATCH_STAGE_LABEL, REASON_LABEL, formatDuration, formatPct } from "./format";
 import { modelTag } from "./view";
 
@@ -14,9 +15,12 @@ function nameOf(models: Names, key: string): string {
   return models.get(key)?.name ?? key;
 }
 
-function who(models: Names, key: string): HTMLElement {
+/** Solo el logo del modelo (el nombre queda para lectores de pantalla). */
+function mark(models: Names, key: string): HTMLElement {
   const m = models.get(key);
-  return modelTag(m?.gatewayId ?? key, m?.name ?? key);
+  const tag = modelTag(m?.gatewayId ?? key, m?.name ?? key);
+  tag.classList.add("model-tag--mark");
+  return tag;
 }
 
 /** Orden estable: etapa, semilla, ronda, id, intento. */
@@ -32,32 +36,55 @@ function byOrder(x: MatchAttempt, y: MatchAttempt): number {
 }
 
 /**
- * Resumen de la celda desde el punto de vista de la fila: "Liga: 5 V · 1 E · 2 D (69 %)".
- * Si no hay partidas válidas en la liga, lo dice.
+ * Resumen de la celda desde el punto de vista de la fila: "En la liga: 5 V · 1 E · 2 D en
+ * 8 partidas (69 %)". Si no hay partidas válidas en la liga, lo dice.
  */
 export function cellSummary(rowName: string, cell: MatrixCell | undefined): string {
-  if (!cell || cell.score === null || cell.games === 0) return `Sin partidas válidas en la liga todavía.`;
+  if (!cell || cell.score === null || cell.games === 0) {
+    return `Sin partidas válidas en la liga todavía. Abajo, lo que hay, visto desde ${rowName}.`;
+  }
   return (
-    `Liga, para ${rowName}: ${cell.wins} V · ${cell.draws} E · ${cell.losses} D ` +
-    `en ${cell.games} ${cell.games === 1 ? "partida" : "partidas"} (${formatPct(cell.score)}).`
+    `En la liga: ${cell.wins} V · ${cell.draws} E · ${cell.losses} D para ${rowName} ` +
+    `en ${cell.games} ${cell.games === 1 ? "partida" : "partidas"} (${formatPct(cell.score)}). ` +
+    `Abajo, cada partida vista desde su lado.`
   );
 }
 
-function resultCell(models: Names, a: MatchAttempt, row: string): HTMLElement {
+const RESULT_LABEL = { win: "Victoria", draw: "Empate", loss: "Derrota" } as const;
+
+function resultCell(a: MatchAttempt, row: string): HTMLElement {
   const td = el("td", "pair__result");
   if (!a.outcome) return td;
   const { winner, reason } = a.outcome;
-  const label = el("span", "pair__outcome", winner === null ? "Empate" : `Gana ${nameOf(models, winner)}`);
-  label.dataset.result = winner === null ? "draw" : winner === row ? "win" : "loss";
-  td.append(label, el("span", "pair__reason", REASON_LABEL[reason]));
+  const result = winner === null ? "draw" : winner === row ? "win" : "loss";
+  td.dataset.result = result;
+  // Un K.O. dice cuándo fue; las que llegan al final duran siempre lo mismo.
+  const how = reason === "kill" ? `${REASON_LABEL.kill} a los ${formatDuration(a.startedAt, a.endedAt)}` : REASON_LABEL[reason];
+  td.append(el("span", "pair__outcome", RESULT_LABEL[result]), el("span", "pair__reason", how));
   return td;
+}
+
+/** Vida con que terminó un lado: logo del modelo, barra del color del lado y el número. */
+function healthBar(models: Names, a: MatchAttempt, side: Side): HTMLElement {
+  const stats = a.sides[side];
+  const health = Math.max(0, Math.round(stats.health));
+  const line = el("span", "hp");
+  line.dataset.side = side;
+  const track = el("span", "hp__bar");
+  const fill = el("i");
+  fill.style.width = `${Math.min(100, (health / MAX_HEALTH) * 100)}%`;
+  track.append(fill);
+  line.append(mark(models, stats.model), track, el("span", "hp__num", String(health)));
+  line.setAttribute("aria-label", `${nameOf(models, stats.model)}, ${SIDE_LABEL[side]}: ${health} de vida`);
+  line.setAttribute("role", "img");
+  return line;
 }
 
 function validTable(models: Names, attempts: MatchAttempt[], row: string): HTMLElement {
   const table = el("table", "board pair__table");
   const head = el("tr");
-  for (const h of ["Etapa", "Escenario", "Semilla", "Lado", "Rojo", "Azul", "Resultado", "Vida", "Duración"]) {
-    const th = el("th", "", h);
+  for (const label of ["Partida", "Resultado", "Vida al final"]) {
+    const th = el("th", "", label);
     th.scope = "col";
     head.append(th);
   }
@@ -72,19 +99,25 @@ function validTable(models: Names, attempts: MatchAttempt[], row: string): HTMLE
     counted.add(a.matchId);
     if (duplicate) tr.classList.add("is-duplicate");
 
-    const stage = el("td", "", MATCH_STAGE_LABEL[a.spec.stage]);
-    if (duplicate) stage.append(el("span", "pair__dup", " (repetida, no cuenta)"));
-    tr.append(stage, el("td", "mono", a.spec.scenario), el("td", "num", String(a.spec.seed)));
-    tr.append(el("td", "", a.spec.leg === "ida" ? "Ida" : "Vuelta"));
-    const red = el("td", "pair__side");
-    red.dataset.side = "red";
-    red.append(who(models, a.spec.red));
-    const blue = el("td", "pair__side");
-    blue.dataset.side = "blue";
-    blue.append(who(models, a.spec.blue));
-    tr.append(red, blue, resultCell(models, a, row));
-    tr.append(el("td", "num", `${Math.round(a.sides.red.health)}–${Math.round(a.sides.blue.health)}`));
-    tr.append(el("td", "num muted", formatDuration(a.startedAt, a.endedAt)));
+    // Lado en que partió el modelo de la fila; su barra de vida va primero.
+    const mine: Side = a.spec.red === row ? "red" : "blue";
+    const rival: Side = mine === "red" ? "blue" : "red";
+
+    const match = el("td", "pair__match");
+    const where = el("span", "pair__seed", `semilla ${a.spec.seed} · `);
+    const side = el("span", "pair__sideword", `de ${SIDE_LABEL[mine]}`);
+    side.dataset.side = mine;
+    where.append(side);
+    match.append(el("span", "", MATCH_STAGE_LABEL[a.spec.stage]), where);
+    if (duplicate) match.append(el("span", "pair__dup", "Repetida, no cuenta"));
+    match.dataset.tip =
+      `Escenario ${a.spec.scenario}, ${a.spec.leg === "ida" ? "ida" : "vuelta"}: cada cruce se juega dos veces con ` +
+      `la misma semilla, cambiando los lados.`;
+
+    const health = el("td", "pair__hp");
+    health.append(healthBar(models, a, mine), healthBar(models, a, rival));
+
+    tr.append(match, resultCell(a, row), health);
     tbody.append(tr);
   }
   table.append(thead, tbody);

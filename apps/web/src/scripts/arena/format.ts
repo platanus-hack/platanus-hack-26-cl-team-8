@@ -1,7 +1,14 @@
 /**
  * Textos y números del leaderboard del torneo. Funciones puras: sin DOM.
  */
-import type { CalibrationVerdict, MatchAttempt, TournamentProgress, TournamentStage } from "@phack/protocol";
+import {
+  REFERENCE_RATING,
+  type CalibrationVerdict,
+  type MatchAttempt,
+  type TournamentProgress,
+  type TournamentReport,
+  type TournamentStage,
+} from "@phack/protocol";
 
 export const STAGE_LABEL: Record<TournamentProgress["stage"], string> = {
   created: "Creado, sin partidas",
@@ -85,12 +92,6 @@ export function fraction(done: number, total: number): number {
   return Math.min(1, Math.max(0, done / total));
 }
 
-/** Intervalo de un rating: semiancho redondeado ("±48") y extremos ("[952, 1048]"). */
-export function formatInterval(lo: number, hi: number): { half: string; range: string } {
-  const half = Math.round((hi - lo) / 2);
-  return { half: `±${half}`, range: `[${Math.round(lo)}, ${Math.round(hi)}]` };
-}
-
 /**
  * Color divergente para un puntaje (V + 0,5·E)/válidas, centrado en 50 %: hacia el
  * verde azulado cuando la fila le gana a la columna, hacia el naranjo cuando pierde.
@@ -111,4 +112,47 @@ export function scoreColor(score: number): string {
 export function formatDuration(startedAt: number, endedAt: number): string {
   const s = Math.round((endedAt - startedAt) / 1000);
   return s > 0 ? `${s} s` : "–";
+}
+
+/** "A", "A y B", "A, B y C". */
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+}
+
+/**
+ * La tabla dicha en dos frases: quién va primero y quiénes ya se distinguen de la
+ * referencia. Un modelo se distingue cuando todo su intervalo queda a un lado de 1000; si
+ * lo cruza, con estas partidas no se puede decir si juega mejor o peor.
+ */
+export function takeaway(report: TournamentReport): string {
+  const rows = report.standings;
+  const reference = report.config.reference.name;
+  if (rows.length === 0) {
+    const total = report.calibration.length;
+    if (total === 0) return "";
+    const inLeague = report.calibration.filter((row) => row.league).length;
+    return `La liga todavía no tiene partidas válidas. Por la calibración, ${inLeague} de ${total} candidatos entran a jugarla.`;
+  }
+
+  const leader = rows[0]!;
+  const lead = Math.round(leader.rating - REFERENCE_RATING);
+  let first: string;
+  if (leader.isReference) first = `${leader.name}, la referencia, va primero: ningún candidato la supera por ahora.`;
+  else if (lead > 0) first = `${leader.name} va primero con ${formatRating(leader.rating)}, ${lead} sobre ${reference}.`;
+  else first = `${leader.name} va primero con ${formatRating(leader.rating)}.`;
+
+  const candidates = rows.filter((row) => !row.isReference);
+  const above = candidates.filter((row) => row.lo > REFERENCE_RATING).map((row) => row.name);
+  const below = candidates.filter((row) => row.hi < REFERENCE_RATING).map((row) => row.name);
+  if (candidates.length === 0) return first;
+  if (above.length + below.length === 0) {
+    return `${first} Todos los intervalos cruzan el ${REFERENCE_RATING}: con estas partidas, ninguno se distingue todavía de la referencia.`;
+  }
+  const sides = [
+    above.length > 0 ? `${joinNames(above)} por arriba` : "",
+    below.length > 0 ? `${joinNames(below)} por abajo` : "",
+  ].filter((part) => part !== "");
+  const rest = above.length + below.length < candidates.length ? " El resto todavía se traslapa con ella." : "";
+  return `${first} Ya se distinguen de la referencia: ${sides.join(" y ")}.${rest}`;
 }

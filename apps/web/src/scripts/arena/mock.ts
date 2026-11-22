@@ -11,6 +11,7 @@
  * Se carga con import() dinámico, así que no pesa en el sitio real.
  */
 import {
+  MAX_HEALTH,
   REFERENCE_RATING,
   TOURNAMENT_ROUTES,
   type CalibrationRow,
@@ -175,7 +176,7 @@ function buildFixture(o: FixtureOptions): Fixture {
           endedAt: clock,
           outcome: null,
           error: n % 2 === 1 ? "429 Too Many Requests del gateway (3 errores seguidos)" : "El bot AgenteAzul se desconectó",
-          sides: { red: side(red, 20, 0, random, o.mode), blue: side(blue, 20, 0, random, o.mode) },
+          sides: { red: side(red, MAX_HEALTH, 0, random, o.mode), blue: side(blue, MAX_HEALTH, 0, random, o.mode) },
         });
       }
       if (broken) continue;
@@ -185,8 +186,8 @@ function buildFixture(o: FixtureOptions): Fixture {
       const draw = roll < 0.14;
       const redWins = !draw && random() < p;
       const kill = !draw && random() < 0.55;
-      const loserHp = kill ? 0 : 2 + Math.floor(random() * 12);
-      const winnerHp = draw ? 6 + Math.floor(random() * 8) : loserHp + 1 + Math.floor(random() * (20 - loserHp - 1));
+      const loserHp = kill ? 0 : 3 + Math.floor(random() * 18);
+      const winnerHp = draw ? 9 + Math.floor(random() * 12) : loserHp + 1 + Math.floor(random() * (MAX_HEALTH - loserHp - 1));
       const redHp = draw ? winnerHp : redWins ? winnerHp : loserHp;
       const blueHp = draw ? winnerHp : redWins ? loserHp : winnerHp;
       const startedAt = clock;
@@ -204,8 +205,8 @@ function buildFixture(o: FixtureOptions): Fixture {
         },
         error: null,
         sides: {
-          red: side(red, redHp, 20 - blueHp, random, o.mode),
-          blue: side(blue, blueHp, 20 - redHp, random, o.mode),
+          red: side(red, redHp, MAX_HEALTH - blueHp, random, o.mode),
+          blue: side(blue, blueHp, MAX_HEALTH - redHp, random, o.mode),
         },
       });
       clock += 20_000;

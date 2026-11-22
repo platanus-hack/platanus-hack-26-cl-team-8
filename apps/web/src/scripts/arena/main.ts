@@ -13,7 +13,7 @@ import { byId, el } from "../dom";
 import { fetchPair, fetchReport, fetchTournaments } from "./api";
 import { STAGE_LABEL, formatDate } from "./format";
 import { cellSummary, renderPair } from "./pair";
-import { markCell, modelIndex, renderCalibration, renderMatrix, renderStandings, renderSummary } from "./view";
+import { markCell, modelIndex, modelTag, renderCalibration, renderMatrix, renderStandings, renderSummary } from "./view";
 
 const REFRESH_MS = 20_000;
 
@@ -21,6 +21,7 @@ const select = byId<HTMLSelectElement>("arena-select");
 const status = byId("arena-status");
 const content = byId("arena-content");
 const panel = byId("pair");
+const panelEmpty = byId("pair-empty");
 
 let report: TournamentReport | null = null;
 let openPair: { row: string; col: string } | null = null;
@@ -28,6 +29,9 @@ let openPair: { row: string; col: string } | null = null;
 let reportToken = 0;
 let pairToken = 0;
 let timer: number | null = null;
+/** Torneo que ya se mostró: la animación de entrada de los gráficos corre una vez por torneo. */
+let shown: string | null = null;
+let freshTimer: number | null = null;
 
 function setStatus(text: string, kind: "info" | "error" = "info"): void {
   status.textContent = text;
@@ -93,6 +97,13 @@ async function load(id: string, quiet = false): Promise<void> {
 function render(): void {
   if (!report) return;
   content.hidden = false;
+  // Los intervalos se despliegan solo la primera vez; en las actualizaciones de fondo no.
+  if (shown !== report.config.id) {
+    shown = report.config.id;
+    content.classList.add("is-fresh");
+    if (freshTimer !== null) window.clearTimeout(freshTimer);
+    freshTimer = window.setTimeout(() => content.classList.remove("is-fresh"), 1600);
+  }
   renderSummary(report);
   renderStandings(report);
   renderMatrix(report, (row, col) => void showPair(row, col, true));
@@ -112,17 +123,22 @@ async function showPair(row: string, col: string, focus: boolean): Promise<void>
   markCell(row, col);
 
   const models = modelIndex(current);
-  const rowName = models.get(row)?.name ?? row;
-  const colName = models.get(col)?.name ?? col;
+  const rowModel = models.get(row);
+  const colModel = models.get(col);
+  const rowName = rowModel?.name ?? row;
+  const colName = colModel?.name ?? col;
   const cell = current.matrix.find((c) => c.row === row && c.col === col);
 
   panel.hidden = false;
-  byId("pair-title").textContent = `${rowName} vs ${colName}`;
+  panelEmpty.hidden = true;
+  const title = byId("pair-title");
+  title.replaceChildren(modelTag(rowModel?.gatewayId ?? row, rowName), el("span", "pair__vs", "vs"), modelTag(colModel?.gatewayId ?? col, colName));
+  title.setAttribute("aria-label", `${rowName} contra ${colName}`);
   byId("pair-summary").textContent = cellSummary(rowName, cell);
   const body = byId("pair-body");
   if (focus) {
     body.replaceChildren(el("p", "empty", "Cargando partidas…"));
-    byId("pair-title").focus({ preventScroll: true });
+    title.focus({ preventScroll: true });
     panel.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
   }
 
@@ -140,6 +156,7 @@ function closePair(): void {
   openPair = null;
   pairToken++;
   panel.hidden = true;
+  panelEmpty.hidden = false;
   markCell(null, null);
 }
 
