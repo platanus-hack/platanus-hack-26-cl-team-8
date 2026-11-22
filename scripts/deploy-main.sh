@@ -24,6 +24,8 @@
 #   DEPLOY_PASSWORD  contraseña SSH (opcional; requiere `sshpass`). Sin ella se usa tu llave SSH.
 #   DEPLOY_SUDO      1 = correr docker con sudo (usa DEPLOY_PASSWORD). Por defecto 0.
 #   DEPLOY_BRANCH    rama a desplegar (por defecto: main)
+#   DEPLOY_MIRROR    1 = en cada vuelta, copiar además origin/main al repo público de la
+#                    hackathon (scripts/mirror.sh). Si falla, avisa y el despliegue sigue.
 #   DEPLOY_TUNNEL    1 = levantar también el perfil "tunnel" (cloudflared). Antes de levantar
 #                    revisa que el .env del servidor tenga TUNNEL_TOKEN.
 #   DEPLOY_CF_ACCESS 1 = entrar por SSH a través de Cloudflare Access (ssh.<dominio>), sin
@@ -155,6 +157,12 @@ if ! git -C "$REPO_ROOT" fetch --quiet origin "$BRANCH"; then
 fi
 NEW_SHA="$(git -C "$REPO_ROOT" rev-parse "origin/$BRANCH")"
 NEW_SHORT="${NEW_SHA:0:7}"
+
+# Copia origin/main al repo público de la hackathon (scripts/mirror.sh). Va antes de hablar
+# con el servidor y nunca corta el despliegue: si falla, avisa y sigue.
+if [ "${DEPLOY_MIRROR:-0}" = "1" ]; then
+  MIRROR_BRANCH="$BRANCH" bash "$REPO_ROOT/scripts/mirror.sh" || echo "AVISO: no se pudo actualizar el espejo; el despliegue sigue."
+fi
 
 if ! OLD_SHA="$("${SSH[@]}" "$TARGET" "mkdir -p '$REMOTE_PATH' && cat '$REMOTE_PATH/.deployed-sha' 2>/dev/null || true" 2>/dev/null)"; then
   echo "SERVIDOR NO RESPONDE: no se pudo conectar a $TARGET (origin/$BRANCH está en $NEW_SHORT)."
