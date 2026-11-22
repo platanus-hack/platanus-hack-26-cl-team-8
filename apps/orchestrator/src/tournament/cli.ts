@@ -7,6 +7,7 @@
  *   pnpm tournament pause <id>            pide la pausa a un `run` vivo (archivo PAUSE)
  *   pnpm tournament status <id>           progreso y calibración
  *   pnpm tournament leaderboard <id>      tabla y matriz en la terminal
+ *   pnpm tournament speed <id> | --dir    velocidad por modelo junto al Elo (solo lee)
  *   pnpm tournament list                  torneos guardados
  */
 import { readFile } from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
   SELECTABLE_ARENA_SCENARIOS,
   availableArenaScenarios,
   type FrozenModel,
+  type MatchAttempt,
   type OmittedLine,
   type TournamentConfig,
   type TournamentLimits,
@@ -38,8 +40,9 @@ import { buildReport, summarize } from "./report";
 import { BenchmarkMismatchError, DEFAULT_OVERHEAD_SECONDS, runTournament } from "./runner";
 import { DEFAULT_SEEDS, estimateMatch, planPreview } from "./schedule";
 import { createSimRunner } from "./sim";
-import { FileTournamentStore, TournamentLockedError, acquireLock, readLiveLock } from "./store";
-import type { CatalogModel, MatchRunner, ResolvedLine } from "./types";
+import { buildSpeedReport, type SpeedReport } from "./speed";
+import { FileTournamentStore, TournamentLockedError, acquireLock, parseAttemptLines, readLiveLock } from "./store";
+import type { CatalogModel, MatchRunner, ResolvedLine, RunnerState } from "./types";
 
 // ---------- Opciones ----------
 
@@ -63,6 +66,11 @@ const FLAGS = {
   /** Catálogo desde un archivo JSON local ({ data: [...] }) en vez de descargarlo. */
   catalog: { type: "string" },
   simulate: { type: "boolean", default: false },
+  /** speed: carpeta con tournament.json, attempts.jsonl y state.json (p. ej. descargada del servidor). */
+  dir: { type: "string" },
+  /** speed: league (por defecto), calibration o all. */
+  stage: { type: "string", default: "league" },
+  json: { type: "boolean", default: false },
   help: { type: "boolean", short: "h", default: false },
 } as const;
 
@@ -79,7 +87,13 @@ Comandos:
   pause <id>           pide la pausa a un run vivo
   status <id>          progreso y calibración
   leaderboard <id>     ranking oficial (solo liga) y matriz
+  speed [<id>]         velocidad y eficiencia por modelo junto al Elo, y su correlación (solo lee)
   list                 torneos guardados
+
+Opciones de speed:
+  --dir <carpeta>              leer tournament.json, attempts.jsonl y state.json de esa carpeta
+  --stage league               partidas: league | calibration | all
+  --json                       salida cruda (SpeedReport)
 
 Opciones de plan/create:
   --name <texto>               nombre del torneo
@@ -543,6 +557,72 @@ function printLeaderboard(r: TournamentReport): void {
   }
 }
 
+async function loadAll(store: FileTournamentStore, id: string) {
+  return { config: await store.load(id), attempts: await store.attempts(id), state: await store.loadState(id) };
+}
+
+/** Los archivos de un torneo sueltos en una carpeta (sin el resto de DATA_DIR). */
+async function readTournamentDir(dir: string): Promise<{ config: TournamentConfig; attempts: MatchAttempt[]; state: RunnerState | null }> {
+  const base = resolve(dir);
+  const read = async (name: string): Promise<string | null> => {
+    try {
+      return await readFile(resolve(base, name), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
+  };
+  const config = await read("tournament.json");
+  if (config === null) throw new UsageError(`No hay tournament.json en ${base}`);
+  const attempts = await read("attempts.jsonl");
+  const state = await read("state.json");
+  return {
+    config: JSON.parse(config) as TournamentConfig,
+    attempts: attempts === null ? [] : parseAttemptLines(attempts),
+    state: state === null ? null : (JSON.parse(state) as RunnerState),
+  };
+}
+
+function printSpeed(r: SpeedReport): void {
+  const f = (x: number | null, d = 0): string => (x === null ? "—" : x.toFixed(d));
+  const pct = (x: number | null): string => (x === null ? "—" : `${(x * 100).toFixed(1)}%`);
+  out(`Velocidad por modelo · torneo ${r.tournamentId} · partidas ${r.stage}: ${r.validMatches} válidas`);
+  out();
+  out(
+    table(
+      ["#", "Modelo", "Elo", "V-E-D", "Parte decis.", "Decis/part.", "Lat. media", "p50", "p95", "Inválidas", "Tok in/dec", "Daño/dec", "USD/dec"],
+      r.rows.map((row) => [
+        row.rank === null ? "—" : String(row.rank),
+        `${row.name}${row.isReference ? " (ref)" : ""}`,
+        f(row.rating),
+        `${row.wins}-${row.draws}-${row.losses}`,
+        pct(row.decisionShare),
+        f(row.decisionsPerMatch, 1),
+        f(row.latencyMeanMs),
+        f(row.latencyP50Ms),
+        f(row.latencyP95Ms),
+        pct(row.invalidRate),
+        f(row.tokensInPerDecision),
+        f(row.damagePerDecision, 2),
+        row.costPerDecisionUsd === null ? "—" : row.costPerDecisionUsd.toFixed(5),
+      ]),
+      [0, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    ),
+  );
+  out();
+  out("Correlación de rangos (Spearman) con el Elo: +1 = sube con el Elo, −1 = baja con el Elo.");
+  out(
+    table(
+      ["Métrica", "rho", "n"],
+      r.correlations.map((c) => [c.label, c.rho === null ? "—" : (c.rho >= 0 ? "+" : "") + c.rho.toFixed(2), String(c.n)]),
+      [1, 2],
+    ),
+  );
+  out();
+  out("Parte decis. = mis decisiones / las de los dos en la misma partida (50% = igual de rápido que el rival).");
+  out("Latencias en ms (estado -> acción válida). Con pocos modelos, una rho no es prueba de causa.");
+}
+
 async function reportOf(store: FileTournamentStore, id: string): Promise<TournamentReport> {
   return buildReport(await store.load(id), await store.attempts(id), await store.loadState(id));
 }
@@ -608,6 +688,17 @@ export async function main(argv: string[]): Promise<number> {
     case "leaderboard":
       printLeaderboard(await reportOf(store, needId()));
       return 0;
+    case "speed": {
+      const stage = flags.stage ?? "league";
+      if (stage !== "league" && stage !== "calibration" && stage !== "all") {
+        throw new UsageError(`--stage inválido: "${stage}" (league | calibration | all)`);
+      }
+      const { config, attempts, state } = flags.dir ? await readTournamentDir(flags.dir) : await loadAll(store, needId());
+      const speed = buildSpeedReport(config, attempts, buildReport(config, attempts, state), stage);
+      if (flags.json) out(JSON.stringify(speed, null, 2));
+      else printSpeed(speed);
+      return 0;
+    }
     case "list": {
       const configs = await store.list();
       if (configs.length === 0) {
