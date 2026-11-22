@@ -210,6 +210,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     }
   });
 
+  // Un proxy puede reenviar un POST sin cuerpo como "chunked" y sin Content-Type (lo hace
+  // cloudflared con el túnel por HTTP/2): Fastify lo ve como un cuerpo de tipo desconocido y
+  // responde 415, y "Iniciar pelea" deja de funcionar. Un cuerpo vacío vale con cualquier
+  // tipo, o sin él; con contenido que no es JSON sigue siendo 415.
+  app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => {
+    const text = typeof body === "string" ? body : body.toString("utf8");
+    if (text.trim() === "") {
+      done(null, undefined);
+      return;
+    }
+    const err = new Error("Tipo de contenido no soportado") as Error & { statusCode: number };
+    err.statusCode = 415;
+    done(err, undefined);
+  });
+
   await app.register(cors, { origin: true, methods: ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"] });
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
 
