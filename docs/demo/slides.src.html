@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Prompt Arena, demo</title>
+<!--
+  Láminas del demo de Prompt Arena (3 minutos). Este archivo es la FUENTE: el que se abre para
+  presentar es slides.html, que arma `python3 scripts/demo_slides.py` metiendo adentro las
+  fuentes, el código QR y los datos de la liga. Así slides.html funciona solo, sin internet,
+  salvo la lámina en vivo, que muestra el sitio.
+
+  Teclas: → o espacio avanza, ← retrocede, F pantalla completa, T reloj, N notas, R reinicia el
+  reloj, O abre el sitio en otra pestaña. El primer avance en la portada echa a correr el reloj.
+
+  Parámetros de la dirección (opcionales):
+    ?site=<url>   qué mostrar en la lámina en vivo (por defecto el sitio real; para ensayar sin
+                  red: ?site=http://localhost:4321/%3Fmock)
+    ?key=<clave>  clave de la arena para esa lámina; nunca se escribe en este archivo
+-->
+<style>
+/*FONTS*/
+:root {
+  --bg: #101113; --surface: #191a1d; --line: #2a2c31; --text: #edece8; --dim: #8d9098; --faint: #5e6169;
+  --red: #ff5d5d; --blue: #6a8dff; --amber: #e8b84a; --ok: #6fcf8e;
+  --pixel: "Silkscreen", ui-monospace, monospace; --sans: "Instrument Sans", system-ui, -apple-system, sans-serif;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: #08090b; overflow: hidden; }
+body { color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; cursor: default; }
+#stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; background: var(--bg); transform-origin: 0 0; overflow: hidden; }
+
+/* ---------- Láminas ---------- */
+.slide { position: absolute; inset: 0; padding: 150px 140px 130px; display: flex; flex-direction: column; justify-content: center; gap: 44px; opacity: 0; visibility: hidden; transition: opacity 0.32s var(--ease), visibility 0s 0.32s; }
+.slide.is-on { opacity: 1; visibility: visible; transition: opacity 0.32s var(--ease); }
+.slide > * { transform: translateY(14px); transition: transform 0.5s var(--ease); }
+.slide.is-on > * { transform: none; }
+h1 { font-size: 92px; line-height: 1.04; font-weight: 600; letter-spacing: -0.022em; max-width: 1500px; text-wrap: balance; }
+h1 .dim { color: var(--dim); }
+.sub { font-size: 42px; line-height: 1.25; color: var(--dim); max-width: 1300px; }
+.sub b { color: var(--text); font-weight: 600; }
+.pixel { font-family: var(--pixel); font-size: 24px; line-height: 1; letter-spacing: 0.02em; text-transform: uppercase; }
+.cols { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: 90px; align-items: center; }
+.stack { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
+[data-step] { opacity: 0; transform: translateY(18px); transition: opacity 0.45s var(--ease), transform 0.45s var(--ease); }
+[data-step].is-shown { opacity: 1; transform: none; }
+
+/* ---------- Marco fijo: sección, reloj, avance ---------- */
+.chrome { position: absolute; left: 140px; right: 140px; top: 64px; display: flex; align-items: center; gap: 18px; color: var(--faint); transition: opacity 0.3s; }
+.mini { display: inline-flex; gap: 6px; }
+.mini i { width: 18px; height: 18px; background: var(--red); }
+.mini i + i { background: var(--blue); }
+#section { color: var(--dim); }
+#clock { margin-left: auto; display: none; color: var(--dim); }
+#clock.is-on { display: block; }
+#clock.is-late { color: var(--amber); }
+#clock.is-over { color: var(--red); }
+/* El avance: los dos agentes se acercan a medida que pasa la charla y se encuentran al final. */
+.duel { position: absolute; left: 140px; right: 140px; bottom: 58px; height: 18px; transition: opacity 0.3s; }
+.duel::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 2px; background: var(--line); }
+.duel i { position: absolute; top: 0; width: 18px; height: 18px; transition: left 0.6s var(--ease), right 0.6s var(--ease); }
+.duel .r { background: var(--red); left: 0; }
+.duel .b { background: var(--blue); right: 0; }
+#stage.is-bare .chrome, #stage.is-bare .duel { opacity: 0; }
+
+/* ---------- 0. Portada ---------- */
+.cover { align-items: flex-start; gap: 56px; }
+.mark { display: flex; gap: 73px; }
+.mark i { position: relative; width: 220px; height: 220px; background: var(--red); transform: translateX(-900px); transition: transform 0.9s var(--ease); }
+.mark i + i { background: var(--blue); transform: translateX(900px); }
+.mark i::after { content: ""; position: absolute; top: 44px; left: 132px; width: 44px; height: 44px; background: var(--bg); transform: scaleY(0); transition: transform 0.2s 0.95s; }
+.mark i + i::after { left: 44px; }
+.cover.is-live .mark i { transform: none; }
+.cover.is-live .mark i::after { transform: none; animation: blink 4.6s 2.4s steps(1) infinite; }
+.cover.is-live .mark i + i::after { animation-delay: 4.1s; }
+@keyframes blink { 0%, 95% { transform: none; } 95.01%, 100% { transform: scaleY(0.12); } }
+.wordmark { font-family: var(--pixel); font-size: 120px; line-height: 1; letter-spacing: 0.04em; }
+.cover .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.5s 0.9s var(--ease), transform 0.5s 0.9s var(--ease); }
+.cover.is-live .reveal { opacity: 1; transform: none; }
+.cover.is-live .reveal + .reveal { transition-delay: 1.15s; }
+
+/* ---------- 1. El examen ---------- */
+.exam { width: 640px; padding: 44px 48px; border: 2px solid var(--line); background: var(--surface); display: grid; gap: 30px; }
+.exam .pixel { color: var(--faint); }
+.exam__q { font-size: 46px; line-height: 1.2; }
+.exam__a { display: flex; align-items: center; gap: 22px; font-size: 46px; font-weight: 600; min-height: 60px; }
+.exam__a span { opacity: 0; }
+.exam__a svg { width: 44px; opacity: 0; color: var(--ok); }
+.slide.is-on .exam__a span { animation: pop 0.2s 0.9s forwards; }
+.slide.is-on .exam__a svg { animation: pop 0.2s 1.4s forwards; }
+@keyframes pop { to { opacity: 1; } }
+
+/* ---------- 2. El mundo espera / no espera ---------- */
+.lanes { display: grid; gap: 34px; }
+.lane { display: grid; grid-template-columns: 250px 1fr; gap: 36px; align-items: center; padding: 34px 40px; border: 2px solid var(--line); background: var(--surface); }
+.lane .pixel { color: var(--dim); }
+.scene { display: grid; grid-template-columns: 360px 1fr; gap: 70px; align-items: center; }
+.field { position: relative; height: 120px; }
+.think { display: grid; gap: 14px; font-size: 30px; color: var(--dim); }
+.think i { display: block; height: 14px; background: var(--line); position: relative; overflow: hidden; }
+.think i::after { content: ""; position: absolute; inset: 0; background: var(--text); transform-origin: left; transform: scaleX(0); }
+.slide.is-on .think i::after { animation: fill 4s linear infinite; }
+@keyframes fill { 0% { transform: scaleX(0); } 80%, 100% { transform: scaleX(1); } }
+.me, .foe { position: absolute; bottom: 0; width: 64px; height: 64px; }
+.me { left: 0; background: var(--red); }
+.foe { right: 0; background: var(--blue); }
+.hearts { position: absolute; left: 0; bottom: 80px; display: flex; gap: 6px; }
+.hearts b { width: 22px; height: 20px; background: var(--red); clip-path: polygon(0 20%, 20% 0, 40% 0, 50% 12%, 60% 0, 80% 0, 100% 20%, 100% 50%, 50% 100%, 0 50%); }
+.pause { position: absolute; right: 86px; bottom: 14px; display: flex; gap: 8px; }
+.pause i { width: 10px; height: 36px; background: var(--faint); }
+.slide.is-on .lane--real .foe { animation: charge 4s var(--ease) infinite; }
+@keyframes charge { 0%, 8% { right: 0; } 30%, 36% { right: calc(100% - 140px); } 44% { right: calc(100% - 190px); } 52%, 58% { right: calc(100% - 140px); } 66% { right: calc(100% - 190px); } 74%, 86% { right: calc(100% - 140px); } 100% { right: 0; } }
+.slide.is-on .lane--real .hearts b:nth-child(5) { animation: lose 4s steps(1) infinite; animation-delay: 0s; --at: 32%; }
+.slide.is-on .lane--real .hearts b:nth-child(4) { animation: lose2 4s steps(1) infinite; }
+.slide.is-on .lane--real .hearts b:nth-child(3) { animation: lose3 4s steps(1) infinite; }
+@keyframes lose { 0%, 31% { opacity: 1; } 32%, 96% { opacity: 0.15; } }
+@keyframes lose2 { 0%, 53% { opacity: 1; } 54%, 96% { opacity: 0.15; } }
+@keyframes lose3 { 0%, 75% { opacity: 1; } 76%, 96% { opacity: 0.15; } }
+
+/* ---------- 3. La solución ---------- */
+.ring { position: relative; height: 420px; border-bottom: 4px solid var(--line); }
+.ring .a, .ring .b { position: absolute; bottom: 0; width: 180px; height: 180px; }
+.ring .a { left: 90px; background: var(--red); animation: sway 2.4s var(--ease) infinite alternate; }
+.ring .b { right: 90px; background: var(--blue); animation: sway 2.4s 0.5s var(--ease) infinite alternate-reverse; }
+.ring .a::after, .ring .b::after { content: ""; position: absolute; top: 36px; width: 36px; height: 36px; background: var(--bg); }
+.ring .a::after { left: 108px; } .ring .b::after { left: 36px; }
+@keyframes sway { from { transform: translateX(-16px); } to { transform: translateX(34px); } }
+.hp { position: absolute; top: 60px; height: 20px; width: 300px; background: var(--line); }
+.hp::after { content: ""; position: absolute; inset: 0; transform-origin: left; }
+.hp--a { left: 30px; } .hp--a::after { background: var(--red); transform: scaleX(0.72); }
+.hp--b { right: 30px; } .hp--b::after { background: var(--blue); transform: scaleX(0.46); transform-origin: right; }
+.facts { display: grid; gap: 26px; }
+.fact { display: grid; grid-template-columns: 26px 1fr; gap: 26px; align-items: baseline; font-size: 44px; line-height: 1.2; }
+.fact::before { content: ""; width: 18px; height: 18px; background: var(--text); transform: translateY(-6px); }
+
+/* ---------- 4. La escalera ---------- */
+.stairs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; align-items: end; height: 430px; }
+.stair { padding: 34px 38px; border: 2px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 16px; justify-content: flex-start; }
+.stair:nth-child(1) { height: 190px; border-color: var(--text); }
+.stair:nth-child(2) { height: 310px; border-left: 0; }
+.stair:nth-child(3) { height: 430px; border-left: 0; }
+.stair .pixel { color: var(--dim); }
+.stair:nth-child(1) .pixel { color: var(--text); }
+.stair p { font-size: 40px; line-height: 1.15; font-weight: 600; }
+.stair small { font-size: 28px; color: var(--dim); line-height: 1.25; }
+
+/* ---------- 5. En vivo ---------- */
+.live { padding: 0; }
+.live iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+.live__wait { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 28px; color: var(--dim); font-size: 36px; }
+.cues { position: absolute; left: 60px; bottom: 60px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; transform: none !important; }
+.cue { padding: 16px 24px 18px; background: rgba(8, 9, 11, 0.88); border: 2px solid var(--line); font-size: 36px; font-weight: 600; }
+
+/* ---------- 6. El ciclo y los dos ritmos ---------- */
+.loop { display: flex; align-items: center; gap: 26px; font-size: 40px; font-weight: 600; }
+.loop span { padding: 20px 30px 22px; border: 2px solid var(--line); background: var(--surface); }
+.loop i { width: 44px; height: 4px; background: var(--faint); position: relative; }
+.loop i::after { content: ""; position: absolute; right: -2px; top: -8px; border-left: 14px solid var(--faint); border-top: 10px solid transparent; border-bottom: 10px solid transparent; }
+.tempo { display: grid; gap: 30px; }
+.tempo__row { display: grid; grid-template-columns: 430px 1fr; gap: 40px; align-items: center; }
+.tempo__row p { font-size: 38px; font-weight: 600; line-height: 1.15; }
+.tempo__row small { display: block; font-size: 28px; color: var(--dim); font-weight: 400; margin-top: 6px; }
+.track { position: relative; height: 84px; background: var(--surface); border: 2px solid var(--line); overflow: hidden; }
+.track--body::before { content: ""; position: absolute; inset: 0 -60px 0 0; background: repeating-linear-gradient(90deg, var(--text) 0 6px, transparent 6px 30px); opacity: 0.85; animation: ticks 0.5s linear infinite; }
+@keyframes ticks { to { transform: translateX(-30px); } }
+.track--brain i { position: absolute; top: 14px; bottom: 14px; left: 100%; background: repeating-linear-gradient(135deg, var(--faint) 0 6px, transparent 6px 14px); animation: thought 6.4s linear infinite; }
+.track--brain i::after { content: ""; position: absolute; right: -14px; top: -14px; bottom: -14px; width: 14px; background: var(--amber); }
+.track--brain i:nth-child(1) { width: 300px; }
+.track--brain i:nth-child(2) { width: 430px; animation-delay: -2.2s; }
+.track--brain i:nth-child(3) { width: 250px; animation-delay: -4.4s; }
+@keyframes thought { from { transform: translateX(0); } to { transform: translateX(-1900px); } }
+
+/* ---------- 7. Las cuatro variables ---------- */
+.dials { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+.dial { padding: 36px 34px 40px; border: 2px solid var(--line); border-left-width: 0; background: var(--surface); display: grid; gap: 26px; min-width: 0; }
+.dial:first-child { border-left-width: 2px; }
+.dial .pixel { color: var(--dim); }
+.dial__v { position: relative; height: 150px; overflow: hidden; font-size: 44px; line-height: 1.12; font-weight: 600; }
+.dial__v span { position: absolute; left: 0; right: 0; top: 0; transform: translateY(160px); transition: transform 0.55s var(--ease); }
+.dial__v span.is-in { transform: none; }
+.dial__v span.is-out { transform: translateY(-160px); }
+
+/* ---------- 8. Con qué está hecho ---------- */
+.pipe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
+.node { position: relative; padding: 32px 30px 36px; border: 2px solid var(--line); border-left-width: 0; background: var(--surface); display: grid; gap: 18px; align-content: start; min-height: 290px; }
+.node:first-child { border-left-width: 2px; }
+.node .pixel { color: var(--dim); }
+.node p { font-size: 36px; line-height: 1.14; font-weight: 600; }
+.node small { font-size: 26px; line-height: 1.25; color: var(--dim); }
+.under { display: flex; flex-wrap: wrap; gap: 14px 40px; font-size: 34px; color: var(--dim); }
+.under b { color: var(--text); font-weight: 600; }
+
+/* ---------- 9. Los resultados ---------- */
+.results { padding-top: 124px; padding-bottom: 110px; gap: 22px; justify-content: flex-start; }
+.results h1 { font-size: 72px; }
+.board { display: grid; gap: 0; }
+.row { display: grid; grid-template-columns: 56px 470px 1fr 190px 230px; gap: 26px; align-items: center; height: 62px; border-top: 2px solid var(--line); font-size: 32px; opacity: 0; transform: translateX(-24px); }
+.slide.is-on .row { animation: rowin 0.45s var(--ease) forwards; animation-delay: calc(var(--i) * 0.07s + 0.2s); }
+@keyframes rowin { to { opacity: 1; transform: none; } }
+.row--head { height: 44px; border-top: 0; color: var(--faint); }
+.row--head span { font-family: var(--pixel); font-size: 24px; text-transform: uppercase; }
+.row .n { color: var(--faint); font-variant-numeric: tabular-nums; }
+.row .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.plot { position: relative; height: 100%; }
+.plot::before { content: ""; position: absolute; left: var(--ref); top: 0; bottom: 0; width: 2px; background: var(--line); }
+.plot .range { position: absolute; top: 50%; height: 4px; margin-top: -2px; left: var(--lo); width: calc(var(--hi) - var(--lo)); background: var(--faint); }
+.plot .dot { position: absolute; top: 50%; left: var(--at); width: 22px; height: 22px; margin: -11px 0 0 -11px; background: var(--text); }
+.plot .elo { position: absolute; top: 50%; left: calc(var(--hi) + 18px); transform: translateY(-50%); font-size: 28px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.row.is-top .name, .row.is-top .elo { color: var(--text); }
+.row.is-ref .name { color: var(--amber); } .row.is-ref .dot { background: var(--amber); }
+.col2, .col3 { opacity: 0; transition: opacity 0.45s var(--ease); }
+.results[data-at="1"] .col2, .results[data-at="2"] .col2, .results[data-at="2"] .col3 { opacity: 1; }
+.results[data-at="1"] .hot2, .results[data-at="2"] .hot3 { color: var(--bg); background: var(--amber); padding: 2px 10px; font-weight: 600; }
+.results .foot { font-size: 26px; color: var(--dim); }
+.row .tag { margin-left: 14px; font-family: var(--pixel); font-size: 16px; text-transform: uppercase; color: var(--amber); vertical-align: 4px; }
+
+/* ---------- 10. El umbral ---------- */
+/* Una columna por modelo, del que decide más rápido al más lento; el alto es su Elo. */
+.speed { position: relative; display: grid; grid-template-columns: repeat(9, 1fr); gap: 14px; align-items: end; height: 640px; padding-bottom: 150px; }
+.speed::before { content: "Elo"; position: absolute; left: 0; top: -44px; font-family: var(--pixel); font-size: 24px; color: var(--faint); text-transform: uppercase; }
+.bar { position: relative; height: var(--h); background: var(--faint); transform-origin: bottom; transform: scaleY(0); }
+.slide.is-on .bar { animation: grow 0.6s var(--ease) forwards; animation-delay: calc(var(--i) * 0.07s + 0.25s); }
+@keyframes grow { to { transform: none; } }
+.bar.is-top { background: var(--text); }
+.bar.is-ref { background: var(--amber); }
+.bar b { position: absolute; left: 0; right: 0; top: -44px; text-align: center; font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar span { position: absolute; left: -8px; right: -8px; top: calc(100% + 16px); text-align: center; font-size: 22px; line-height: 1.15; color: var(--dim); }
+.bar span em { display: block; margin-bottom: 8px; font-style: normal; font-size: 30px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.speed .wall { position: absolute; top: -20px; bottom: 0; left: calc(7 / 9 * 100% - 7px); right: -18px; background: rgba(232, 184, 74, 0.09); border-left: 2px dashed var(--amber); }
+.speed .wall::before { content: "Demasiado lento"; position: absolute; left: 16px; top: 14px; font-size: 26px; font-style: normal; color: var(--amber); }
+.speed .axis { position: absolute; left: 0; bottom: 0; font-family: var(--pixel); font-size: 24px; color: var(--faint); text-transform: uppercase; }
+
+/* ---------- 11. El cierre ---------- */
+.end { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: 100px; align-items: center; }
+.qr { background: #edece8; padding: 28px; }
+.qr svg { display: block; width: 100%; height: auto; }
+.end .pixel { color: var(--dim); }
+.end .url { font-family: var(--pixel); font-size: 32px; color: var(--text); white-space: nowrap; }
+
+/* ---------- Notas del presentador (tecla N) ---------- */
+#notes { position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 140px 40px; background: rgba(8, 9, 11, 0.96); border-top: 2px solid var(--line); font-size: 32px; line-height: 1.4; display: none; z-index: 20; }
+#notes.is-on { display: block; }
+#notes b { font-family: var(--pixel); font-size: 24px; color: var(--amber); font-weight: 400; margin-right: 18px; text-transform: uppercase; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; transition-duration: 0.01s !important; } }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 0 · Portada. El primer avance trae la marca y echa a correr el reloj. -->
+  <section class="slide cover" data-section="" data-until="6" data-steps="1"
+    data-notes="Saludo corto. «Hola, somos Sandlabs y esto es Prompt Arena.» Avanza apenas termines la frase.">
+    <div class="mark"><i></i><i></i></div>
+    <div class="wordmark reveal">Prompt Arena</div>
+    <p class="sub reveal">Un eval donde los modelos <b>actúan</b>. Por Sandlabs.</p>
+  </section>
+
+  <!-- 1 · Problema: los exámenes -->
+  <section class="slide" data-section="El problema" data-until="16" data-steps="2"
+    data-notes="Hoy los LLMs se evalúan con exámenes: una pregunta, una respuesta correcta. Eso mide lo que saben, no cómo actúan. Y cada vez más modelos actúan.">
+    <div class="cols">
+      <div class="stack">
+        <h1><span class="dim">Los evals miden lo que un modelo sabe.</span> <span data-step="1">No cómo actúa.</span></h1>
+        <p class="sub" data-step="2">Y cada vez más modelos <b>actúan</b>: agentes, herramientas, robots.</p>
+      </div>
+      <div class="exam">
+        <span class="pixel">Pregunta 12 de 500</span>
+        <p class="exam__q">¿Cuánto es 17 × 23?</p>
+        <p class="exam__a"><span>391</span><svg viewBox="0 0 11 9" shape-rendering="crispEdges" fill="currentColor"><path d="M9 0h2v2H9zM8 2h2v2H8zM7 4h2v2H7zM0 4h2v2H0zM1 6h2v2H1zM3 7h3v2H3zM5 6h3v1H5z"/></svg></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 · Problema: el mundo no espera -->
+  <section class="slide" data-section="El problema" data-until="26" data-steps="1"
+    data-notes="En un examen el mundo espera al modelo. En el mundo real, mientras piensa, todo sigue. Cada empresa arma su propio test: caro y no comparable. No hay un eval común.">
+    <h1><span class="dim">En un examen, el mundo espera.</span> En el mundo real, no.</h1>
+    <div class="lanes">
+      <div class="lane">
+        <span class="pixel">Examen</span>
+        <div class="scene"><div class="think">El modelo piensa…<i></i></div><div class="field"><div class="me"></div><div class="hearts"><b></b><b></b><b></b><b></b><b></b></div><div class="pause"><i></i><i></i></div><div class="foe"></div></div></div>
+      </div>
+      <div class="lane lane--real">
+        <span class="pixel">Mundo real</span>
+        <div class="scene"><div class="think">El modelo piensa…<i></i></div><div class="field"><div class="me"></div><div class="hearts"><b></b><b></b><b></b><b></b><b></b></div><div class="foe"></div></div></div>
+      </div>
+    </div>
+    <p class="sub" data-step="1">No existe un eval común para eso. Cada empresa arma el suyo: <b>caro y no comparable.</b></p>
+  </section>
+
+  <!-- 3 · Solución -->
+  <section class="slide" data-section="La solución" data-until="42" data-steps="3"
+    data-notes="Somos Sandlabs y creamos Prompt Arena: un eval donde razonar bien y decidir rápido importan a la vez. Sandbox PvP en Minecraft, en tiempo real. El resultado es objetivo: gana, pierde o empata, y de ahí sale un Elo con intervalos.">
+    <div class="cols">
+      <div class="stack">
+        <h1><span class="dim">Prompt Arena:</span> un eval donde razonar bien y decidir rápido importan a la vez.</h1>
+        <div class="facts">
+          <p class="fact" data-step="1">Un sandbox PvP en Minecraft.</p>
+          <p class="fact" data-step="2">Dos agentes deciden en tiempo real.</p>
+          <p class="fact" data-step="3">Gana, pierde o empata: de ahí sale un Elo.</p>
+        </div>
+      </div>
+      <div class="ring"><div class="hp hp--a"></div><div class="hp hp--b"></div><div class="a"></div><div class="b"></div></div>
+    </div>
+  </section>
+
+  <!-- 4 · Ambición -->
+  <section class="slide" data-section="La solución" data-until="56" data-steps="2"
+    data-notes="Es una relajación del problema de los world action models. Prompt Arena es el trabajo previo: medir cómo actúa un LLM en un mundo que reacciona. El PvP es el primer caso; el mismo sandbox sirve para cooperación y negociación. Impacto: el modelo más caro o conocido no siempre es el mejor.">
+    <h1><span class="dim">El primer paso hacia</span> evaluar modelos que actúan en el mundo.</h1>
+    <div class="stairs">
+      <div class="stair"><span class="pixel">Hoy</span><p>Duelo PvP</p><small>Un mundo simple, medible y justo.</small></div>
+      <div class="stair" data-step="1"><span class="pixel">Mismo sandbox</span><p>Cooperación, negociación, teoría de juegos</p></div>
+      <div class="stair" data-step="2"><span class="pixel">El horizonte</span><p>World action models</p><small>Modelos que entienden el mundo y actúan en él.</small></div>
+    </div>
+  </section>
+
+  <!-- 5 · En vivo: el sitio, dentro de la lámina -->
+  <section class="slide live" data-section="" data-bare data-until="76" data-steps="3" data-live
+    data-notes="«Esto son dos agentes peleando en tiempo real.» Ninguno está programado: cada movimiento lo decide un modelo de lenguaje. Señala el panel: cada decisión con su razón, la latencia y la vida de cada uno. Si no hay pelea, O abre el sitio en otra pestaña.">
+    <div class="live__wait"><span class="mini"><i></i><i></i></span><span>Cargando la arena en vivo…</span></div>
+    <div class="cues">
+      <span class="cue" data-step="1">Ninguno está programado.</span>
+      <span class="cue" data-step="2">Cada movimiento lo decide un modelo de lenguaje.</span>
+      <span class="cue" data-step="3">Su razón, su latencia y su vida, en vivo.</span>
+    </div>
+  </section>
+
+  <!-- 6 · Cómo funciona -->
+  <section class="slide" data-section="Cómo funciona" data-until="94" data-steps="1"
+    data-notes="El ciclo: el agente conoce su vida, la del rival, la distancia y su inventario; el LLM decide y el cuerpo ejecuta. Dos niveles: el cuerpo reacciona cada 100 ms; el cerebro decide cuando el modelo responde. Cuando llega la respuesta, el mundo ya cambió.">
+    <h1><span class="dim">Mientras el modelo piensa,</span> el mundo sigue.</h1>
+    <div class="loop"><span>Observa</span><i></i><span>El LLM decide</span><i></i><span>El cuerpo ejecuta</span></div>
+    <div class="tempo" data-step="1">
+      <div class="tempo__row"><p>El cuerpo<small>reacciona cada 100 ms</small></p><div class="track track--body"></div></div>
+      <div class="tempo__row"><p>El cerebro<small>decide cuando el modelo responde</small></p><div class="track track--brain"><i></i><i></i><i></i></div></div>
+    </div>
+  </section>
+
+  <!-- 7 · Todo se configura -->
+  <section class="slide" data-section="Cómo funciona" data-until="106" data-steps="0" data-dials
+    data-notes="Todo es configurable: el prompt, el inventario, el modelo y cuánto se comunican (nada, pensamiento o chat). Cambias una variable y tienes otro experimento.">
+    <h1><span class="dim">Cambias una variable</span> y es otro experimento.</h1>
+    <div class="dials">
+      <div class="dial"><span class="pixel">Prompt</span><div class="dial__v" data-values="Ataca sin parar|Mantén la distancia|Colabora con el otro|Quédate quieto"></div></div>
+      <div class="dial"><span class="pixel">Kit</span><div class="dial__v" data-values="Espada y arco|Arco con empuje|Hacha y velocidad|Perlas de ender|Bloques para muros"></div></div>
+      <div class="dial"><span class="pixel">Modelo</span><div class="dial__v" data-values="MiniMax M3.1 Flash|GPT-6 Luna|Claude Haiku 5.5|Gemini 3.8 Flash"></div></div>
+      <div class="dial"><span class="pixel">Comunicación</span><div class="dial__v" data-values="Ninguna|Se leen la mente|Se hablan"></div></div>
+    </div>
+  </section>
+
+  <!-- 8 · Con qué está hecho -->
+  <section class="slide" data-section="Cómo está hecho" data-until="126" data-steps="1"
+    data-notes="Mundo: un servidor de Minecraft real; mineflayer convierte las decisiones en movimiento. Cerebro: Vercel AI SDK y su gateway, cualquier modelo con la misma interfaz. Orquestador: Fastify con WebSockets; corre las partidas, mide latencia y costo y guarda cada decisión. Video: un cliente real de Minecraft, capturado y transmitido por HLS. Web en Astro.">
+    <h1><span class="dim">Un Minecraft real</span> y cualquier modelo del mercado.</h1>
+    <div class="pipe">
+      <div class="node"><span class="pixel">Mundo</span><p>Minecraft + mineflayer</p><small>Las decisiones se vuelven movimiento.</small></div>
+      <div class="node"><span class="pixel">Cerebro</span><p>Vercel AI SDK + Gateway</p><small>Cualquier modelo, la misma interfaz.</small></div>
+      <div class="node"><span class="pixel">Orquestador</span><p>Fastify + WebSockets</p><small>Corre, mide y guarda cada decisión.</small></div>
+      <div class="node"><span class="pixel">Video</span><p>Cliente real + HLS</p><small>ffmpeg y MediaMTX, en vivo.</small></div>
+      <div class="node"><span class="pixel">Web</span><p>Astro</p><small>La pelea y el leaderboard.</small></div>
+    </div>
+    <p class="under" data-step="1"><span><b>Docker Compose</b> en un servidor casero</span><span><b>Cloudflare Tunnel</b></span><span>Ranking <b>Bradley-Terry</b> (Elo)</span></p>
+  </section>
+
+  <!-- 9 · Resultados: el ranking, la velocidad y el costo -->
+  <section class="slide results" data-section="Los resultados" data-until="156" data-steps="2" data-at="0"
+    data-notes="9 modelos, todos contra todos, ida y vuelta. MiniMax primero; GLM y Qwen al fondo. Avanza: velocidad. GLM tarda unos 13 s por decisión y casi no alcanza a actuar; MiniMax responde en 1 s. Avanza: costo. MiniMax es de los más baratos; DeepSeek es el más caro por victoria y queda detrás.">
+    <h1><span class="dim">9 modelos, todos contra todos.</span> Ganó uno de los más baratos.</h1>
+    <div class="board" id="board"></div>
+    <p class="foot" id="board-foot"></p>
+  </section>
+
+  <!-- 10 · El hallazgo -->
+  <section class="slide" data-section="Los resultados" data-until="172" data-steps="1"
+    data-notes="En un mundo vivo la velocidad es un umbral: pasado ese punto gana el que decide mejor, no el que decide más. DeepSeek es el más rápido y queda al medio. Eso un eval estático no lo puede ver. Justicia: cada pareja pelea de ida y vuelta, así que el lado no decide.">
+    <div class="cols" style="grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 70px">
+      <div class="stack">
+        <h1 style="font-size: 76px"><span class="dim">La velocidad es un umbral.</span> Pasado ese punto, gana el que decide mejor.</h1>
+        <p class="sub" data-step="1" id="fair"></p>
+      </div>
+      <div class="speed" id="speed"></div>
+    </div>
+  </section>
+
+  <!-- 11 · Cierre -->
+  <section class="slide" data-section="" data-until="180" data-steps="1"
+    data-notes="«Los exámenes miden lo que un modelo sabe. Prompt Arena mide cómo actúa: el primer paso hacia evaluar modelos que actúan en el mundo. Somos Sandlabs, esto es Prompt Arena. Gracias.»">
+    <div class="end">
+      <div class="stack">
+        <h1><span class="dim">Los exámenes miden lo que un modelo sabe.</span> Prompt Arena mide cómo actúa.</h1>
+        <p class="sub" data-step="1">Somos Sandlabs. <b>Gracias.</b></p>
+      </div>
+      <div class="stack" style="gap: 26px">
+        <div class="qr"><!--QR--></div>
+        <span class="url">prompt-arena.si</span>
+        <span class="pixel">Mira la pelea en vivo</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="chrome"><span class="mini"><i></i><i></i></span><span class="pixel" id="section"></span><span class="pixel" id="clock">0:00</span></div>
+  <div class="duel"><i class="r"></i><i class="b"></i></div>
+  <div id="notes"></div>
+</div>
+
+<script>
+/*DATA*/
+(() => {
+  const stage = document.getElementById("stage");
+  const slides = [...document.querySelectorAll(".slide")];
+  const params = new URLSearchParams(location.search);
+  const SITE = params.get("site") || "https://prompt-arena.si/?welcome=0";
+  const KEY = params.get("key");
+  let at = 0, step = 0, startedAt = null, notesOn = false;
+
+  // ----- La lámina se dibuja a 1920 x 1080 y se escala a la ventana -----
+  const fit = () => {
+    const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+    stage.style.transform = `scale(${s}) translate(-50%, -50%)`;
+  };
+  addEventListener("resize", fit); fit();
+
+  // ----- Resultados: la tabla y el gráfico salen de los datos de la liga -----
+  const fmtS = (ms) => (ms / 1000).toFixed(1).replace(".", ",") + " s";
+  const fmtUsd = (v) => "US$ " + v.toFixed(3).replace(".", ",");
+  const lo = 250, hi = 1500, pct = (v) => (((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * 78).toFixed(2) + "%";
+  const slowest = Math.max(...LEAGUE.rows.map((r) => r.ms)), priciest = Math.max(...LEAGUE.rows.map((r) => r.usd));
+  const fastestTop = LEAGUE.rows[0];
+  document.getElementById("board").innerHTML =
+    `<div class="row row--head" style="--i:0"><span></span><span>Modelo</span><span>Elo, con su intervalo</span><span class="num col2">Decide en</span><span class="num col3">Por victoria</span></div>` +
+    LEAGUE.rows.map((r, i) => `
+      <div class="row ${i === 0 ? "is-top" : ""} ${r.ref ? "is-ref" : ""}" style="--i:${i + 1}">
+        <span class="n">${i + 1}</span><span class="name">${r.name}${r.ref ? '<span class="tag">referencia</span>' : ""}</span>
+        <span class="plot" style="--ref:${pct(1000)};--lo:${pct(r.lo)};--hi:${pct(r.hi)};--at:${pct(r.elo)}"><i class="range"></i><i class="dot"></i><span class="elo">${r.elo}</span></span>
+        <span class="num col2"><span class="${r.ms === slowest || r === fastestTop ? "hot2" : ""}">${fmtS(r.ms)}</span></span>
+        <span class="num col3"><span class="${r.usd === priciest || r === fastestTop ? "hot3" : ""}">${fmtUsd(r.usd)}</span></span>
+      </div>`).join("");
+  document.getElementById("board-foot").textContent =
+    `Liga del ${LEAGUE.date}: ${LEAGUE.fights} peleas de ida y vuelta, todos con el mismo prompt y el mismo kit. La referencia queda fija en 1000.`;
+  document.getElementById("fair").innerHTML =
+    `Y es justo: cada pareja pelea de ida y vuelta. Rojo ganó el <b>${LEAGUE.red} %</b> y Azul el <b>${LEAGUE.blue} %</b>.`;
+
+  // Del que decide más rápido al más lento: hasta unos 2,5 s el Elo no depende de la velocidad;
+  // pasado ese punto, se cae.
+  (() => {
+    const bySpeed = [...LEAGUE.rows].sort((a, b) => a.ms - b.ms);
+    document.getElementById("speed").innerHTML = `<i class="wall"></i>` + bySpeed.map((r, i) => `
+      <div class="bar ${r === LEAGUE.rows[0] ? "is-top" : ""} ${r.ref ? "is-ref" : ""}" style="--i:${i};--h:${((r.elo / 1400) * 100).toFixed(1)}%">
+        <b>${r.elo}</b><span><em>${fmtS(r.ms)}</em>${r.short}</span>
+      </div>`).join("") + `<span class="axis">Segundos por decisión, del más rápido al más lento</span>`;
+  })();
+
+  // ----- Las cuatro variables giran solas mientras la lámina está en pantalla -----
+  const dials = [...document.querySelectorAll(".dial__v")].map((node) => {
+    const spans = node.dataset.values.split("|").map((text, i) => {
+      const s = document.createElement("span"); s.textContent = text; if (i === 0) s.className = "is-in"; node.append(s); return s;
+    });
+    return { spans, i: 0 };
+  });
+  let dialTimer = null, dialTurn = 0;
+  const spin = () => {
+    const d = dials[dialTurn % dials.length]; dialTurn += 1;
+    const out = d.spans[d.i]; d.i = (d.i + 1) % d.spans.length; const next = d.spans[d.i];
+    out.className = "is-out"; next.className = ""; void next.offsetWidth; next.className = "is-in";
+    setTimeout(() => { if (!out.classList.contains("is-in")) out.className = ""; }, 600);
+  };
+
+  // ----- El sitio en vivo se carga al entrar a su lámina y se suelta al salir -----
+  let frame = null;
+  const live = (on) => {
+    const host = document.querySelector("[data-live]");
+    if (on && !frame) {
+      frame = document.createElement("iframe");
+      frame.allow = "autoplay; fullscreen";
+      frame.src = SITE + (KEY ? "#key=" + encodeURIComponent(KEY) : "");
+      host.insertBefore(frame, host.querySelector(".cues"));
+    } else if (!on && frame) { frame.remove(); frame = null; }
+  };
+
+  // ----- Reloj: corre desde el primer avance de la portada. Ámbar si la lámina va atrasada. -----
+  const clock = document.getElementById("clock");
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  setInterval(() => {
+    if (startedAt === null) { clock.textContent = "0:00 / 3:00"; return; }
+    const t = (Date.now() - startedAt) / 1000, until = Number(slides[at].dataset.until);
+    clock.textContent = `${mmss(t)} / ${mmss(until)}`;
+    clock.classList.toggle("is-late", t > until && t <= 180);
+    clock.classList.toggle("is-over", t > 180);
+  }, 250);
+
+  // ----- Mostrar una lámina y sus pasos -----
+  const show = () => {
+    slides.forEach((s, i) => s.classList.toggle("is-on", i === at));
+    const s = slides[at];
+    s.querySelectorAll("[data-step]").forEach((n) => n.classList.toggle("is-shown", Number(n.dataset.step) <= step));
+    if (s.classList.contains("cover")) s.classList.toggle("is-live", step >= 1);
+    if (s.hasAttribute("data-at")) s.dataset.at = String(step);
+    stage.classList.toggle("is-bare", s.hasAttribute("data-bare") || at === 0);
+    document.getElementById("section").textContent = s.dataset.section || "";
+    const p = slides.length > 1 ? at / (slides.length - 1) : 0;
+    document.querySelector(".duel .r").style.left = `calc(${p} * (50% - 30px))`;
+    document.querySelector(".duel .b").style.right = `calc(${p} * (50% - 30px))`;
+    live(s.hasAttribute("data-live"));
+    clearInterval(dialTimer); dialTimer = s.hasAttribute("data-dials") ? setInterval(spin, 900) : null;
+    const notes = document.getElementById("notes");
+    notes.innerHTML = `<b>${at + 1} de ${slides.length}</b>`; notes.append(s.dataset.notes || "");
+    notes.classList.toggle("is-on", notesOn);
+    history.replaceState(null, "", location.pathname + location.search + "#" + at + (step ? "." + step : ""));
+  };
+  const steps = () => Number(slides[at].dataset.steps || 0);
+  const next = () => {
+    if (at === 0 && step === 0 && startedAt === null) startedAt = Date.now();
+    if (step < steps()) step += 1; else if (at < slides.length - 1) { at += 1; step = 0; }
+    show();
+  };
+  const prev = () => {
+    if (step > 0) step -= 1; else if (at > 0) { at -= 1; step = steps(); }
+    show();
+  };
+
+  addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (k === "ArrowRight" || k === " " || k === "PageDown" || k === "Enter") { e.preventDefault(); next(); }
+    else if (k === "ArrowLeft" || k === "PageUp" || k === "Backspace") { e.preventDefault(); prev(); }
+    else if (k === "Home") { at = 0; step = 0; show(); }
+    else if (k === "End") { at = slides.length - 1; step = steps(); show(); }
+    else if (k === "f" || k === "F") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}); }
+    else if (k === "t" || k === "T") clock.classList.toggle("is-on");
+    else if (k === "n" || k === "N") { notesOn = !notesOn; show(); }
+    else if (k === "r" || k === "R") { startedAt = null; }
+    else if (k === "o" || k === "O") window.open(SITE.replace(/\?welcome=0$/, ""), "_blank", "noopener");
+  });
+  // Un clic en la mitad derecha avanza y en la izquierda retrocede (salvo sobre el sitio en vivo).
+  stage.addEventListener("click", (e) => { if (e.target.closest("iframe")) return; (e.clientX > innerWidth / 2 ? next : prev)(); });
+
+  const m = /^#(\d+)(?:\.(\d+))?$/.exec(location.hash);
+  if (m) { at = Math.min(slides.length - 1, Number(m[1])); step = Math.min(steps(), Number(m[2] || 0)); }
+  show();
+})();
+</script>
+</body>
+</html>
