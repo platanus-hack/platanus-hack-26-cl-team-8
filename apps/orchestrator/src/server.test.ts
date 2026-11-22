@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -788,5 +790,41 @@ describe("acceso: quién puede cambiar la arena", () => {
     expect((await call(s, "POST", "/api/match/stop", key)).statusCode).toBe(200);
     expect((await call(s, "PUT", "/api/settings", key, { voice: true, timer: false })).json()).toMatchObject({ voice: true, timer: false });
     expect((await call(s, "DELETE", "/api/history", key, { confirm: "BORRAR" })).statusCode).toBe(200);
+  });
+});
+
+describe("POST sin cuerpo que llega por un proxy", () => {
+  /** Un POST "chunked" y sin Content-Type, como lo reenvía cloudflared con el túnel por HTTP/2. */
+  function chunkedPost(port: number, path: string, payload = ""): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest(
+        { host: "127.0.0.1", port, path, method: "POST", headers: { "Transfer-Encoding": "chunked" } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end(payload);
+    });
+  }
+
+  async function listening(): Promise<number> {
+    const s = await server();
+    await s.listen({ port: 0, host: "127.0.0.1" });
+    return (s.server.address() as AddressInfo).port;
+  }
+
+  it("iniciar y detener valen aunque lleguen chunked y sin Content-Type", async () => {
+    const port = await listening();
+    expect(await chunkedPost(port, "/api/match/start")).toBe(200);
+    expect(await chunkedPost(port, "/api/match/stop")).toBe(200);
+    // Llegó a iniciar, con el cuerpo vacío de siempre (el mapa sale de los ajustes).
+    expect(starts).toEqual([{}]);
+  });
+
+  it("con contenido y sin tipo sigue siendo 415", async () => {
+    const port = await listening();
+    expect(await chunkedPost(port, "/api/match/stop", "hola")).toBe(415);
   });
 });

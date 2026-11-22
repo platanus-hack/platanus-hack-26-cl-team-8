@@ -84,6 +84,11 @@ async function request<T>(path: string, parser: Parser<T>, init?: { method: stri
   if (init?.body !== undefined) {
     headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(init.body);
+  } else if (options.method !== "GET") {
+    // Lo que cambia algo siempre lleva un cuerpo JSON, aunque sea vacío: un pedido sin cuerpo
+    // puede llegar al servidor, tras un proxy, como "cuerpo de tipo desconocido" y ser rechazado.
+    headers["Content-Type"] = "application/json";
+    options.body = "{}";
   }
 
   let res: Response;
