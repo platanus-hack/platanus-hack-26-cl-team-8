@@ -1,35 +1,37 @@
 # Prompt Arena
 
-**¿Qué pasa si el prompt A pelea contra el prompt B?**
+**Un benchmark de LLMs en tiempo real: dos agentes de IA pelean en Minecraft y medimos cómo decide cada modelo.**
 
-Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en un duelo. Ninguno tiene una estrategia programada: cada uno pelea como le indica un prompt escrito por una persona. La pelea se transmite en vivo en [prompt-arena.si](https://prompt-arena.si), y al lado del video se lee lo que cada agente piensa, dice y hace.
+Míralo en vivo en [prompt-arena.si](https://prompt-arena.si).
 
-## Cómo funciona
+## El problema
 
-1. **Escribes un prompt para cada lado.** Por ejemplo: "Eres un francotirador paciente. Mantén la distancia y dispara con el arco".
-2. **Eliges con qué pelea.** Un kit (Clásico, Arquero, Tanque, Berserker, Enderman o Constructor) y el modelo de lenguaje que va a decidir.
-3. **Inicias la pelea y miras.** Los dos agentes entran a la arena y deciden solos, una decisión tras otra: acercarse, atacar, disparar, comer, retroceder, construir un muro o lanzar una perla.
+Hoy no hay una forma barata y segura de saber cómo se va a comportar un modelo cuando actúa en un mundo en tiempo real.
 
-## Qué se ve
+## Qué hicimos
 
-- **La pelea de verdad.** El video sale de un cliente real de Minecraft, con el marcador encima: vida, daño, decisiones y costo de cada lado.
-- **Lo que piensa cada agente.** Cada decisión llega con su razón, en el momento en que pasa en pantalla.
-- **Agentes que se hablan.** Se puede dejar que cada uno lea la mente del otro, o que conversen. Con la voz encendida, lo que se dicen se oye.
-- **Por qué terminó así.** Con el juez encendido, al final se explica en una frase qué decidió la pelea.
-- **El historial.** Cada pelea queda guardada con sus prompts y su transcripción completa.
+Un sandbox PvP en Minecraft. Dos agentes deciden en tiempo real con lo que perciben de su entorno y de lo que hace y dice el otro. Cada uno sigue un prompt escrito por una persona, y un modelo de lenguaje elige cada acción.
 
-## El leaderboard
+Cada pelea es un experimento. Se arma con cuatro cosas por lado: el prompt, el kit (espada, arco, perlas, bloques), el modelo y cuánto se comunican (nada, leerse el pensamiento o hablarse). Cambias una y tienes otro experimento.
 
-El mismo prompt, con distinto modelo, no pelea igual. En [prompt-arena.si/arena](https://prompt-arena.si/arena) hay un torneo de modelos: todos reciben el mismo prompt y el mismo kit, y lo único que cambia de un lado al otro es el modelo. En la última liga, 9 modelos pelearon todos contra todos, más de 200 peleas. El ranking muestra quién gana más, quién decide más rápido y cuánto cuesta cada victoria.
+## Qué se mide
 
-## Cómo está hecho
+- **Si gana.** Un torneo de todos contra todos da un ranking Elo con intervalos de confianza.
+- **Qué tan rápido decide.** En tiempo real, un modelo lento pierde terreno.
+- **Cuánto cuesta** cada victoria.
+- **Si sostiene sus instrucciones bajo presión:** reglas que conviene romper, órdenes falsas, un rival que insiste con argumentos falsos, avisos que contradicen lo que ve y acciones que fallan siempre.
 
-- **Los agentes** son bots de Minecraft (mineflayer). En cada decisión, el modelo recibe lo que el agente ve y elige una acción entre las herramientas de su kit.
-- **El orquestador** arma cada pelea, lleva el marcador y manda todo a la web en tiempo real.
-- **El video** se captura de un cliente de Minecraft dibujado por GPU y llega a la web como una transmisión en vivo.
-- **Los modelos** llegan por Vercel AI Gateway, así que cada lado puede usar un modelo distinto.
-- **Todo corre en un servidor casero** con Docker Compose, publicado con un Cloudflare Tunnel.
+## Por qué un PvP
+
+- El mundo no se queda quieto: un rival reacciona a lo que haces.
+- El otro agente es una entrada que no controlas, mentiras incluidas.
+- El resultado es objetivo: gana, pierde o empata.
+- El mismo ring sirve para muchas preguntas.
+
+## Resultados
+
+En la última liga pelearon 9 modelos, todos contra todos, con el mismo prompt y el mismo kit: más de 200 peleas por menos de 10 dólares. MiniMax-M3.1-Flash quedó primero, sobre GPT-6 Luna, Gemini 3.8 Flash y Claude Haiku 5.5. El ranking completo, con la velocidad y el costo de cada modelo, está en el [leaderboard](https://prompt-arena.si/arena).
 
 ## Para probarlo
 
-Entra a [prompt-arena.si](https://prompt-arena.si). Cualquiera puede mirar la pelea en curso y el leaderboard. Escribir prompts e iniciar peleas está abierto al jurado y, por momentos, a todos los que estén mirando.
+Entra a [prompt-arena.si](https://prompt-arena.si). Cualquiera puede mirar la pelea en curso, lo que piensa cada agente y el leaderboard. Escribir prompts e iniciar peleas está abierto al jurado y, por momentos, a todos los que estén mirando.

@@ -42,7 +42,7 @@ export type CameraConfig = {
 
 /**
  * Variables propias de la cámara que NO están en @phack/env (ese paquete no se
- * toca desde aquí); se leen directo de process.env y se documentan en el README.
+ * toca desde aquí); se leen directo de process.env y se documentan en docs/MANUAL.md.
  */
 function readNumber(name: string, fallback: number, min: number, max: number): number {
   const raw = process.env[name];
