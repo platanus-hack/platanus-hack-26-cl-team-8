@@ -20,7 +20,7 @@ Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en u
 
 ## El leaderboard
 
-El mismo prompt, con distinto modelo, no pelea igual. En [prompt-arena.si/arena](https://prompt-arena.si/arena) hay un torneo de modelos: todos reciben el mismo prompt y el mismo kit, y lo único que cambia de un lado al otro es el modelo. En la última liga, 9 modelos pelearon 288 veces. El ranking muestra quién gana más, quién decide más rápido y cuánto cuesta cada victoria.
+El mismo prompt, con distinto modelo, no pelea igual. En [prompt-arena.si/arena](https://prompt-arena.si/arena) hay un torneo de modelos: todos reciben el mismo prompt y el mismo kit, y lo único que cambia de un lado al otro es el modelo. En la última liga, 9 modelos pelearon todos contra todos, más de 200 peleas. El ranking muestra quién gana más, quién decide más rápido y cuánto cuesta cada victoria.
 
 ## Cómo está hecho
 

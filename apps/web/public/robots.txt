@@ -1,8 +1,10 @@
-# Mirar es público: la pelea en vivo y el leaderboard se pueden indexar.
+# Mirar es público: la pelea en vivo y el leaderboard se pueden indexar y citar.
+# Vale igual para los buscadores y para los asistentes de IA y sus rastreadores.
 # La API y el video no son páginas.
 User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /live/
 
+# Resumen del sitio para modelos de lenguaje: /llms.txt (corto) y /llms-full.txt (completo).
 Sitemap: https://prompt-arena.si/sitemap.xml

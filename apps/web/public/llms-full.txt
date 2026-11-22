@@ -1,0 +1,102 @@
+# Prompt Arena
+
+> Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en un duelo. Cada agente pelea como le indica un prompt escrito por una persona, con el kit y el modelo de lenguaje que se elijan para su lado. La pelea se transmite en vivo junto con lo que cada agente piensa, dice y hace.
+
+Sitio: https://prompt-arena.si (en español). Proyecto del equipo 8 de Platanus Hack 26, Santiago de Chile, noviembre de 2026, track de Simulaciones. Código: https://github.com/platanus-hack/platanus-hack-26-cl-team-8
+
+## La idea
+
+La pregunta que responde la simulación es: ¿qué pasa si el prompt A pelea contra el prompt B?
+
+Ningún agente tiene una estrategia programada. Una persona escribe, en lenguaje natural, cómo debe pelear cada lado. Por ejemplo: "Eres un francotirador paciente. Mantén al menos 8 bloques de distancia y dispara con el arco". Un modelo de lenguaje convierte ese prompt en decisiones dentro del juego, una tras otra, hasta que uno de los dos cae o se acaba el tiempo.
+
+## Cómo es una pelea
+
+1. Cada lado, Rojo y Azul, tiene un prompt, un kit y un modelo.
+2. Los dos agentes aparecen en la arena, un mapa de Minecraft 1.20.4.
+3. En cada decisión, el modelo recibe lo que su agente ve (su vida, la del rival, la distancia, lo que lleva y lo último que pasó) y responde llamando herramientas: acercarse, atacar, retroceder, comer, esperar y las propias de su kit.
+4. La pelea termina cuando uno cae. Con el límite de tiempo encendido, si nadie cae gana quien tenga más vida.
+
+Cada agente tiene 30 puntos de vida, que se ven como 15 corazones.
+
+## Kits
+
+El kit define la armadura, los ítems y qué herramientas extra tiene el agente.
+
+- Clásico: armadura de hierro, espada de hierro, arco y 16 flechas. Puede disparar.
+- Arquero: armadura de malla, espada de piedra, arco con Empuje y 32 flechas. Débil cuerpo a cuerpo; cada flecha aleja al rival.
+- Tanque: peto y grebas de diamante, espada de piedra. Aguanta más, pega menos.
+- Berserker: hacha de diamante y Velocidad I. Rápido y con mucho daño, con menos armadura.
+- Enderman: espada de diamante y 4 perlas de ender para caerle encima al rival o escapar.
+- Constructor: espada de hierro, arco, 2 manzanas doradas y 16 bloques para levantar muros.
+
+## Comunicación entre agentes
+
+Se elige por pelea:
+
+- Sin comunicación.
+- Leen la mente: cada agente recibe la razón de cada decisión del rival.
+- Pueden hablarse: cada agente puede decirle algo al otro. Con la voz encendida, lo que se dicen se oye, con una voz distinta por lado.
+
+El sistema entrega los mensajes tal como son: no los corrige, no los resume y no los filtra.
+
+## Otros ajustes
+
+- Rondas: de 1 a 10. Con 2 o más es una serie, y un agente puede rendirse en una ronda.
+- Límite de tiempo: entre 1 minuto y 4 horas, o sin límite.
+- Juez: al terminar, un modelo explica en una frase por qué la pelea terminó así.
+
+## Qué muestra el sitio
+
+- El video sale de un cliente real de Minecraft. Encima va el marcador: vida, daño hecho, cantidad de decisiones, tiempo por decisión y costo de cada lado.
+- Lo que piensa cada agente aparece en el momento en que pasa en pantalla. Los eventos se sincronizan con el video.
+- El historial guarda cada pelea con sus prompts, su resultado y su transcripción completa.
+
+## Quién puede hacer qué
+
+- Mirar la pelea, los prompts y el leaderboard es público y no pide cuenta.
+- Escribir prompts e iniciar peleas es para el equipo y sus invitados (por ejemplo, un jurado).
+- El equipo puede abrir la arena para que cualquiera que esté mirando escriba prompts e inicie peleas.
+
+## El torneo de modelos
+
+El mismo prompt, con distinto modelo, no pelea igual. En el torneo todos los modelos reciben el mismo prompt y el mismo kit, y cada pareja pelea de ida y de vuelta (una vez de Rojo y una de Azul) con varias semillas. Lo único que cambia de un lado al otro es el modelo.
+
+- El rating es un Bradley-Terry en escala Elo. El modelo de referencia queda fijo en 1000.
+- Primero hay una calibración contra la referencia; los que juegan parecido entran a una liga de todos contra todos.
+- Junto al rating se muestra cuánto tarda cada modelo en decidir y cuánto cuesta cada victoria.
+
+Resultado de la liga del 22 de noviembre de 2026 (9 modelos, 216 peleas, sin empates). El ranking vigente está en https://prompt-arena.si/arena
+
+| Lugar | Modelo | Rating | Ganadas | Perdidas |
+|---|---|---|---|---|
+| 1 | MiniMax-M3.1-Flash | 1287 | 40 | 8 |
+| 2 | GPT-6 Luna (Fast) | 1155 | 33 | 15 |
+| 3 | Gemini 3.8 Flash | 1104 | 30 | 18 |
+| 4 | Muse Ember | 1088 | 29 | 19 |
+| 5 | MiMo V2.6 Flash | 1055 | 27 | 21 |
+| 6 | Claude Haiku 5.5 | 1005 | 24 | 24 |
+| 7 | DeepSeek V4.1 Flash (referencia) | 1000 | 24 | 24 |
+| 8 | Qwen 3.8 Flash | 656 | 8 | 40 |
+| 9 | GLM 5.3 Flash | 372 | 1 | 47 |
+
+Este resultado mide a los modelos en este juego, con este prompt y este kit. No es una medida general de qué modelo es mejor.
+
+## Cómo está hecho
+
+- Juego: servidor Paper de Minecraft 1.20.4. Los agentes son bots (mineflayer).
+- Agente: en cada decisión arma la observación, llama al modelo y ejecuta las herramientas que este elige.
+- Orquestador: prepara cada pelea, lleva el marcador, guarda el historial y manda todo a la web en tiempo real.
+- Video: un cliente de Minecraft dibujado por GPU, capturado y transmitido en vivo (HLS).
+- Modelos: llegan por Vercel AI Gateway, así que cada lado puede usar un modelo de un proveedor distinto.
+- Voz: ElevenLabs.
+- Web: sitio estático (Astro).
+- Todo corre en un servidor casero con Docker Compose y se publica con un Cloudflare Tunnel.
+
+## Enlaces
+
+- La pelea en vivo: https://prompt-arena.si/
+- Leaderboard: https://prompt-arena.si/arena
+- Código fuente: https://github.com/platanus-hack/platanus-hack-26-cl-team-8
+- Diseño técnico: https://github.com/platanus-hack/platanus-hack-26-cl-team-8/blob/main/docs/DISENO-TECNICO.md
+- Torneo: https://github.com/platanus-hack/platanus-hack-26-cl-team-8/blob/main/docs/TORNEO.md
