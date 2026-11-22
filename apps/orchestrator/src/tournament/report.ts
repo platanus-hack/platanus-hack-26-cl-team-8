@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import {
   REFERENCE_RATING,
   type CalibrationRow,
+  type FightReadings,
   type FrozenModel,
   type MatchAttempt,
   type MatchSpec,
@@ -157,6 +158,36 @@ function costOf(model: string, attempts: MatchAttempt[]): number {
   return usd;
 }
 
+/** Lecturas de las peleas de la liga de un modelo: K.O., daño, decisiones y tokens. */
+function fightOf(model: string, league: MatchAttempt[]): FightReadings {
+  const out: FightReadings = {
+    koWins: 0,
+    koLosses: 0,
+    damageDealt: 0,
+    damageTaken: 0,
+    decisions: 0,
+    invalidActions: 0,
+    tokens: 0,
+    costUsd: 0,
+  };
+  for (const a of league) {
+    const mine = a.sides.red.model === model ? a.sides.red : a.sides.blue.model === model ? a.sides.blue : null;
+    if (!mine) continue;
+    const rival = mine === a.sides.red ? a.sides.blue : a.sides.red;
+    if (a.outcome?.reason === "kill") {
+      if (a.outcome.winner === model) out.koWins++;
+      else out.koLosses++;
+    }
+    out.damageDealt += mine.damageDealt || 0;
+    out.damageTaken += rival.damageDealt || 0;
+    out.decisions += mine.decisions || 0;
+    out.invalidActions += mine.invalidActions || 0;
+    out.tokens += (mine.tokensIn || 0) + (mine.tokensOut || 0);
+    out.costUsd += mine.costUsd || 0;
+  }
+  return out;
+}
+
 function calibrationRows(config: TournamentConfig, valid: MatchAttempt[], state: RunnerState): CalibrationRow[] {
   const rows = calibrate(allModels(config), gamesOf(valid, "calibration"), config.rule);
   const cut = new Map((state.leagueCut ?? []).map((c) => [c.model, c.why]));
@@ -216,6 +247,7 @@ function standings(
       losses,
       costUsd: costOf(key, attempts),
       latencyMs: latencyOf(key, valid),
+      fight: fightOf(key, league),
     } satisfies StandingRow;
   });
   rows.sort((x, y) => y.rating - x.rating || (x.model < y.model ? -1 : x.model > y.model ? 1 : 0));

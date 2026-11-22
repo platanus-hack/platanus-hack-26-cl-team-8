@@ -1,11 +1,13 @@
 /**
- * Modo maqueta del leaderboard (`/arena?mock`): dos torneos inventados, generados de
- * forma determinista (ratings ocultos + RNG con semilla), para diseñar la página sin
- * orquestador. Responde las mismas rutas GET que el servidor:
+ * Modo maqueta del leaderboard (`/arena?mock`): un torneo inventado, generado de forma
+ * determinista (ratings ocultos + RNG con semilla), para diseñar la página sin orquestador.
+ * Los modelos, sus ratings ocultos, su latencia y su precio se parecen a los de la liga real
+ * de nueve modelos, para que la maqueta tenga la misma forma que los datos de verdad.
+ * Responde las mismas rutas GET que el servidor:
  *
- *   /arena?mock                torneo "real" a medio camino (provisional, con una pareja
- *                              sin partidas válidas en la liga y reintentos por infraestructura)
- *   /arena?mock&id=sim-ensayo  torneo simulado terminado
+ *   /arena?mock           liga terminada: cuatro semillas completas
+ *   /arena?mock=running   la misma liga a medio camino, con reintentos por infraestructura
+ *                         y una pareja que todavía no tiene partidas válidas
  *
  * Los números no salen de un Bradley–Terry de verdad: solo tienen la forma correcta.
  * Se carga con import() dinámico, así que no pesa en el sitio real.
@@ -17,6 +19,7 @@ import {
   type CalibrationRow,
   type FrozenModel,
   type Leg,
+  type ReasoningLevel,
   type MatchAttempt,
   type MatrixCell,
   type MatchSpec,
@@ -35,10 +38,13 @@ type Seed = {
   version: string;
   released: number;
   provider: string | null;
+  reasoning: ReasoningLevel;
   /** Rating "verdadero" con el que se sortean los resultados. */
   hidden: number;
   /** Latencia típica por decisión (ms). */
   latency: number;
+  /** Costo típico de una decisión (USD). */
+  usd: number;
   priority: number | null;
 };
 
@@ -46,23 +52,49 @@ const REFERENCE: Seed = {
   gatewayId: "deepseek/deepseek-v4.1-flash-1017-fast",
   name: "DeepSeek V4.1 Flash 1017 Fast",
   line: "deepseek/deepseek-v*-flash",
-  version: "V4.1 Flash 1017 (fast)",
+  version: "4.1 · snapshot 1017 · ruta fast",
   released: 1792195200,
   provider: "baseten",
+  reasoning: "none",
   hidden: REFERENCE_RATING,
-  latency: 780,
+  latency: 805,
+  usd: 0.0027,
   priority: null,
 };
 
+const seed = (
+  gatewayId: string,
+  name: string,
+  version: string,
+  provider: string,
+  reasoning: ReasoningLevel,
+  hidden: number,
+  latency: number,
+  usd: number,
+  priority: number,
+): Seed => ({
+  gatewayId,
+  name,
+  line: gatewayId.replace(/\d+(\.\d+)?/, "*"),
+  version,
+  released: 1790035200,
+  provider,
+  reasoning,
+  hidden,
+  latency,
+  usd,
+  priority,
+});
+
 const CANDIDATES: Seed[] = [
-  { gatewayId: "openai/gpt-6-luna-fast", name: "GPT-6 Luna Fast", line: "openai/gpt-*-luna", version: "6 (fast)", released: 1790035200, provider: null, hidden: 1085, latency: 920, priority: 0 },
-  { gatewayId: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", line: "google/gemini-*-flash", version: "3.8", released: 1788307200, provider: null, hidden: 1040, latency: 640, priority: 1 },
-  { gatewayId: "anthropic/claude-haiku-5.5", name: "Claude Haiku 5.5", line: "anthropic/claude-haiku-*", version: "5.5", released: 1791331200, provider: null, hidden: 1010, latency: 1100, priority: 2 },
-  { gatewayId: "alibaba/qwen3.8-flash", name: "Qwen 3.8 Flash", line: "alibaba/qwen*-flash", version: "3.8", released: 1787702400, provider: null, hidden: 950, latency: 870, priority: 3 },
-  { gatewayId: "zai/glm-5.3-flash", name: "GLM 5.3 Flash", line: "zai/glm-*-flash", version: "5.3", released: 1787702400, provider: null, hidden: 905, latency: 1350, priority: 4 },
-  { gatewayId: "xiaomi/mimo-v2.6-flash", name: "MiMo V2.6 Flash", line: "xiaomi/mimo-v*-flash", version: "V2.6", released: 1789948800, provider: null, hidden: 975, latency: 990, priority: 5 },
-  { gatewayId: "minimax/minimax-m3.1-flash", name: "MiniMax M3.1 Flash", line: "minimax/minimax-m*-flash", version: "M3.1", released: 1792368000, provider: null, hidden: 1215, latency: 1500, priority: 6 },
-  { gatewayId: "meta/muse-ember", name: "Muse Ember", line: "meta/muse-ember", version: "Ember", released: 1794182400, provider: null, hidden: 640, latency: 720, priority: 7 },
+  seed("openai/gpt-6-luna-fast", "GPT-6 Luna (Fast)", "6 · ruta fast", "openai", "none", 1053, 1388, 0.00088, 0),
+  seed("google/gemini-3.8-flash", "Gemini 3.8 Flash", "3.8", "google", "low", 1029, 2336, 0.0047, 1),
+  seed("anthropic/claude-haiku-5.5", "Claude Haiku 5.5", "5.5", "anthropic", "none", 1029, 2046, 0.00155, 2),
+  seed("alibaba/qwen3.8-flash", "Qwen 3.8 Flash", "3.8", "alibaba", "none", 688, 3511, 0.00066, 3),
+  seed("zai/glm-5.3-flash", "GLM 5.3 Flash", "5.3", "boundless", "low", 465, 7658, 0.0008, 4),
+  seed("xiaomi/mimo-v2.6-flash", "MiMo V2.6 Flash", "2.6", "boundless", "none", 1138, 1276, 0.00047, 5),
+  seed("minimax/minimax-m3.1-flash", "MiniMax-M3.1-Flash", "3.1", "digitalocean", "low", 1219, 1154, 0.00058, 6),
+  seed("meta/muse-ember", "Muse Ember", "sin versión", "meta", "minimal", 993, 1186, 0.00074, 7),
 ];
 
 /** RNG determinista (mulberry32). */
@@ -87,7 +119,7 @@ function freeze(s: Seed, isReference: boolean, mode: TournamentConfig["mode"]): 
     released: s.released,
     inferenceProvider: s.provider,
     clientProvider: mode === "real" ? "vercel" : "mock",
-    reasoning: "none",
+    reasoning: s.reasoning,
     pricing: { input: 0.0000002, output: 0.0000008, cacheRead: null },
     isReference,
     priority: s.priority,
@@ -95,8 +127,9 @@ function freeze(s: Seed, isReference: boolean, mode: TournamentConfig["mode"]): 
 }
 
 function side(model: Seed, health: number, damage: number, random: () => number, mode: TournamentConfig["mode"]): SideStats {
-  const decisions = 40 + Math.floor(random() * 30);
-  const tokensIn = decisions * 1800;
+  // Quien tarda más en decidir, decide menos veces en una pelea de un minuto.
+  const decisions = Math.max(1, Math.round((60_000 / (model.latency + 2500)) * (0.8 + random() * 0.4)));
+  const tokensIn = decisions * 11_000;
   const tokensOut = decisions * 60;
   const latency = model.latency * (0.85 + random() * 0.3);
   return {
@@ -104,10 +137,10 @@ function side(model: Seed, health: number, damage: number, random: () => number,
     health,
     damageDealt: damage,
     decisions,
-    invalidActions: Math.floor(random() * 3),
+    invalidActions: random() < 0.15 ? 1 : 0,
     tokensIn,
     tokensOut,
-    costUsd: mode === "real" ? tokensIn * 0.0000002 + tokensOut * 0.0000008 : 0,
+    costUsd: mode === "real" ? decisions * model.usd : 0,
     costSource: mode === "real" ? "reported" : "none",
     latencyMs: { count: decisions, mean: latency, p50: latency * 0.92, p95: latency * 1.9 },
     llmErrors: 0,
@@ -183,7 +216,7 @@ function buildFixture(o: FixtureOptions): Fixture {
 
       const p = 1 / (1 + 10 ** ((blue.hidden - red.hidden) / 400));
       const roll = random();
-      const draw = roll < 0.14;
+      const draw = roll < 0.03;
       const redWins = !draw && random() < p;
       const kill = !draw && random() < 0.55;
       const loserHp = kill ? 0 : 3 + Math.floor(random() * 18);
@@ -225,22 +258,22 @@ function buildFixture(o: FixtureOptions): Fixture {
   play("calibration", calibrationBase + 1, byId.get("anthropic/claude-haiku-5.5")!, byId.get("zai/glm-5.3-flash")!, round, false);
 
   // ---------- Veredictos de calibración ----------
-  const rule = { bandElo: 150, z: 1.645, priorSdElo: 350 };
+  const rule = { bandElo: 1000, z: 1.645, priorSdElo: 400 };
   const calibrationValid = attempts.filter((a) => a.status === "valid" && a.spec.stage === "calibration");
   const calibration: CalibrationRow[] = CANDIDATES.map((c) => {
     const games = calibrationValid.filter((a) => a.spec.a === c.gatewayId || a.spec.b === c.gatewayId);
     const opponents = new Set(games.map((a) => (a.spec.a === c.gatewayId ? a.spec.b : a.spec.a))).size;
     const diff = c.hidden - REFERENCE_RATING + (random() - 0.5) * 30;
-    const se = 150 / Math.sqrt(Math.max(1, games.length / 4));
+    const se = 190 / Math.sqrt(Math.max(1, games.length / 4));
     const lo = diff - rule.z * se;
     const hi = diff + rule.z * se;
     const verdict = lo >= -rule.bandElo && hi <= rule.bandElo ? "inside" : hi < -rule.bandElo || lo > rule.bandElo ? "outside" : "pending";
     const league = verdict === "inside" || (verdict === "pending" && Math.abs(diff) <= rule.bandElo);
     const why =
       verdict === "inside"
-        ? "Intervalo completo dentro de ±150: clasificado."
+        ? `Intervalo completo dentro de la banda ±${rule.bandElo}: mismo nivel que la referencia.`
         : verdict === "outside"
-          ? `Intervalo entero ${diff < 0 ? "por debajo de −150" : "por sobre +150"}: no juega parecido a DeepSeek.`
+          ? `Intervalo entero ${diff < 0 ? "por debajo" : "por sobre"} la banda ±${rule.bandElo}: no juega parecido a la referencia.`
           : league
             ? "El intervalo cruza el borde, pero la estimación cae dentro: entra a la liga como provisional."
             : "El intervalo cruza el borde y la estimación cae fuera; sin presupuesto para más cruces.";
@@ -281,10 +314,24 @@ function buildFixture(o: FixtureOptions): Fixture {
       const draws = games.filter((a) => a.outcome?.winner === null).length;
       const isReference = m === REFERENCE;
       const rating = isReference ? REFERENCE_RATING : m.hidden + (random() - 0.5) * 40;
-      const half = isReference ? 0 : 900 / Math.sqrt(Math.max(1, games.length));
+      const half = isReference ? 0 : 1050 / Math.sqrt(Math.max(1, games.length));
       const mine = attempts.flatMap((a) =>
         [a.sides.red, a.sides.blue].filter((s) => s.model === m.gatewayId && a.spec.stage === "league"),
       );
+      const fight = { koWins: 0, koLosses: 0, damageDealt: 0, damageTaken: 0, decisions: 0, invalidActions: 0, tokens: 0, costUsd: 0 };
+      for (const a of games) {
+        const [me, rival] = a.sides.red.model === m.gatewayId ? [a.sides.red, a.sides.blue] : [a.sides.blue, a.sides.red];
+        if (a.outcome?.reason === "kill") {
+          if (a.outcome.winner === m.gatewayId) fight.koWins++;
+          else fight.koLosses++;
+        }
+        fight.damageDealt += me.damageDealt;
+        fight.damageTaken += rival.damageDealt;
+        fight.decisions += me.decisions;
+        fight.invalidActions += me.invalidActions;
+        fight.tokens += me.tokensIn + me.tokensOut;
+        fight.costUsd += me.costUsd;
+      }
       return {
         rank: 0,
         model: m.gatewayId,
@@ -292,7 +339,7 @@ function buildFixture(o: FixtureOptions): Fixture {
         version: m.version,
         gatewayId: m.gatewayId,
         inferenceProvider: m.provider,
-        reasoning: "none" as const,
+        reasoning: m.reasoning,
         isReference,
         rating,
         lo: rating - half,
@@ -308,6 +355,7 @@ function buildFixture(o: FixtureOptions): Fixture {
           p95: m.latency * 1.9,
           count: mine.reduce((sum, s) => sum + s.decisions, 0),
         },
+        fight,
       };
     })
     .sort((x, y) => y.rating - x.rating)
@@ -337,12 +385,13 @@ function buildFixture(o: FixtureOptions): Fixture {
 
   const count = (stage: TournamentStage, status: MatchAttempt["status"]) =>
     attempts.filter((a) => a.spec.stage === stage && a.status === status).length;
-  const elapsedMinutes = (clock - o.createdAt) / 60_000;
+  // El reloj de la maqueta deja 20 s entre peleas; el torneo real las corre seguidas.
+  const elapsedMinutes = attempts.reduce((sum, a) => sum + (a.endedAt - a.startedAt), 0) / 60_000;
   const costUsd = attempts.reduce((sum, a) => sum + a.sides.red.costUsd + a.sides.blue.costUsd, 0);
   const limits = {
-    maxMinutes: 180,
-    maxMatches: 200,
-    maxUsd: 25,
+    maxMinutes: 240,
+    maxMatches: 1000,
+    maxUsd: 14,
     concurrency: 1,
     maxCandidates: 8,
     calibrationShare: 0.5,
@@ -360,7 +409,7 @@ function buildFixture(o: FixtureOptions): Fixture {
       source: "https://ai-gateway.vercel.sh/v1/models",
     },
     benchmark: {
-      id: "pvp-platanus-v1+9c2e41",
+      id: "pvp-platanus-v2+c5d5264140cf",
       scenario,
       matchSeconds: 60,
       tickMs: 1500,
@@ -409,10 +458,10 @@ function buildFixture(o: FixtureOptions): Fixture {
       stage: o.stage,
       calibration: { planned: new Set(attempts.filter((a) => a.spec.stage === "calibration").map((a) => a.matchId)).size, valid: count("calibration", "valid"), infra: count("calibration", "infra") },
       league: {
-        planned: leaguePairs.length * 2 * Math.max(o.leagueSeeds, 2),
+        planned: leaguePairs.length * 2 * 4,
         valid: count("league", "valid"),
         infra: count("league", "infra"),
-        seedsPlanned: Math.max(o.leagueSeeds, 2),
+        seedsPlanned: 4,
         seedsDone,
       },
       elapsedMinutes,
@@ -442,30 +491,20 @@ function buildFixture(o: FixtureOptions): Fixture {
 let fixtures: Fixture[] | null = null;
 
 function all(): Fixture[] {
+  // Un solo torneo a la vez, como ve la página: el terminado o, con ?mock=running, a medio camino.
+  const running = new URLSearchParams(window.location.search).get("mock") === "running";
   fixtures ??= [
     buildFixture({
-      id: "t-20261121-1830",
-      name: "Parecidos a DeepSeek V4.1 Flash",
+      id: "liga-9-modelos",
+      name: "Liga 9 modelos",
       mode: "real",
       seed: 7,
-      createdAt: Date.UTC(2026, 10, 21, 21, 30),
-      leagueSeeds: 2,
-      lastSeedMatches: 18,
-      brokenPair: ["alibaba/qwen3.8-flash", "zai/glm-5.3-flash"],
+      createdAt: Date.UTC(2026, 10, 21, 23, 7),
+      leagueSeeds: running ? 2 : 4,
+      lastSeedMatches: running ? 30 : null,
+      brokenPair: running ? ["alibaba/qwen3.8-flash", "zai/glm-5.3-flash"] : null,
       stopReason: null,
-      stage: "league",
-    }),
-    buildFixture({
-      id: "sim-ensayo",
-      name: "Ensayo simulado",
-      mode: "simulated",
-      seed: 42,
-      createdAt: Date.UTC(2026, 10, 20, 15, 0),
-      leagueSeeds: 6,
-      lastSeedMatches: null,
-      brokenPair: null,
-      stopReason: "Se completaron todas las semillas planificadas de la liga.",
-      stage: "done",
+      stage: running ? "league" : "done",
     }),
   ];
   return fixtures;

@@ -5,8 +5,8 @@ import {
   REFERENCE_RATING,
   type CalibrationVerdict,
   type MatchAttempt,
+  type StandingRow,
   type TournamentProgress,
-  type TournamentReport,
   type TournamentStage,
 } from "@phack/protocol";
 
@@ -114,45 +114,30 @@ export function formatDuration(startedAt: number, endedAt: number): string {
   return s > 0 ? `${s} s` : "–";
 }
 
-/** "A", "A y B", "A, B y C". */
-export function joinNames(names: string[]): string {
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+/** Minutos como duración: "48 min", "2 h 17 min". */
+export function formatSpan(minutes: number): string {
+  if (!Number.isFinite(minutes)) return "–";
+  const total = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(total / 60);
+  return hours === 0 ? `${total} min` : `${hours} h ${total % 60} min`;
 }
 
+/** Promedio con un decimal ("14.9"); sin datos, una raya. */
+export function formatAverage(total: number, count: number): string {
+  if (!(count > 0) || !Number.isFinite(total)) return "–";
+  return (total / count).toFixed(1);
+}
+
+export type Tier = "above" | "level" | "below";
+
 /**
- * La tabla dicha en dos frases: quién va primero y quiénes ya se distinguen de la
- * referencia. Un modelo se distingue cuando todo su intervalo queda a un lado de 1000; si
- * lo cruza, con estas partidas no se puede decir si juega mejor o peor.
+ * Dónde queda un modelo respecto de la referencia. Está sobre o bajo ella cuando todo su
+ * intervalo queda a ese lado de 1000; si lo cruza, con estas peleas no se distinguen y
+ * quedan a la par. La referencia está, por definición, a la par de sí misma.
  */
-export function takeaway(report: TournamentReport): string {
-  const rows = report.standings;
-  const reference = report.config.reference.name;
-  if (rows.length === 0) {
-    const total = report.calibration.length;
-    if (total === 0) return "";
-    const inLeague = report.calibration.filter((row) => row.league).length;
-    return `La liga todavía no tiene partidas válidas. Por la calibración, ${inLeague} de ${total} candidatos entran a jugarla.`;
-  }
-
-  const leader = rows[0]!;
-  const lead = Math.round(leader.rating - REFERENCE_RATING);
-  let first: string;
-  if (leader.isReference) first = `${leader.name}, la referencia, va primero: ningún candidato la supera por ahora.`;
-  else if (lead > 0) first = `${leader.name} va primero con ${formatRating(leader.rating)}, ${lead} sobre ${reference}.`;
-  else first = `${leader.name} va primero con ${formatRating(leader.rating)}.`;
-
-  const candidates = rows.filter((row) => !row.isReference);
-  const above = candidates.filter((row) => row.lo > REFERENCE_RATING).map((row) => row.name);
-  const below = candidates.filter((row) => row.hi < REFERENCE_RATING).map((row) => row.name);
-  if (candidates.length === 0) return first;
-  if (above.length + below.length === 0) {
-    return `${first} Todos los intervalos cruzan el ${REFERENCE_RATING}: con estas partidas, ninguno se distingue todavía de la referencia.`;
-  }
-  const sides = [
-    above.length > 0 ? `${joinNames(above)} por arriba` : "",
-    below.length > 0 ? `${joinNames(below)} por abajo` : "",
-  ].filter((part) => part !== "");
-  const rest = above.length + below.length < candidates.length ? " El resto todavía se traslapa con ella." : "";
-  return `${first} Ya se distinguen de la referencia: ${sides.join(" y ")}.${rest}`;
+export function tierOf(row: Pick<StandingRow, "isReference" | "lo" | "hi">): Tier {
+  if (row.isReference) return "level";
+  if (row.lo > REFERENCE_RATING) return "above";
+  if (row.hi < REFERENCE_RATING) return "below";
+  return "level";
 }

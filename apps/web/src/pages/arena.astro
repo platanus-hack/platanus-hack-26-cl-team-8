@@ -14,10 +14,10 @@ import "../styles/arena.css";
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#101113" />
-    <title>Leaderboard de modelos</title>
+    <title>Leaderboard · Prompt Arena</title>
     <meta
       name="description"
-      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelos juegan parecido a DeepSeek V4.1 Flash, su ranking y quién le gana a quién."
+      content="Torneo 1v1 de agentes LLM en una arena de Minecraft: qué modelo pelea mejor, cómo gana y quién le gana a quién."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
@@ -25,40 +25,32 @@ import "../styles/arena.css";
     <header class="arena-top">
       <a class="brand arena-top__brand" href="/">
         <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
-        <span class="brand__title">Arena de prompts</span>
+        <span class="brand__title">Prompt Arena</span>
       </a>
       <span class="arena-top__crumb" aria-hidden="true">/</span>
       <h1 class="arena-top__title">Leaderboard</h1>
+      <span class="arena-top__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
       <a class="arena-top__back" href="/">Pelea en vivo</a>
     </header>
 
     <main class="arena">
-      <div class="arena-pick">
-        <label class="field arena-pick__field">
-          <span class="field__label">Torneo</span>
-          <select id="arena-select" disabled>
-            <option>Cargando…</option>
-          </select>
-        </label>
-        <span class="arena-pick__mock" id="arena-mock" hidden>Maqueta: datos inventados</span>
-      </div>
-
       <p class="arena-status" id="arena-status" role="status" data-kind="info">Cargando…</p>
 
       <div id="arena-content" class="arena-content" hidden>
-        <!-- (1) Cabecera: nombre, lectura rápida, estado y progreso del torneo. -->
+        <!-- (1) Cabecera: quién va primero y cómo quedan todos respecto de la referencia. -->
         <section class="summary" aria-labelledby="t-name">
-          <div class="summary__lead">
-            <h2 class="summary__name" id="t-name"></h2>
-            <p class="summary__take" id="t-take" hidden></p>
-            <div class="summary__meta" id="t-meta"></div>
+          <h2 class="summary__name" id="t-name">Qué modelo pelea mejor</h2>
+          <p class="summary__sub" id="t-sub"></p>
+
+          <div class="verdict-board" id="t-board">
+            <div class="lead" id="t-lead"></div>
+            <div class="tiers" id="t-tiers"></div>
+            <p class="verdict-board__note" id="t-ref"></p>
           </div>
-          <aside class="provisional" id="t-provisional" hidden>
-            <strong class="provisional__title">Provisional</strong>
-            <ul class="provisional__why" id="t-provisional-why"></ul>
-          </aside>
-          <div class="summary__progress" id="t-progress"></div>
+
+          <div class="summary__progress" id="t-progress" hidden></div>
           <p class="summary__stop" id="t-stop" hidden></p>
+          <div class="summary__meta" id="t-meta"></div>
         </section>
 
         <!-- (2) Tabla de posiciones: cada fila dibuja su rating y su intervalo sobre un eje común. -->
@@ -66,9 +58,9 @@ import "../styles/arena.css";
           <header class="section__head">
             <h2 class="section__title" id="standings-title">Posiciones</h2>
             <p class="section__hint">
-              Rating en escala Elo, calculado solo con las partidas válidas de la liga. La referencia está fija en 1000
-              (la línea ámbar). El cuadrado es el rating de cada modelo y la línea, su intervalo: si cruza la línea
-              ámbar, todavía no se distingue de la referencia.
+              Rating en escala Elo, calculado con las peleas válidas de la liga. El cuadrado es el rating de cada
+              modelo y la línea, su intervalo; la línea ámbar es la referencia, fija en 1000. A la derecha, cómo pelea
+              cada uno: cuánto gana, cuánto daño hace, cuánto decide, qué tan rápido y cuánto cuesta cada victoria.
             </p>
           </header>
           <div class="scroll-x" id="standings-table">
@@ -83,13 +75,13 @@ import "../styles/arena.css";
                     <span class="sr-only">Rating e intervalo en el eje</span>
                     <div class="axis" id="standings-axis" aria-hidden="true"></div>
                   </th>
-                  <th scope="col" class="num">Intervalo</th>
-                  <th scope="col" class="num">Partidas</th>
-                  <th scope="col"><abbr title="Victorias, empates y derrotas">V · E · D</abbr></th>
-                  <th scope="col" class="num">Costo</th>
+                  <th scope="col">Ganadas</th>
+                  <th scope="col" class="num board__damage"><abbr title="Daño que hace por pelea, y el que recibe debajo">Daño</abbr></th>
+                  <th scope="col" class="num"><abbr title="Decisiones por pelea, y la parte que el juego rechazó debajo">Decisiones</abbr></th>
                   <th scope="col" class="num">
                     <abbr title="Latencia por decisión: mediana, y percentil 95 debajo">Latencia</abbr>
                   </th>
+                  <th scope="col" class="num"><abbr title="Costo de cada victoria en la liga, y el total del torneo debajo">Costo</abbr></th>
                 </tr>
               </thead>
               <tbody id="standings-body"></tbody>
@@ -99,7 +91,23 @@ import "../styles/arena.css";
           <p class="empty" id="standings-empty" hidden>La liga todavía no tiene partidas válidas.</p>
         </section>
 
-        <!-- (3) Matriz fila vs columna; (4) clic en una celda abre sus partidas al lado. -->
+        <!-- (3) Rating frente a velocidad, costo y actividad: cada modelo es su logo. -->
+        <section class="section arena-section" id="scatter" aria-labelledby="scatter-title">
+          <header class="section__head scatter__head">
+            <div>
+              <h2 class="section__title" id="scatter-title">Rating frente a velocidad y costo</h2>
+              <p class="section__hint" id="scatter-hint"></p>
+            </div>
+            <div class="axis-pick" id="scatter-metrics" role="group" aria-label="Qué se compara con el rating"></div>
+          </header>
+          <div class="scatter">
+            <div class="scatter__y" id="scatter-y" aria-hidden="true"></div>
+            <div class="scatter__area" id="scatter-area"></div>
+            <div class="scatter__x" id="scatter-x" aria-hidden="true"></div>
+          </div>
+        </section>
+
+        <!-- (4) Matriz fila vs columna; clic en una celda abre sus partidas al lado. -->
         <section class="section arena-section" aria-labelledby="matrix-title">
           <header class="section__head">
             <h2 class="section__title" id="matrix-title">Quién le gana a quién</h2>
@@ -144,12 +152,13 @@ import "../styles/arena.css";
           </div>
         </section>
 
-        <!-- (5) Calibración y catálogo. -->
-        <section class="section arena-section" aria-labelledby="calibration-title">
-          <header class="section__head">
-            <h2 class="section__title" id="calibration-title">Calibración</h2>
-            <p class="section__hint" id="calibration-rule"></p>
-          </header>
+        <!-- (5) Calibración y catálogo: plegado, es el detalle de cómo se armó la liga. -->
+        <details class="fold arena-section">
+          <summary class="fold__title">
+            <span class="section__title">Calibración</span>
+            <span class="fold__brief" id="calibration-brief"></span>
+          </summary>
+          <p class="section__hint" id="calibration-rule"></p>
           <div class="scroll-x" id="calibration-table">
             <div class="axis axis--solo" id="calibration-axis-solo" aria-hidden="true"></div>
             <table class="board board--cards calib">
@@ -172,11 +181,11 @@ import "../styles/arena.css";
           <p class="empty" id="calibration-empty" hidden>Todavía no hay resultados de calibración.</p>
           <p class="board__note" id="catalog-meta"></p>
 
-          <details class="omitted-box" id="omitted" hidden>
-            <summary class="omitted__title" id="omitted-title"></summary>
+          <div class="omitted-box" id="omitted" hidden>
+            <h3 class="omitted__title" id="omitted-title"></h3>
             <ul class="omitted" id="omitted-list"></ul>
-          </details>
-        </section>
+          </div>
+        </details>
       </div>
     </main>
 

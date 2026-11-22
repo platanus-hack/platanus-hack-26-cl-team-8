@@ -23,12 +23,16 @@ import {
   formatMs,
   formatPct,
   formatRating,
+  formatAverage,
   formatSigned,
+  formatSpan,
   formatUsd,
   fraction,
   scoreColor,
-  takeaway,
+  tierOf,
+  type Tier,
 } from "./format";
+import { pixelIcon } from "../icons";
 import { axis, makeScale, plot, type Scale } from "./plot";
 
 /** Modelos del torneo por key, para nombres y tooltips. */
@@ -63,29 +67,29 @@ export function modelTag(gatewayId: string, name: string, tip?: string): HTMLEle
   return tag;
 }
 
-/** Barra de victorias, empates y derrotas con sus tres números. */
-export function record(wins: number, draws: number, losses: number): HTMLElement {
-  const root = el("span", "record");
-  root.setAttribute("role", "img");
-  root.setAttribute("aria-label", `${wins} victorias, ${draws} empates, ${losses} derrotas`);
+/**
+ * Barra de las peleas de un modelo: victorias, empates y derrotas. Si se sabe cuántas
+ * terminaron por K.O., ese tramo va en color lleno y el resto (decididas por vida al acabar
+ * el tiempo) más suave.
+ */
+export function recordBar(row: Pick<StandingRow, "wins" | "draws" | "losses" | "fight">): HTMLElement {
   const bar = el("span", "record__bar");
-  const nums = el("span", "record__nums");
+  const koWins = Math.min(row.wins, row.fight?.koWins ?? row.wins);
+  const koLosses = Math.min(row.losses, row.fight?.koLosses ?? row.losses);
   const parts: [string, number][] = [
-    ["w", wins],
-    ["d", draws],
-    ["l", losses],
+    ["w", koWins],
+    ["w is-soft", row.wins - koWins],
+    ["d", row.draws],
+    ["l is-soft", row.losses - koLosses],
+    ["l", koLosses],
   ];
-  parts.forEach(([kind, count], index) => {
-    if (count > 0) {
-      const piece = el("i", kind);
-      piece.style.flexGrow = String(count);
-      bar.append(piece);
-    }
-    if (index > 0) nums.append(el("span", "sep", " · "));
-    nums.append(el("b", kind, String(count)));
-  });
-  root.append(bar, nums);
-  return root;
+  for (const [kind, count] of parts) {
+    if (count <= 0) continue;
+    const piece = el("i", kind);
+    piece.style.flexGrow = String(count);
+    bar.append(piece);
+  }
+  return bar;
 }
 
 // ---------- (1) Cabecera y progreso ----------
@@ -122,59 +126,124 @@ function bar(kind: BarKind, label: string, done: number, total: number, value: s
 const retries = (count: number): string | undefined =>
   count > 0 ? `${count} ${count === 1 ? "intento falló" : "intentos fallaron"} por infraestructura` : undefined;
 
-export function renderSummary(report: TournamentReport): void {
-  const { config, progress } = report;
-  byId("t-name").textContent = config.name;
+const TIERS: { tier: Tier; label: string; none: string }[] = [
+  { tier: "above", label: "Sobre la referencia", none: "Ninguno todavía" },
+  { tier: "level", label: "A la par", none: "Ninguno" },
+  { tier: "below", label: "Bajo la referencia", none: "Ninguno todavía" },
+];
 
-  const take = byId("t-take");
-  take.textContent = takeaway(report);
-  take.hidden = take.textContent === "";
+/** Quién va primero: logo grande, nombre, rating y cómo ganó sus peleas. */
+function leadBlock(report: TournamentReport, leader: StandingRow): HTMLElement[] {
+  const reference = report.config.reference;
+  const tag = modelTag(leader.gatewayId, leader.name, modelDetail(leader.gatewayId, leader.inferenceProvider));
+  tag.classList.add("lead__model");
+
+  const score = el("p", "lead__score");
+  score.append(el("span", "lead__points", formatRating(leader.rating)));
+  if (leader.isReference) {
+    score.append(el("span", "lead__diff", "Es la referencia: ningún candidato la supera por ahora."));
+  } else {
+    const diff = el("span", "lead__diff");
+    const over = modelTag(reference.gatewayId, reference.name);
+    diff.append(`${formatSigned(leader.rating - REFERENCE_RATING)} sobre `, over);
+    score.append(diff);
+  }
+
+  const kos = leader.fight ? `, ${leader.fight.koWins} por K.O.` : "";
+  const won = el("p", "lead__won", `Ganó ${leader.wins} de sus ${leader.games} peleas${kos}`);
+  return [el("p", "lead__label", "Va primero"), tag, score, won];
+}
+
+/** Los modelos en tres grupos según cómo quedan respecto de la referencia, cada uno con su logo. */
+function tierRows(report: TournamentReport): HTMLElement[] {
+  return TIERS.map(({ tier, label, none }) => {
+    const rows = report.standings.filter((row) => tierOf(row) === tier);
+    const line = el("div", "tier");
+    line.dataset.tier = tier;
+    const head = el("p", "tier__label", label);
+    const chips = el("div", "tier__models");
+    if (rows.length === 0) chips.append(el("span", "tier__none", none));
+    for (const row of rows) {
+      const chip = el("span", "chip");
+      if (row.isReference) chip.classList.add("is-reference");
+      chip.append(modelTag(row.gatewayId, row.name), el("span", "chip__points", formatRating(row.rating)));
+      chip.dataset.tip = row.isReference
+        ? `La referencia: fija en ${REFERENCE_RATING}.`
+        : `Rating ${formatRating(row.rating)}, intervalo de ${formatRating(row.lo)} a ${formatRating(row.hi)}.`;
+      chips.append(chip);
+    }
+    line.append(head, chips);
+    return line;
+  });
+}
+
+export function renderSummary(report: TournamentReport): void {
+  const { config, progress, standings } = report;
+  const running = progress.stage === "calibration" || progress.stage === "league";
+  const fights = progress.league.valid;
+
+  const models = standings.length > 0 ? standings.length : config.candidates.length + 1;
+  const sub = byId("t-sub");
+  sub.textContent =
+    standings.length > 0
+      ? `${models} modelos ${progress.stage === "done" ? "pelearon" : "han peleado"} ${fights} veces uno contra uno ` +
+        `en Minecraft, todos con el mismo prompt. Lo único que cambia de un lado al otro es el modelo.`
+      : `${models} modelos van a pelear uno contra uno en Minecraft, todos con el mismo prompt. La liga todavía no tiene peleas válidas.`;
+
+  const board = byId("t-board");
+  board.hidden = standings.length === 0;
+  if (standings.length > 0) {
+    byId("t-lead").replaceChildren(...leadBlock(report, standings[0]!));
+    byId("t-tiers").replaceChildren(...tierRows(report));
+    const note = byId("t-ref");
+    note.replaceChildren(
+      "La referencia es ",
+      modelTag(config.reference.gatewayId, config.reference.name),
+      `, fija en ${REFERENCE_RATING}. Un modelo queda sobre o bajo ella cuando todo su intervalo cae a ese lado; si lo cruza, con estas peleas no se distinguen.`,
+    );
+  }
 
   const meta = byId("t-meta");
   meta.replaceChildren();
   const stage = el("span", "badge", STAGE_LABEL[progress.stage]);
   stage.dataset.stage = progress.stage;
-  if (progress.stage === "calibration" || progress.stage === "league") {
-    stage.dataset.tip = "El torneo está corriendo: esta página se actualiza sola cada 20 segundos.";
-  }
-  const mode = el("span", "badge", config.mode === "real" ? "Minecraft real" : "Simulado");
-  mode.dataset.mode = config.mode;
-  const models = report.standings.length;
+  if (running) stage.dataset.tip = "El torneo está corriendo: esta página se actualiza sola cada 20 segundos.";
   meta.append(
+    el("span", "summary__tournament", config.name),
     stage,
-    mode,
     el("span", "", `Creado el ${formatDate(config.createdAt)}`),
-    el("span", "", `${models} ${models === 1 ? "modelo" : "modelos"} en la liga`),
+    el("span", "", `${formatSpan(progress.elapsedMinutes)} de peleas`),
+    el("span", "", `${formatUsd(progress.costUsd)} gastados`),
     el("span", "", `Peleas de ${config.benchmark.matchSeconds} s`),
     el("span", "mono", config.benchmark.id),
   );
 
-  const { calibration: cal, league, limits } = progress;
-  const budget = bar(
-    "budget",
-    "Tiempo",
-    progress.elapsedMinutes,
-    limits.maxMinutes,
-    `${formatMinutes(progress.elapsedMinutes)} de ${limits.maxMinutes} min`,
-  );
-  // Primera barra de presupuesto: lleva la raya que la separa de las de avance.
-  budget.classList.add("progress--split");
-  byId("t-progress").replaceChildren(
-    bar("work", "Calibración", cal.valid, cal.planned, `${cal.valid} de ${cal.planned}`, retries(cal.infra)),
-    bar("work", "Liga", league.valid, league.planned, `${league.valid} de ${league.planned}`, retries(league.infra)),
-    bar("work", "Semillas de la liga", league.seedsDone, league.seedsPlanned, `${league.seedsDone} de ${league.seedsPlanned}`),
-    budget,
-    bar("budget", "Gasto", progress.costUsd, limits.maxUsd, `${formatUsd(progress.costUsd)} de ${formatUsd(limits.maxUsd)}`),
-  );
+  // Las barras de avance solo importan mientras el torneo no ha terminado.
+  const bars = byId("t-progress");
+  bars.hidden = progress.stage === "done";
+  if (progress.stage !== "done") {
+    const { calibration: cal, league, limits } = progress;
+    const budget = bar(
+      "budget",
+      "Tiempo",
+      progress.elapsedMinutes,
+      limits.maxMinutes,
+      `${formatMinutes(progress.elapsedMinutes)} de ${limits.maxMinutes} min`,
+    );
+    // Primera barra de presupuesto: lleva la raya que la separa de las de avance.
+    budget.classList.add("progress--split");
+    bars.replaceChildren(
+      bar("work", "Calibración", cal.valid, cal.planned, `${cal.valid} de ${cal.planned}`, retries(cal.infra)),
+      bar("work", "Liga", league.valid, league.planned, `${league.valid} de ${league.planned}`, retries(league.infra)),
+      bar("work", "Semillas de la liga", league.seedsDone, league.seedsPlanned, `${league.seedsDone} de ${league.seedsPlanned}`),
+      budget,
+      bar("budget", "Gasto", progress.costUsd, limits.maxUsd, `${formatUsd(progress.costUsd)} de ${formatUsd(limits.maxUsd)}`),
+    );
+  }
 
   const stop = byId("t-stop");
   stop.hidden = !progress.stopReason;
   stop.textContent = progress.stopReason ? `Se detuvo: ${progress.stopReason}` : "";
-
-  const notice = byId("t-provisional");
-  notice.hidden = !report.provisional;
-  const list = byId("t-provisional-why");
-  list.replaceChildren(...report.provisionalWhy.map((why) => el("li", "", why)));
 }
 
 // ---------- (2) Tabla ----------
@@ -183,6 +252,35 @@ export function renderSummary(report: TournamentReport): void {
 function labeled<T extends HTMLElement>(cell: T, label: string): T {
   cell.dataset.label = label;
   return cell;
+}
+
+/**
+ * Lo que cuesta cada victoria de la liga: el gasto de esas peleas si el reporte lo trae (si
+ * no, todo lo gastado en el modelo) repartido entre las que ganó. Sin victorias no hay dato.
+ */
+export function costPerWin(row: StandingRow): number | null {
+  if (!(row.wins > 0)) return null;
+  return (row.fight ? row.fight.costUsd : row.costUsd) / row.wins;
+}
+
+/** Decisiones por pelea de la liga. */
+export function decisionsPerFight(row: StandingRow): number | null {
+  if (!(row.games > 0)) return null;
+  return (row.fight ? row.fight.decisions : row.latencyMs.count) / row.games;
+}
+
+/** Fila con el menor valor (> 0) de una lectura: el más rápido, el más barato. */
+function lowest(rows: StandingRow[], value: (row: StandingRow) => number | null): StandingRow | null {
+  let best: StandingRow | null = null;
+  let bestValue = Infinity;
+  for (const row of rows) {
+    const v = value(row);
+    if (v !== null && v > 0 && v < bestValue) {
+      best = row;
+      bestValue = v;
+    }
+  }
+  return best;
 }
 
 export function renderStandings(report: TournamentReport): void {
@@ -203,7 +301,14 @@ export function renderStandings(report: TournamentReport): void {
   for (const id of ["standings-axis", "standings-axis-solo"]) {
     byId(id).replaceChildren(...axis(scale, REFERENCE_RATING, formatRating));
   }
-  rows.forEach((row, index) => body.append(standingRow(row, scale, index)));
+  const best = {
+    fastest: lowest(rows, (row) => row.latencyMs.p50),
+    cheapest: lowest(rows, costPerWin),
+  };
+  rows.forEach((row, index) => body.append(standingRow(row, scale, index, best)));
+  // Un orquestador anterior no informa las lecturas de pelea: sin ellas, la columna de daño no se muestra.
+  const readings = rows.some((row) => row.fight !== undefined);
+  byId("standings-table").classList.toggle("no-readings", !readings);
 
   const methods = new Set(rows.filter((row) => !row.isReference).map((row) => row.ciMethod));
   const how =
@@ -211,17 +316,41 @@ export function renderStandings(report: TournamentReport): void {
       ? "Los intervalos se calculan por bootstrap cuando hay suficientes semillas completas, y por aproximación de Laplace cuando no."
       : methods.has("bootstrap")
         ? "Intervalos por bootstrap: se remuestrean grupos completos de escenario + semilla."
-        : "Intervalos por aproximación de Laplace: todavía hay pocas semillas completas para un bootstrap.";
-  byId("standings-note").textContent = `${how} El costo y la latencia son los de las partidas de la liga.`;
+        : "Intervalos por aproximación de Laplace.";
+  const bars = readings
+    ? " En la barra de peleas, el color lleno son las que terminaron por K.O. y el suave, las que se decidieron por vida al acabar el tiempo."
+    : "";
+  byId("standings-note").textContent =
+    `${how}${bars} La estrella marca al más rápido en decidir y al que gana más barato.`;
 }
 
-function standingRow(row: StandingRow, scale: Scale, index: number): HTMLTableRowElement {
+/** Celda con un número principal y una segunda línea más chica. */
+function twoLines(className: string, label: string, main: string, sub: string): HTMLTableCellElement {
+  const td = labeled(el("td", `num ${className}`), label);
+  td.append(el("span", "board__main", main));
+  if (sub !== "") td.append(el("span", "board__p95", sub));
+  return td;
+}
+
+function star(cell: HTMLElement, tip: string): void {
+  const mark = el("span", "board__star");
+  mark.append(pixelIcon({ name: "star" }));
+  cell.querySelector(".board__main")?.prepend(mark);
+  cell.classList.add("is-best");
+  cell.dataset.tip = tip;
+}
+
+function standingRow(
+  row: StandingRow,
+  scale: Scale,
+  index: number,
+  best: { fastest: StandingRow | null; cheapest: StandingRow | null },
+): HTMLTableRowElement {
   const tr = el("tr");
   tr.style.setProperty("--i", String(index));
   if (row.isReference) tr.classList.add("is-reference");
-  const above = !row.isReference && row.lo > REFERENCE_RATING;
-  const below = !row.isReference && row.hi < REFERENCE_RATING;
-  const tone = row.isReference ? "reference" : above ? "above" : below ? "below" : "cross";
+  const tier = tierOf(row);
+  const tone = row.isReference ? "reference" : tier === "level" ? "cross" : tier;
 
   tr.append(el("td", "board__rank", String(row.rank)));
 
@@ -244,7 +373,13 @@ function standingRow(row: StandingRow, scale: Scale, index: number): HTMLTableRo
     const diff = el("span", "board__diff", formatSigned(row.rating - REFERENCE_RATING));
     diff.dataset.tone = tone;
     rating.append(diff);
-    rating.dataset.tip = `${formatSigned(row.rating - REFERENCE_RATING)} respecto de la referencia.`;
+    const where =
+      tier === "above"
+        ? "Todo el intervalo está sobre la referencia."
+        : tier === "below"
+          ? "Todo el intervalo está bajo la referencia."
+          : "El intervalo cruza la referencia: todavía no se distingue de ella.";
+    rating.dataset.tip = `Intervalo del rating: de ${formatRating(row.lo)} a ${formatRating(row.hi)}. ${where}`;
   }
   tr.append(rating);
 
@@ -260,34 +395,49 @@ function standingRow(row: StandingRow, scale: Scale, index: number): HTMLTableRo
   );
   tr.append(chart);
 
-  const range = el("td", "num board__range");
-  if (row.isReference) {
-    range.append(el("span", "sr-only", "Sin intervalo: es la referencia"));
-  } else {
-    const lo = formatRating(row.lo);
-    const hi = formatRating(row.hi);
-    range.textContent = `${lo} a ${hi}`;
-    const verdict = above
-      ? "Todo el intervalo está sobre la referencia."
-      : below
-        ? "Todo el intervalo está bajo la referencia."
-        : "El intervalo cruza la referencia: todavía no se distingue de ella.";
-    range.dataset.tip = `Intervalo del rating: de ${lo} a ${hi} (±${Math.round((row.hi - row.lo) / 2)}). ${verdict}`;
-  }
-  tr.append(range);
+  // Peleas: cuántas ganó, y de qué manera.
+  const fights = labeled(el("td", "board__fights"), "Ganadas");
+  const share = el("span", "board__main", row.games > 0 ? formatPct(row.wins / row.games) : "–");
+  const head = el("span", "board__won");
+  head.append(share, recordBar(row));
+  const detail = [`${row.wins} de ${row.games}`];
+  if (row.fight) detail.push(`${row.fight.koWins} por K.O.`);
+  fights.append(head, el("span", "board__p95", detail.join(" · ")));
+  fights.setAttribute(
+    "aria-label",
+    `${row.wins} victorias, ${row.draws} empates y ${row.losses} derrotas en ${row.games} peleas`,
+  );
+  tr.append(fights);
 
-  tr.append(labeled(el("td", "num board__games", String(row.games)), "Partidas"));
+  const damage = twoLines(
+    "board__damage",
+    "Daño",
+    row.fight ? formatAverage(row.fight.damageDealt, row.games) : "–",
+    row.fight ? `recibe ${formatAverage(row.fight.damageTaken, row.games)}` : "",
+  );
+  damage.dataset.tip = "Puntos de vida que le quita al rival y que pierde en una pelea promedio. Cada jugador parte con 30.";
+  tr.append(damage);
 
-  const wdl = labeled(el("td", "board__record"), "V · E · D");
-  wdl.append(record(row.wins, row.draws, row.losses));
-  tr.append(wdl);
+  const perFight = decisionsPerFight(row);
+  const decisions = twoLines(
+    "board__decisions",
+    "Decisiones",
+    perFight === null ? "–" : perFight.toFixed(1),
+    row.fight && row.fight.decisions > 0 ? `${formatPct(row.fight.invalidActions / row.fight.decisions)} rechazadas` : "",
+  );
+  decisions.dataset.tip = "Cuántas veces alcanza a decidir en una pelea, y qué parte de esas acciones rechazó el juego.";
+  tr.append(decisions);
 
-  tr.append(labeled(el("td", "num board__cost", formatUsd(row.costUsd)), "Costo"));
-
-  const latency = labeled(el("td", "num board__latency"), "Latencia");
-  latency.append(el("span", "", formatMs(row.latencyMs.p50)), el("span", "board__p95", `p95 ${formatMs(row.latencyMs.p95)}`));
+  const latency = twoLines("board__latency", "Latencia", formatMs(row.latencyMs.p50), `p95 ${formatMs(row.latencyMs.p95)}`);
   latency.dataset.tip = `Mediana y percentil 95 de ${row.latencyMs.count} decisiones: desde que el agente recibe el estado hasta que entrega una acción válida.`;
+  if (best.fastest === row) star(latency, "El más rápido en decidir de toda la liga.");
   tr.append(latency);
+
+  const each = costPerWin(row);
+  const cost = twoLines("board__cost", "Costo por victoria", each === null ? "–" : formatUsd(each), `total ${formatUsd(row.costUsd)}`);
+  cost.dataset.tip = "Lo que cuesta cada victoria de este modelo en la liga, y lo gastado en él en todo el torneo.";
+  if (best.cheapest === row) star(cost, "El que gana más barato de toda la liga.");
+  tr.append(cost);
 
   return tr;
 }
@@ -429,6 +579,13 @@ export function renderCalibration(report: TournamentReport): void {
     `de ${conf} %, tiene que caber en la banda de ±${rule.bandElo} (la franja verde). Si el intervalo se sale de la ` +
     `banda queda pendiente: se juegan más cruces mientras haya presupuesto, y entra como provisional si su ` +
     `estimación cae adentro.`;
+
+  const candidates = report.calibration.length;
+  const entered = report.calibration.filter((row) => row.league).length;
+  byId("calibration-brief").textContent =
+    candidates === 0
+      ? "Todavía sin resultados"
+      : `${candidates} ${candidates === 1 ? "candidato" : "candidatos"}, ${entered} ${entered === 1 ? "entra" : "entran"} a la liga`;
 
   const models = modelIndex(report);
   const body = byId("calibration-body");

@@ -103,14 +103,32 @@
   white-space: nowrap;
 }
 
+.arena-top__mock {
+  margin-left: auto;
+  padding: 3px 8px;
+  border: 1px dashed var(--faint);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.arena-top__mock:not([hidden]) + .arena-top__back {
+  margin-left: 0;
+}
+
 .arena-top__back:hover {
   color: var(--text);
 }
 
 @media (max-width: 520px) {
   .arena-top__brand .brand__title,
-  .arena-top__crumb {
+  .arena-top__crumb,
+  .arena-top__mock {
     display: none;
+  }
+
+  .arena-top__mock:not([hidden]) + .arena-top__back {
+    margin-left: auto;
   }
 }
 
@@ -120,26 +138,6 @@
   max-width: 1440px;
   margin: 0 auto;
   padding: 12px var(--gutter) 0;
-}
-
-.arena-pick {
-  --side: var(--text);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 8px 16px;
-}
-
-.arena-pick__field {
-  flex: 1 1 280px;
-  max-width: 560px;
-}
-
-.arena-pick__mock {
-  padding: 4px 8px;
-  border: 1px dashed var(--faint);
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .arena-status {
@@ -170,42 +168,191 @@
   max-width: 100%;
 }
 
-/* ---------- (1) Cabecera del torneo ---------- */
+/* ---------- (1) Cabecera ---------- */
 
-/* A la izquierda, de qué torneo se trata y cómo va; a la derecha, por qué es provisional. */
 .summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
-  align-items: start;
-  gap: 28px 56px;
-  margin-top: 28px;
+  margin-top: 20px;
 }
 
 .summary + .arena-section {
-  margin-top: 56px;
-}
-
-.summary__lead:only-child,
-.summary:not(:has(.provisional:not([hidden]))) .summary__lead,
-.summary__progress,
-.summary__stop {
-  grid-column: 1 / -1;
+  margin-top: 64px;
 }
 
 .summary__name {
-  font-size: clamp(24px, 3.4vw, 34px);
+  font-size: clamp(28px, 4.2vw, 46px);
   font-weight: 600;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
+  line-height: 1.08;
+  text-wrap: balance;
 }
 
-/* La tabla dicha en dos frases. */
-.summary__take {
-  max-width: 64ch;
-  margin-top: 12px;
+.summary__sub {
+  max-width: 62ch;
+  margin-top: 14px;
   font-size: 17px;
   line-height: 1.45;
+  color: var(--muted);
   text-wrap: pretty;
+}
+
+/*
+ * El resultado de un vistazo: a la izquierda quién va primero, con su logo grande; a la
+ * derecha todos los modelos en tres grupos según cómo quedan respecto de la referencia.
+ */
+.verdict-board {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  margin-top: 32px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.lead {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  padding: 28px 32px 28px 0;
+  border-right: 1px solid var(--line);
+}
+
+.lead__label,
+.lead__won {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lead__model {
+  gap: 14px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.lead__model .model-tag__icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.lead__model .model-tag__letter {
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+}
+
+.lead__score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+
+.lead__points {
+  font: 400 56px/0.9 var(--pixel);
+}
+
+.lead__diff {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* Un modelo nombrado dentro de una frase: su logo y su nombre, sin cortar la línea. */
+.lead__diff .model-tag,
+.verdict-board__note .model-tag {
+  display: inline-flex;
+  gap: 5px;
+  margin-left: 3px;
+  vertical-align: -0.2em;
+  color: var(--text);
+}
+
+.tiers {
+  display: grid;
+}
+
+.tier {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 20px;
+  padding: 16px 0 16px 32px;
+}
+
+.tier + .tier {
+  border-top: 1px solid var(--line);
+}
+
+.tier__label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.tier__label::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--faint);
+}
+
+.tier[data-tier="above"] .tier__label::before {
+  background: var(--win-ink);
+}
+
+.tier[data-tier="below"] .tier__label::before {
+  background: var(--loss-ink);
+}
+
+.tier__models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tier__none {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* Un modelo dentro de un grupo: logo, nombre y rating. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px 7px 9px;
+  border: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.chip__points {
+  font: 400 12px/1 var(--pixel);
+  color: var(--muted);
+}
+
+.chip.is-reference {
+  border-color: rgba(232, 184, 74, 0.6);
+}
+
+.chip.is-reference .chip__points {
+  color: var(--amber);
+}
+
+.verdict-board__note {
+  grid-column: 1 / -1;
+  padding: 12px 0 13px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+.verdict-board__note .model-tag {
+  color: var(--muted);
 }
 
 .summary__meta {
@@ -216,6 +363,11 @@
   margin-top: 16px;
   font-size: 13px;
   color: var(--muted);
+}
+
+.summary__tournament {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .summary__meta .mono {
@@ -260,42 +412,16 @@
   color: var(--amber);
 }
 
-.badge[data-mode="simulated"] {
-  border-style: dashed;
-}
-
-.provisional {
-  display: grid;
-  gap: 8px;
-  padding: 14px 16px 16px;
-  border-left: 2px solid var(--amber);
-  background: rgba(232, 184, 74, 0.07);
-}
-
-.provisional__title {
-  font: 400 15px/1 var(--pixel);
-  color: var(--amber);
-}
-
-.provisional__why {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
 /*
- * Cinco barras en una fila. Las tres primeras son avance (llena = listo, en verde); las dos
- * últimas, cuánto se ha gastado de cada límite (se ponen ámbar cuando queda poco).
+ * Mientras el torneo no termina: cinco barras en una fila. Las tres primeras son avance
+ * (llena = listo, en verde); las dos últimas, cuánto se ha gastado de cada límite (se
+ * ponen ámbar cuando queda poco).
  */
 .summary__progress {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 18px 28px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line);
+  margin-top: 24px;
 }
 
 .progress {
@@ -360,15 +486,12 @@
 }
 
 .summary__stop {
+  margin-top: 16px;
   font-size: 14px;
   color: var(--muted);
 }
 
 @media (max-width: 1099px) {
-  .summary {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .summary__progress {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -379,9 +502,30 @@
   }
 }
 
+@media (max-width: 899px) {
+  .verdict-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lead {
+    padding: 24px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .tier {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 0;
+  }
+}
+
 @media (max-width: 599px) {
-  .summary__take {
+  .summary__sub {
     font-size: 16px;
+  }
+
+  .lead__points {
+    font-size: 44px;
   }
 
   .summary__progress {
@@ -513,9 +657,52 @@
   color: var(--loss-ink);
 }
 
-.board tbody .board__range {
-  font-size: 12px;
-  color: var(--muted);
+/* Número principal de una celda; la estrella marca al mejor de la columna. */
+.board__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.board__star {
+  display: inline-flex;
+}
+
+.board__star .pixel-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.board td.is-best .board__main {
+  font-weight: 600;
+}
+
+/* Sin lecturas de pelea en el reporte, la columna de daño no tiene nada que mostrar. */
+.no-readings .board__damage {
+  display: none;
+}
+
+/* Peleas ganadas: el porcentaje y, al lado, la barra de cómo le fue. */
+.board__won {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.board__won .board__main {
+  min-width: 4ch;
+  font-weight: 600;
+}
+
+.board__won .record__bar {
+  flex: 1 1 auto;
+  min-width: 72px;
+  max-width: 120px;
+}
+
+.board__fights .board__p95 {
+  white-space: nowrap;
 }
 
 /* Segunda línea de una celda numérica (percentil 95, intervalo, rivales). */
@@ -541,14 +728,10 @@
   right: 0;
 }
 
-/* Victorias, empates y derrotas: una barra partida en tres y sus números. */
-.record {
-  display: inline-grid;
-  gap: 5px;
-  width: 112px;
-  vertical-align: middle;
-}
-
+/*
+ * Barra de peleas: victorias, empates y derrotas. El color lleno son las que terminaron por
+ * K.O.; el suave, las que se decidieron por vida al acabar el tiempo.
+ */
 .record__bar {
   display: flex;
   gap: 1px;
@@ -573,26 +756,8 @@
   background: var(--loss-ink);
 }
 
-.record__nums {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.record__nums b {
-  font-weight: 500;
-}
-
-.record__nums .w {
-  color: var(--win-ink);
-}
-
-.record__nums .l {
-  color: var(--loss-ink);
-}
-
-.record__nums .sep {
-  color: var(--faint);
+.record__bar .is-soft {
+  opacity: 0.4;
 }
 
 /* ---------- Gráfico de intervalos ---------- */
@@ -843,10 +1008,6 @@
     height: 30px;
   }
 
-  .board--cards tbody .board__range {
-    display: none;
-  }
-
   /* Datos chicos: "Partidas 20", "Costo $0.44"… */
   .board--cards [data-label] {
     display: flex;
@@ -866,15 +1027,12 @@
     margin: 0;
   }
 
-  .board--cards .record {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    width: auto;
+  .board--cards .board__won .record__bar {
+    width: 72px;
   }
 
-  .board--cards .record__bar {
-    width: 64px;
+  .board--cards .board__fights {
+    flex-wrap: wrap;
   }
 
   .board--cards .calib__why {
@@ -899,7 +1057,194 @@
   }
 }
 
-/* ---------- (3) Matriz ---------- */
+/*
+ * En pantallas angostas las ayudas flotantes de los grupos y del plano se saldrían por el
+ * borde, y con el dedo no hay puntero que las abra: no se muestran.
+ */
+@media (max-width: 899px) {
+  .chip[data-tip]::after,
+  .scatter__point[data-tip]::after {
+    display: none;
+  }
+}
+
+/* ---------- (3) Rating frente a otra lectura ---------- */
+
+.scatter__head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px 32px;
+}
+
+.scatter__head > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+/* Botones para elegir qué va en el eje horizontal. */
+.axis-pick {
+  display: inline-flex;
+  border: 1px solid var(--line);
+}
+
+.axis-pick__item {
+  padding: 8px 12px 9px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font: 500 13px/1 var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.axis-pick__item:first-child {
+  border-left: 0;
+}
+
+.axis-pick__item:hover {
+  color: var(--text);
+}
+
+.axis-pick__item[aria-pressed="true"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.scatter {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: clamp(300px, 46vh, 420px) 28px;
+}
+
+.scatter__y,
+.scatter__x,
+.scatter__area {
+  position: relative;
+}
+
+.scatter__x,
+.scatter__area {
+  grid-column: 2;
+}
+
+.scatter__area {
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.scatter__ytick,
+.scatter__xtick {
+  position: absolute;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.scatter__ytick {
+  right: 10px;
+  transform: translateY(50%);
+}
+
+.scatter__ytick.is-anchor {
+  color: var(--amber);
+}
+
+.scatter__xtick {
+  top: 8px;
+  transform: translateX(-50%);
+}
+
+.scatter__line {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 1px;
+  margin-bottom: -0.5px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.scatter__line.is-anchor {
+  background: rgba(232, 184, 74, 0.55);
+}
+
+/* Cada modelo: su logo en un cuadro, centrado en su punto. */
+.scatter__point {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 -14px -14px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 15px;
+  transition:
+    left 0.6s var(--ease-out),
+    bottom 0.6s var(--ease-out);
+}
+
+.scatter__point.is-reference {
+  border-color: var(--amber);
+}
+
+.scatter__point:hover,
+.scatter__point:focus-visible {
+  z-index: 5;
+  border-color: var(--text);
+}
+
+/* En la mitad derecha la ayuda sale hacia la izquierda, para no salirse de la página. */
+.scatter__point.is-right[data-tip]::after {
+  right: 0;
+  left: auto;
+}
+
+/* Intervalo del rating, el mismo de la tabla. */
+.scatter__whisker {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(237, 236, 232, 0.26);
+  transition: left 0.6s var(--ease-out);
+}
+
+.scatter__label {
+  position: absolute;
+  z-index: 3;
+  padding: 0 3px;
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    left 0.6s var(--ease-out),
+    top 0.6s var(--ease-out),
+    opacity 0.2s;
+}
+
+.scatter__label.is-hidden {
+  opacity: 0;
+}
+
+@media (max-width: 899px) {
+  .scatter__head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .axis-pick {
+    justify-self: start;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+/* ---------- (4) Matriz ---------- */
 
 /* A la izquierda la matriz; a la derecha, las partidas del cruce elegido. */
 .h2h {
@@ -917,7 +1262,7 @@
   display: none;
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1360px) {
   .h2h {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -1127,14 +1472,14 @@
   height: 18px;
 }
 
-/* ---------- (4) Panel de una pareja ---------- */
+/* ---------- Panel de una pareja ---------- */
 
 .pair {
   padding-top: 24px;
   border-top: 1px solid var(--line);
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1360px) {
   .pair {
     padding-top: 0;
     border-top: 0;
@@ -1372,48 +1717,66 @@
   color: var(--muted);
 }
 
-/* Líneas del catálogo que no llegaron a jugar: plegadas, para quien quiera el detalle. */
-.omitted-box {
-  margin-top: 28px;
+/* La calibración va plegada: es el detalle de cómo se armó la liga. */
+.fold {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 
-.omitted__title {
+.fold[open] {
+  padding-bottom: 28px;
+}
+
+.fold__title {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 0;
-  font-size: 14px;
-  font-weight: 500;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 22px 0;
   list-style: none;
   cursor: pointer;
 }
 
-.omitted__title::-webkit-details-marker {
+.fold__title::-webkit-details-marker {
   display: none;
 }
 
-.omitted__title::before {
+.fold__title::before {
   content: "+";
-  width: 12px;
-  font: 400 14px/1 var(--pixel);
+  width: 14px;
+  font: 400 16px/1 var(--pixel);
   color: var(--muted);
 }
 
-.omitted-box[open] .omitted__title::before {
+.fold[open] .fold__title::before {
   content: "-";
 }
 
-.omitted__title:hover {
-  color: var(--text);
+.fold__brief {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.fold > .section__hint {
+  margin-bottom: 24px;
+}
+
+/* Líneas del catálogo que no llegaron a jugar. */
+.omitted-box {
+  margin-top: 28px;
+}
+
+.omitted__title {
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .omitted {
   display: grid;
   gap: 12px;
   margin: 0;
-  padding: 4px 0 16px 22px;
+  padding: 0;
   list-style: none;
 }
 
