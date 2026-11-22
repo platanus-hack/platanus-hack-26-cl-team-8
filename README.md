@@ -15,639 +15,89 @@ team-8
 
 ## Prompt Arena
 
-Simulación para la **Platanus Hackathon 2026** (track Simulaciones).
+Un benchmark de LLMs en tiempo real. Dos agentes de IA pelean en Minecraft y medimos cómo decide cada modelo.
 
-Dos agentes LLM se enfrentan en un duelo PvP dentro de una arena de Minecraft. El comportamiento de cada agente lo define un **prompt escrito por una persona**. La pregunta que responde la simulación:
+- En vivo: https://prompt-arena.si
+- Leaderboard: https://prompt-arena.si/arena
 
-> **¿Qué pasa si el prompt A pelea contra el prompt B?**
+### El problema
 
-Un sitio web transmite la pelea en vivo (video + telemetría en tiempo real), deja que cualquiera edite los dos prompts, elija el kit y el modelo de cada lado, inicie o detenga una pelea, y muestra el historial de resultados. Es experimental: no hay cuentas ni salas, **todos ven la misma pelea**.
+Hoy no hay una forma barata y segura de saber cómo se va a comportar un modelo cuando actúa en un mundo en tiempo real.
 
-Todo corre en un servidor casero con Docker Compose y se publica a internet con un Cloudflare Tunnel, en un dominio propio (guía: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)).
+### Qué hicimos
 
-> **Estado:** el stack completo corre en el servidor casero (pelea real con LLM, video en vivo y web). Qué se probó y qué no está en [Estado](#estado).
+Un sandbox PvP en Minecraft. Dos agentes deciden en tiempo real con lo que perciben de su entorno y de lo que hace y dice el otro. Cada uno sigue un prompt escrito por una persona, y un modelo de lenguaje elige cada acción: acercarse, atacar, disparar, comer, retroceder.
 
-## Arquitectura
+Un experimento se arma con cuatro cosas por lado:
 
-```
-                         Internet
-                            |
-                    Cloudflare (TLS)
-                            |
-                  +-------------------+
-                  |    cloudflared    |   perfil "tunnel" de compose
-                  +---------+---------+
-                            | http://web:80
-                  +---------v---------+
-   navegador ---> |   web  (Caddy)    |   también en http://<servidor>:8080 (WEB_BIND)
-                  |  /       Astro    |
-                  |  /api/*  ---------+---------------+
-                  |  /live/* -----+   |               |
-                  +---------------|---+               |
-                                  |                   |
-                     HLS :8888    |                   |  HTTP + WS :8787
-                  +---------------v---+     +---------v-----------------+
-                  |     mediamtx      |     |       orchestrator        |
-                  |   RTMP  ->  HLS   |     |  API, estado, historial   |
-                  +---------^---------+     |  2 agentes (mineflayer)   |
-                            |               |  cada uno con su LLM      |
-               RTMP :1935   |               +----+-----------------+----+
-               live/arena   |                    |                 |
-                  +---------+---------+   RCON :25575        2 bots :25565
-                  |      camera       |          |                 |
-                  | bot espectador +  |     +----v-----------------v----+
-                  | render + ffmpeg   +---->|         minecraft         |
-                  +-------------------+     |  Paper 1.20.4, offline    |
-                        bot :25565          +---------------------------+
-```
+- **Prompt:** "ataca sin parar", "mantén la distancia", "colabora con el otro".
+- **Kit:** espada, arco, hacha, perlas de ender o bloques para construir.
+- **Modelo:** cualquiera de los que ofrece Vercel AI Gateway.
+- **Comunicación:** ninguna, leerse el pensamiento o hablarse.
 
-| Servicio | Imagen / código | Qué hace |
-|---|---|---|
-| `minecraft` | `itzg/minecraft-server` (Paper 1.20.4) | Mundo vacío `arena` (Platanus y Chunk Battle, con el datapack de las islas) sin mobs, modo offline, RCON activado. |
-| `orchestrator` | `apps/orchestrator` | Dueño de la pelea: prepara la arena por RCON, conecta a los dos agentes, lleva el estado, decide el ganador, guarda el historial y emite eventos por websocket. |
-| `camera` | `apps/camera` | Bot cámara. Alterna entre seguir la pelea y una toma general; el cliente real de Minecraft ve lo que él ve. (Con `CAMERA_MODE=viewer` renderiza él mismo, sin GPU.) |
-| `phack-stream` | `infra/stream` (servicio del host, fuera de Docker) | El cliente real de Minecraft, renderizado por la GPU y capturado con ffmpeg, publicado por RTMP a MediaMTX. Es el video que se ve en la web. |
-| `mediamtx` | `bluenviron/mediamtx` | Convierte el RTMP en HLS de baja latencia. |
-| `web` | `apps/web` + Caddy | Sitio estático (Astro) y proxy inverso de un solo origen. |
-| `cloudflared` | `cloudflare/cloudflared` | Túnel de salida hacia Cloudflare (opcional): publica el sitio y el SSH de los despliegues. |
+### Qué se mide
 
-Rutas públicas (un solo origen, todo pasa por Caddy):
+- **Si gana.** Un torneo de todos contra todos, de ida y vuelta, da un ranking Elo con intervalos de confianza.
+- **Qué tan rápido decide.** Segundos por decisión y decisiones por pelea. Un modelo lento pierde terreno.
+- **Cuánto cuesta.** Dólares por victoria.
+- **Si sostiene sus instrucciones bajo presión.** Cinco pruebas sobre el mismo ring:
+  - *Reglas bajo presión:* ¿rompe una regla cuando va perdiendo?
+  - *Inyección:* ¿obedece órdenes falsas de un "árbitro"?
+  - *Sostener la postura:* ¿le da la razón al rival aunque los hechos digan otra cosa?
+  - *Verificar antes de obedecer:* ¿revisa lo que ve cuando un aviso lo contradice?
+  - *Salir del bucle:* ¿cuántas veces repite una acción que falla siempre?
 
-| Ruta | Destino |
-|---|---|
-| `/` | Sitio estático de Astro |
-| `/api/*` (incluye el websocket `/api/ws`) | `orchestrator:8787`, ruta sin cambios |
-| `/live/*` | `mediamtx:8888`, ruta sin cambios. Playlist HLS: `/live/arena/index.m3u8` |
+### Por qué un PvP
 
-Más detalle (flujo de una pelea, protocolo de eventos, cómo agregar escenarios) en [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md). Los algoritmos y las decisiones de ingeniería de cada capa (arquitectura cognitiva del agente, compresión volumétrica del contexto, modelado balístico, sincronía de telemetría con el video, rating de Bradley–Terry y diseño experimental del torneo) están en [docs/DISENO-TECNICO.md](docs/DISENO-TECNICO.md).
+- **El mundo no se queda quieto.** Un rival reacciona a lo que haces. No sirve memorizar una solución: hay que percibir, decidir y corregir en cada ciclo.
+- **El otro agente es una entrada que no controlas.** Sus acciones, sus mensajes y sus mentiras permiten medir si el modelo verifica lo que recibe.
+- **El resultado es objetivo.** Gana, pierde o empata. No depende de un juez.
+- **El tiempo real castiga la lentitud.** La velocidad de decisión se mide sola.
+- **El mismo ring sirve para muchas preguntas.** Cambia el prompt, el kit o la comunicación y es otro experimento.
 
-## Estructura del repo
+### Resultados
 
-```
-.
-├── apps/
-│   ├── orchestrator/        API + ciclo de vida de la pelea (Node, tsx)
-│   ├── camera/              Bot espectador + render + ffmpeg -> RTMP
-│   └── web/                 Sitio Astro; su imagen final es Caddy
-├── packages/
-│   ├── protocol/            Contrato compartido: arena, kits, estado, eventos, rutas de la API
-│   ├── llm/                 Cliente LLM unificado (mock y vercel)
-│   └── agent/               El "peleador": percibir -> LLM -> actuar, sobre mineflayer
-├── libs/
-│   ├── env/                 loadEnv(): todas las variables de entorno y sus valores por defecto
-│   └── tsconfig/            tsconfig base
-├── infra/
-│   ├── caddy/Caddyfile      Proxy inverso + estáticos
-│   ├── mediamtx/mediamtx.yml  RTMP -> HLS
-│   └── minecraft/config/    Archivos que se copian al servidor de Minecraft (bukkit.yml)
-├── scripts/
-│   ├── local-check.mjs      Revisión previa para desarrollo local (pnpm local:check)
-│   ├── deploy.sh            rsync + docker compose up en el servidor
-│   └── smoke.sh             Verificación post-despliegue (PASS/FAIL por eslabón)
-├── docs/ARQUITECTURA.md
-├── docker-compose.yml       Stack completo (servidor)
-├── docker-compose.dev.yml   Puertos extra para desarrollo local
-└── .env.example
-```
+Liga del 22 de noviembre de 2026: 9 modelos, 216 peleas, todos con el mismo prompt y el mismo kit.
 
-Es un monorepo de pnpm workspaces. Los paquetes exportan TypeScript directamente y las apps de Node corren con `tsx`: no hay paso de build para el código de Node.
+| # | Modelo | Elo (intervalo) | Ganadas | Decide en | Costo por victoria |
+|---|---|---|---|---|---|
+| 1 | MiniMax-M3.1-Flash | 1287 (1124 a 1449) | 40 de 48 | 1,1 s | US$ 0,012 |
+| 2 | GPT-6 Luna (Fast) | 1155 (1007 a 1302) | 33 de 48 | 1,4 s | US$ 0,019 |
+| 3 | Gemini 3.8 Flash | 1104 (959 a 1249) | 30 de 48 | 2,3 s | US$ 0,055 |
+| 4 | Muse Ember | 1088 (943 a 1232) | 29 de 48 | 1,2 s | US$ 0,016 |
+| 5 | MiMo V2.6 Flash | 1055 (911 a 1199) | 27 de 48 | 1,2 s | US$ 0,012 |
+| 6 | Claude Haiku 5.5 | 1005 (860 a 1150) | 24 de 48 | 2,4 s | US$ 0,025 |
+| 7 | DeepSeek V4.1 Flash (referencia) | 1000 | 24 de 48 | 0,8 s | US$ 0,128 |
+| 8 | Qwen 3.8 Flash | 656 (461 a 851) | 8 de 48 | 3,8 s | US$ 0,021 |
+| 9 | GLM 5.3 Flash | 372 (87 a 657) | 1 de 48 | 12,9 s | US$ 0,023 |
 
-## Desarrollo local
+El torneo completo costó US$ 8,71 y tomó 103 minutos. Mide a los modelos en este juego, con este prompt y este kit; no es una medida general de cuál es mejor. El ranking vigente está en el [leaderboard](https://prompt-arena.si/arena).
 
-Para programar en tu máquina. Docker corre lo pesado (Minecraft, MediaMTX y, si quieres video, la cámara); el orquestador y la web corren en tu máquina con recarga en caliente.
+### Cómo funciona
 
-Requisitos: **Node 22+**, **pnpm 10+** (`npm i -g pnpm@10`), **Docker con Compose v2** y unos 4 GB de RAM libres. Usa `pnpm`, no `npm`: el repo depende de `workspace:*`. En Windows funciona con Docker Desktop (los comandos de abajo son scripts de `pnpm` y Node, no de bash).
+- **Agentes:** bots de Minecraft (mineflayer). En cada decisión el modelo recibe lo que el agente ve y elige entre las herramientas de su kit.
+- **Orquestador:** arma cada pelea, lleva el marcador y manda todo a la web en tiempo real.
+- **Video:** un cliente real de Minecraft, capturado y transmitido en vivo.
+- **Web:** la pelea, lo que piensa cada agente, los prompts y el leaderboard.
+- **Infraestructura:** un servidor casero con Docker Compose, publicado con un Cloudflare Tunnel.
+
+### Correrlo
 
 ```bash
-git clone https://github.com/storrealbac/phack2026.git
-cd phack2026
-
-pnpm local:check      # revisa Node, pnpm y Docker, y crea .env desde .env.example
-pnpm local:install    # instala dependencias (todo menos la cámara, que solo corre en Docker)
-pnpm local:infra      # levanta Minecraft + MediaMTX en Docker
-pnpm dev              # orquestador (8787) + web (4321), con recarga en caliente
-```
-
-Abre **http://localhost:4321** y aprieta "Iniciar pelea". Con el `.env` por defecto (`LLM_PROVIDER=mock`) no se necesita ninguna clave.
-
-El primer `pnpm local:infra` descarga Paper y genera el mundo: puede tardar un par de minutos. Mientras tanto el orquestador reintenta RCON solo; una pelea iniciada antes de que Minecraft esté listo termina con error. Mira el avance con `pnpm local:logs`.
-
-### Ver la pelea
-
-Hay tres formas, de la más simple a la más pesada:
-
-1. **Sin video.** El marcador, los pensamientos de cada agente y el feed de eventos funcionan sin la cámara. El reproductor muestra "sin señal".
-2. **Con un cliente de Minecraft.** Java Edition **1.20.4**, Multijugador → `localhost:25565`. Es la forma más fiel de ver el duelo y no depende de la cámara.
-3. **Con el video de la web.** `pnpm local:camera` construye y levanta la cámara en Docker. Es la pieza más frágil del proyecto (dependencias nativas de render); si la imagen no construye, sigue con las opciones 1 o 2 y revisa [apps/camera/README.md](apps/camera/README.md).
-
-Para probar el reproductor sin la cámara, publica una señal de prueba con ffmpeg:
-
-```bash
-ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 -c:v libx264 -preset veryfast \
-  -tune zerolatency -pix_fmt yuv420p -g 30 -f flv rtmp://localhost:1935/live/arena
-```
-
-### Comandos
-
-| Comando | Qué hace |
-|---|---|
-| `pnpm local:check` | Revisa requisitos y puertos, y crea `.env` si falta. |
-| `pnpm local:install` | `pnpm install` sin `@phack/camera` (evita compilar `gl` y `canvas` en tu máquina). |
-| `pnpm local:infra` | Minecraft + MediaMTX en Docker, con los puertos en `127.0.0.1`. |
-| `pnpm local:camera` | Construye y levanta la cámara en Docker (video). |
-| `pnpm dev` | Orquestador y web a la vez. También existen `pnpm dev:orchestrator` y `pnpm dev:web`. |
-| `pnpm local:logs` | Logs de los contenedores. |
-| `pnpm local:down` | Detiene los contenedores (el mundo se conserva). |
-| `pnpm typecheck` / `pnpm test` | Tipos y tests de todos los paquetes. |
-| `pnpm docker:up` / `pnpm docker:down` | El stack completo en Docker, igual que en el servidor: **http://localhost:8080**. Sin recarga en caliente. |
-
-### Cómo está conectado
-
-| Pieza | Dónde corre | Puerto en tu máquina |
-|---|---|---|
-| Web (`astro dev`) | tu máquina | `4321`. Su proxy de Vite manda `/api` a `8787` y `/live` a `8888`, igual que Caddy en producción. |
-| Orquestador + los dos agentes | tu máquina | `8787` |
-| Minecraft | Docker | `25565` (juego) y `25575` (RCON) |
-| MediaMTX | Docker | `8888` (HLS) y `1935` (RTMP) |
-| Cámara | Docker | ninguno: habla con Minecraft y MediaMTX por la red de compose |
-
-Los puertos de desarrollo los agrega [docker-compose.dev.yml](docker-compose.dev.yml), que se usa encima de `docker-compose.yml`. Todos quedan solo en `127.0.0.1`.
-
-Variables de entorno: el orquestador lee el `.env` de la raíz al arrancar (`libs/env`), el mismo archivo que usa Docker Compose. Una variable definida en tu terminal gana sobre el archivo, y una línea vacía (`LLM_MODEL=`) deja el valor por defecto. Fuera de Docker los hosts apuntan a `127.0.0.1` por defecto, así que no hay que tocar nada. Si cambias el `.env`, reinicia `pnpm dev`; si cambias `RCON_PASSWORD` o `MC_VERSION`, vuelve a correr `pnpm local:infra` para recrear Minecraft.
-
-El historial de peleas en este modo queda en `apps/orchestrator/data/` (ignorado por git).
-
-### Mapas
-
-**Hoy hay un solo mapa en juego: la Arena Platanus.** La web no muestra selector de mapa y tanto la API (`POST /api/match/start`, `PUT /api/settings`) como el torneo (`--scenario`/`--map`) solo aceptan `platanus` (`SELECTABLE_ARENA_SCENARIOS` en `packages/protocol`). Chunk Battle y Pizza Spleef 2 siguen en el código, sin ofrecerse: lo que sigue sobre ellos describe cómo funcionan si se vuelven a habilitar (sumándolos a `SELECTABLE_ARENA_SCENARIOS`, o arrancando el servidor con `ARENA_SCENARIO` apuntando a uno).
-
-Cada pelea elige su mapa: en la web, el selector **Mapa** junto a "Iniciar pelea" (es un ajuste más de la próxima pelea: se guarda al elegir, se bloquea mientras hay una pelea y el mapa en curso se ve bajo el reloj); por la API, `POST /api/match/start` con `{ "arena": "chunk-battle" }`; en el torneo, `--scenario` (o `--map`). `ARENA_SCENARIO` (`.env`) es solo el mapa por defecto. Todas las rondas de una serie se juegan en el mismo mapa y con la misma semilla.
-
-| Mapa | Id | Cómo es |
-|---|---|---|
-| Arena Platanus (la única en juego) | `platanus` | Plataforma lisa de piedra de 25×25 (23×23 caminables) con el logo de Platanus de 15×15 al centro y la marca de cada lado; los agentes parten a 16 bloques uno del otro. Muros de vidrio de 6 bloques sobre el borde, abierta arriba. Centro `(0, 64, 0)`. |
-| Chunk Battle | `chunk-battle` | Dos islas flotantes de 16×16 (más cornisa: 20×20 caminables) separadas por al menos 6 bloques de vacío (los bordes son irregulares: en algunas filas el hueco es mayor), centro del conjunto `(1000, 64, 0)`. Cada agente parte en su isla. Sin muros: caer al vacío es KO. |
-| Pizza Spleef 2 | `pizza-spleef-2` | El mapa descargado `Pizza_Spleef_2.zip` (`infra/minecraft/worlds/`), en su propio mundo. Solo con `ARENA_SCENARIO=pizza-spleef-2`; no aparece en el selector. |
-
-Platanus y Chunk Battle viven en el mismo mundo vacío `arena`, en lugares distintos, y el orquestador los construye por RCON antes de cada pelea: cambiar de mapa es instantáneo, sin reiniciar Minecraft.
-
-**De dónde salen las islas.** Las estructuras de Chunk Battle vienen del mapa "Chunk Battle" (Minecraft 1.20.4) que descargó el usuario: se copiaron solo los `.nbt` necesarios (10 islas temáticas y las 25 capas de mineral del núcleo, sin el spawner de mobs) al datapack `infra/minecraft/datapacks/phack-chunkbattle`, que Docker y `pnpm local` instalan en el mundo `arena`. Nada del mapa original se ejecuta, y tras colocar cada isla se retiran bloques de comandos, spawners, barreras y fluidos. La **semilla** de la pelea elige qué isla temática le toca a cada lado y las capas de su núcleo; las peleas de la web sortean una, y en el torneo la ida y la vuelta de una pareja usan las mismas islas con los lados cambiados.
-
-En Chunk Battle los agentes construyen y rompen con las mismas herramientas de siempre (`build`, `dig`): con `build` pueden tender un puente sobre el hueco, y `dig` también rompe el terreno de las islas. Nunca se rompen ni se colocan bloques administrativos o indestructibles (barrier, bedrock, bloques de comandos, structure/jigsaw, light, portales, reinforced deepslate, spawner). Si el kit elegido no trae bloques ni pico, el mapa le suma 32 de roca y un pico de hierro (a los dos lados por igual).
-
-La cámara se entera del mapa de la pelea en curso por el orquestador (`GET /api/state`, variable `CAMERA_ORCHESTRATOR_URL`; en Docker, `http://orchestrator:8787`) o, si este no tiene pelea (torneo por CLI), por dónde están los agentes, y salta a las tomas de ese mapa (en Chunk Battle encuadran las dos islas y el hueco).
-
-Para aplicar estos cambios a un stack Docker existente, ejecuta `docker compose up -d --build minecraft orchestrator camera` (el mundo nuevo `arena` se crea solo; el viejo `platanus` queda sin uso). En modo nativo, reinicia `pnpm local` (la pizza requiere `unzip`, incluido en macOS).
-
-### Si algo falla
-
-| Síntoma | Qué revisar |
-|---|---|
-| `pnpm local:install` falla | Usa pnpm 10 o superior y Node 22+. Las versiones están fijadas en `pnpm-lock.yaml`; si agregas una dependencia, commitea el lockfile actualizado. |
-| El orquestador repite errores de RCON | Minecraft aún está arrancando (`pnpm local:logs`), o `RCON_PASSWORD` cambió después de crear el contenedor. |
-| "Connection throttled" al entrar el segundo agente | No se aplicó `infra/minecraft/config/bukkit.yml`. Revisa los logs de `minecraft`. |
-| Un peleador entra sin un objeto o un efecto de su kit | Busca el aviso "El servidor no confirmó un comando del kit" en los eventos de la web o en la salida del orquestador: trae el comando y lo que respondió Minecraft. |
-| La web carga pero dice "desconectado" | El orquestador no está corriendo o falló al arrancar: mira la salida de `pnpm dev`. |
-| Puerto ocupado (`8888` suele ser Jupyter) | `pnpm local:check` dice cuál. Cierra el otro programa o cambia el puerto en `docker-compose.dev.yml` (y `DEV_HLS_TARGET` para la web). |
-| Quieres partir de cero | `docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v` borra el mundo de Minecraft. |
-
-Qué está probado y qué no: ver [Estado](#estado).
-
-## Inicio rápido (servidor, todo en Docker)
-
-Requisitos en el servidor: Docker con Compose v2, unos 6 GB de RAM libres, y salida a internet (el primer arranque descarga Paper y las imágenes).
-
-```bash
-cp .env.example .env          # opcional: sin .env también levanta, en modo mock
+cp .env.example .env     # opcional: sin claves corre con un modelo simulado
 docker compose up -d --build
-docker compose ps             # espera a que minecraft, orchestrator y web estén "healthy"
-bash scripts/smoke.sh         # verifica toda la cadena
 ```
 
-Después abre `http://<ip-del-servidor>:8080`.
+Después abre `http://localhost:8080`. Para desarrollar en un Mac sin Docker: `pnpm local:setup` y `pnpm local`.
 
-Con la configuración por defecto (`LLM_PROVIDER=mock`) los agentes usan un LLM simulado: sirve para probar la cadena completa sin claves ni costo.
+### Lo que sigue
 
-Comandos útiles:
+Medir si predecir el mundo antes de actuar ayuda: que el agente diga qué espera que pase y compararlo con lo que pasó. Todavía no está construido.
 
-```bash
-docker compose logs -f orchestrator        # qué está pasando en la pelea
-docker compose logs -f camera mediamtx     # problemas de video
-docker compose exec minecraft rcon-cli     # consola del servidor de Minecraft
-docker compose down                        # detener todo (los volúmenes se conservan)
-```
+### Documentación
 
-Para entrar a mirar con un cliente real de Minecraft (Java 1.20.4): el puerto 25565 solo se publica en el loopback del servidor, así que hay que abrir un túnel SSH (`ssh -L 25565:127.0.0.1:25565 usuario@servidor`) y conectarse a `localhost`.
-
-## Correr en local sin Docker (macOS)
-
-Para desarrollar en un Mac sin Docker, cada servicio del compose corre como proceso nativo. Sirve como entorno de desarrollo y de respaldo; el despliegue "de verdad" sigue siendo el compose en el servidor.
-
-```bash
-pnpm local:setup        # una vez: Java 21, mediamtx, ffmpeg, cloudflared, Node 22, pnpm install, .env
-pnpm local              # minecraft + mediamtx + orchestrator + camera + web
-```
-
-Después abre `http://localhost:4321` (`astro dev`, que hace de proxy hacia `/api` y `/live` igual que Caddy).
-
-```bash
-pnpm local --skip=camera            # todo menos la cámara
-pnpm local minecraft mediamtx       # solo los servicios nombrados
-pnpm local --tunnel                 # + el túnel de Cloudflare (ver "Web en Cloudflare")
-```
-
-- **Modo maqueta para diseñar la web sin backend:** `pnpm local web` y abrir `http://localhost:4321/?mock`. La página se llena con una pelea de mentira en bucle (golpes, pensamientos, eventos, prompts) y un video de relleno, sin orquestador, Minecraft ni transmisión. Variantes: `?mock=idle`, `?mock=preparing`, `?mock=finished`; `&signal=off` para ver el reproductor en "Sin señal"; `&static` para dejar todo quieto; `&delay=4000` para simular un video atrasado 4 s y probar que el marcador lo espera. Los botones "Iniciar pelea" y "Detener" cambian de fase localmente. Los datos están en `apps/web/src/scripts/mock.ts`; solo existe en `astro dev` (o compilando con `PUBLIC_MOCK=1`).
-- **Node 22, no 20 ni 24.** mineflayer exige Node >= 22 y `gl` (headless-gl, el render de la cámara) solo publica binarios precompilados hasta Node 22: con Node 24 intenta compilar y falla. `scripts/local/*.sh` buscan un Node 22 de nvm o de Homebrew y lo ponen primero en el `PATH`; si corres `pnpm install` a mano, hazlo con Node 22 activo (`nvm use`).
-- **Todo escucha solo en `127.0.0.1`**: el servidor de Minecraft está en modo offline y la API no tiene autenticación, así que nada queda expuesto a la red local.
-- El servidor de Minecraft (jar de Paper, mundo, `server.properties` generado) vive en `.local/minecraft/`, y el historial y las transcripciones del orquestador en `.local/data/`. Ambas carpetas están fuera de git. Para empezar de cero, borra `.local/`.
-- Las variables salen de `.env`, igual que en Docker. Los hosts internos (`MC_HOST`, `RCON_HOST`, `RTMP_URL`…) los fija `scripts/local/dev.mjs` apuntando a `127.0.0.1`.
-- Para apuntar las apps locales a un servidor de Minecraft remoto (por ejemplo el servidor casero, con un túnel SSH por Cloudflare: ver [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)), no levantes `minecraft` aquí y define `MC_HOST`, `RCON_HOST` y `RTMP_URL` en el entorno.
-
-## Kits y herramientas
-
-Cada lado elige su **kit** en el editor de su prompt: un desplegable y, debajo, el inventario completo del kit elegido. El kit se guarda junto con el prompt (campo `kit` de `AgentConfig`) y, igual que el prompt, vale para la **próxima** pelea. Si no se elige ninguno, es el Clásico.
-
-| Kit | Armadura | Barra de objetos | Efecto | Además de las herramientas comunes |
-|---|---|---|---|---|
-| **Clásico** (`classic`, por defecto) | Hierro | Espada de hierro, arco, 4 filetes, 16 flechas | — | `shoot` |
-| **Arquero** (`archer`) | Malla | Espada de piedra, arco con Empuje I, 4 filetes, 32 flechas | — | `shoot` |
-| **Tanque** (`tank`) | Peto y grebas de diamante, casco y botas de hierro | Espada de piedra, 4 filetes | — | — |
-| **Berserker** (`berserker`) | Peto y grebas de hierro, casco y botas de malla | Hacha de diamante, 4 filetes | Velocidad I | — |
-| **Enderman** (`ender`) | Peto y grebas de hierro, casco y botas de malla; botas con Caída de pluma IV | Espada de diamante, 4 perlas de ender, 4 filetes | — | `pearl` |
-| **Constructor** (`builder`) | Hierro | Espada de hierro, arco, 2 manzanas doradas, 16 tablones de roble, 8 flechas | — | `shoot`, `build` |
-
-El Arquero no es más rápido que los demás: su fuerza es que cada flecha empuja lejos al rival (Empuje I) y que le sobra munición. Cuerpo a cuerpo es débil: lleva espada de piedra y armadura de malla.
-
-Las herramientas son lo único que el LLM puede hacer en cada decisión. Todos los kits tienen `approach` (acercarse), `attack` (cuerpo a cuerpo con la espada o el hacha), `retreat` (alejarse), `eat` (comer un filete o una manzana dorada) y `wait` (esperar). Las demás dependen de lo que trae el kit, y al LLM solo se le ofrecen las del suyo:
-
-| Herramienta | Qué hace | Necesita |
-|---|---|---|
-| `shoot` | Se detiene, apunta, carga el arco cerca de 1 segundo y dispara. | Arco y flechas. |
-| `pearl` | Lanza una perla de ender y se teletransporta donde cae. Con `target: "rival"` cae junto al rival y pasa a atacar; con `target: "away"` cae lejos, al otro lado de la arena, y ahí come si le falta comida y tiene con qué (si no, queda en espera). Cada perla quita unos 2,5 de vida al caer y hay 5 segundos de recarga entre una y otra. | Perlas de ender. |
-| `build` | Levanta un muro de 3 de ancho y 2 de alto entre el agente y su rival: frena las flechas y obliga al rival a rodearlo. Gasta hasta 6 bloques, tarda 1 a 2 segundos y tiene 4 segundos de recarga. | Tablones. |
-
-- El prompt de sistema de cada agente describe su kit (objetos, efectos y cómo funciona cada herramienta), así que el prompt de la persona no tiene que explicarlo.
-- El daño que un agente se hace con su propia perla no se le suma al rival como daño causado.
-- La arena no tiene techo: los muros de vidrio miden 6 bloques y arriba queda abierto. El mundo es vacío, así que salir por encima sería caer al vacío.
-- Al entregar el kit, el orquestador revisa lo que el servidor de Minecraft responde a cada comando. Si no lo confirma (un objeto o un slot que el servidor no acepta), la pelea sigue, pero queda un aviso en el registro de eventos y en el log del orquestador.
-- Cuando los dos peleadores ya tienen su kit hay una cuenta regresiva de 3 segundos (`COUNTDOWN_SECONDS`). Dentro del juego no se muestra nada: el orquestador publica en el estado el instante en que termina (`countdownEndsAt`) y la web la dibuja sobre el video.
-- Los kits están en `KITS` (`packages/protocol/src/index.ts`); las herramientas de cada uno se deducen de sus objetos (`kitToolNames`, en `packages/agent/src/tools.ts`).
-
-## Comunicación entre agentes
-
-Se elige por pelea en la web (`GET`/`PUT /api/settings`, campo `comms`) y vale desde la próxima:
-
-- `none`: no hay comunicación.
-- `thoughts`: cada agente lee la mente del otro. El `reason` de cada decisión del rival le llega en el campo `rivalThoughts` de su observación.
-- `chat`: pueden hablarse. Todas las herramientas aceptan un argumento opcional `say`; lo dicho se ve en la web (evento `message`) y le llega al rival en `rivalMessages`. Su `reason` sigue siendo privado.
-
-### Qué hace y qué no hace el sistema con los mensajes
-
-Cada agente elige el contenido y el idioma. Se le piden mensajes breves y el sistema los ordena por turnos:
-
-- **Solo limpieza técnica** (`cleanMessage`, en `packages/agent/src/comms.ts`): unifica los saltos de línea, cambia tabuladores por espacios, quita caracteres de control (deja `\n`), recorta los espacios de los extremos y corta en `MAX_AGENT_MESSAGE_LENGTH` (500) caracteres, contados por punto de código para no partir un emoji. Ese tope existe para que una respuesta desbocada no llene la pantalla; un mensaje nunca se corta dos veces.
-- **Pensar es rápido; hablar va por turnos.** El agente decide sin esperar a nadie y todo lo que dice se entrega. El orquestador (`apps/orchestrator/src/conversation.ts`) lleva quién tiene la palabra, porque ve a los dos lados y sabe cuánto dura cada audio: suena una frase a la vez. Si la palabra está libre, la frase sale en el acto; si el otro está hablando, espera a que termine y sale enseguida. Entre frases solo hay una pausa corta, como entre personas: 250 ms (más hasta 150 ms al azar) cuando cambia quien habla y 500 ms cuando sigue el mismo. No hay pausa base ni castigo por hablar sin respuesta.
-- **Cuánto dura una frase.** Lo que dura su audio de verdad (con voz) o, mientras no se sabe y sin voz, una estimación por su largo: unos 46 ms por carácter a velocidad 1, dividido por la velocidad de la voz, nunca menos de medio segundo.
-- **Una frase esperando por lado.** Si un agente manda otra antes de que salga la que esperaba, la nueva la reemplaza (cambió lo que quería decir). Si los dos tienen una frase esperando cuando se libera la palabra, sale primero la del que no habló último. Una frase que esperó más de 10 s cuando le toca ya no viene al caso y se descarta.
-- **Oír hace pensar.** El rival recibe la frase cuando empieza a sonar, no cuando termina, y puede pensar mientras la escucha: un mensaje nuevo hace que decida de inmediato, sin esperar el resto de su pausa entre decisiones. Si estaba esperando al LLM, la decisión siguiente empieza apenas responda. Hablar sigue siendo opcional y no cambia el ritmo de las acciones. Al terminar una ronda o la pelea, lo que esperaba su turno no sale.
-- **No reescribe el contenido.** No junta espacios ni líneas, no corrige, no resume, no revisa el contenido y no hace cumplir nada de lo que se digan. No filtra repetidos: dos mensajes iguales seguidos llegan los dos, uno después del otro.
-- **No se pierde nada.** Lo que llega del rival sale de la bandeja recién cuando responde el LLM que lo vio: si esa llamada falla o se corta, va de nuevo en la próxima observación. La bandeja guarda hasta 12 líneas.
-- **Memoria de la conversación.** En modo `chat` la observación trae también `conversation`: los últimos 12 mensajes de los dos lados (`from`: `"tú"` o `"rival"`), el más viejo primero, porque el historial de turnos que ve el LLM es corto.
-- **Brevedad natural.** El prompt y las herramientas piden mensajes breves, normalmente una frase y una segunda si hace falta, sin contar palabras. No hace falta responder a todo, llenar silencios ni insistir si el otro no contesta. El contenido y qué creerle al rival siguen siendo decisión del agente.
-- El proveedor `mock` no tiene modelo detrás: contesta con una frase fija cuando el rival le dijo algo y, si no, habla más o menos un turno de cada cuatro. Sirve para ver el modo `chat` sin claves.
-
-## Qué puede hacer un agente en cada respuesta
-
-Cada respuesta del modelo puede llamar una herramienta, varias o ninguna:
-
-- **Varias**: se ejecutan en orden, cada una cuando termina la anterior (hasta 8 por respuesta). Las que no terminan solas (`approach`, `attack`, `retreat`, `move`, `shoot`, `shield`, `wait`) duran lo que diga su argumento `seconds`; sin él, 2 segundos si hay otra después, o hasta que se reemplacen si es la última. Lo que queda en cola va en `queuedActions` de la observación.
-- **Ninguna**: no cambia nada. El cuerpo sigue con lo que hacía y con lo que quedaba en cola; el texto de la respuesta, si hay, se muestra como pensamiento.
-- Una respuesta que llama herramientas reemplaza lo que quedaba en cola de la anterior.
-
-El `reason` de cada herramienta y las respuestas sin herramientas también se piden breves, sin repetir lo anterior, y pueden omitirse si no hay nada nuevo. El idioma lo decide el agente. El marcador cuenta una decisión por respuesta del modelo, haga lo que haga. En la transcripción con `?format=text`, las respuestas sin herramienta o con varias quedan anotadas.
-
-## Modo por rondas
-
-En la web, **Rondas** es un número entero de 1 a 10 (`rounds` en `PUT /api/settings`): 1 es una pelea suelta y 2 o más, una serie; vale desde la próxima partida. `mode` (`single` o `rounds`) se deduce de ese número; un cliente que solo manda `mode: "rounds"` recibe una serie de 5.
-
-- Una ronda termina cuando uno de los dos muere, cuando uno **se rinde** (herramienta `surrender`, que solo existe en este modo) o, con el límite de tiempo encendido, cuando se acaba el tiempo de la ronda: ahí la gana quien tenga más vida, y con la misma vida la ronda queda empatada.
-- La serie termina cuando al que va abajo ya no le alcanzan las rondas que quedan (3-0, 3-1…) o después de la quinta. Gana quien haya ganado más rondas; con las mismas, empate.
-- Entre rondas los dos vuelven a su lugar con la vida completa y los efectos permanentes de su kit, y se quitan los bloques puestos. **El inventario no se repone**: lo que un agente gasta en una ronda no vuelve en las siguientes (se cambia con `ROUNDS_REFILL_KIT` en `apps/orchestrator/src/match.ts`). El historial de mensajes del modelo y la conversación entre agentes siguen de una ronda a otra.
-- Cada agente sabe cómo va la serie: su observación trae `round`, `roundsWon`, `roundsLost` y `roundsDrawn`, y el prompt describe las reglas de la serie, sin decirle qué hacer con eso.
-
-En el marcador hay un cuadro por ronda bajo el reloj, del color de quien la ganó; el historial muestra el marcador de la serie y cada ronda.
-
-## Límite de tiempo
-
-En la web, junto al modo de comunicación, hay un interruptor **Límite de tiempo** (`timer` en `PUT /api/settings`); vale desde la próxima pelea.
-
-- **Encendido** (por defecto): la pelea dura lo que se elija ahí mismo, en minutos u horas (`timerSeconds` en `PUT /api/settings`, entre 1 minuto y 4 horas); sin elegir, vale `MATCH_DURATION_SECONDS` del servidor. Si nadie cae, gana quien tenga más vida. En el modo por rondas esa duración es la de cada ronda.
-- **Apagado**: la pelea no se acaba sola. Sigue hasta que uno caiga o alguien la detenga; el reloj de la web cuenta hacia arriba y al agente se le dice que no hay límite.
-
-Para que una pelea olvidada no gaste tokens toda la noche, el servidor detiene (sin ganador) las peleas sin límite que pasan de `MATCH_MAX_SECONDS` (30 minutos por defecto; `0` quita el tope).
-
-## Voz de los agentes
-
-En el modo `chat`, lo que un agente le dice al otro también se puede **oír**, con una voz distinta por lado. Es un ajuste más de la pelea (`voice` en `PUT /api/settings`, apagado por defecto) y vale desde la próxima. El audio lo genera el servidor con ElevenLabs y lo reproduce la web cuando aparece el mensaje.
-
-- **Qué se necesita.** Una clave de ElevenLabs (si es restringida, con permiso de Text to Speech y de lectura de «User») y el id de una voz para cada lado, en el `.env` del servidor (el mismo que lee docker-compose; en local, el `.env` de la raíz). El id de una voz está en su página en la app de ElevenLabs (Voices → la voz → «Voice ID»). Sin la clave o sin las dos voces el interruptor no hace nada: `GET /api/defaults` responde `voice.available: false` y los mensajes solo se leen.
-- **Ritmo.** Las frases suenan por turnos (ver [Comunicación entre agentes](#comunicación-entre-agentes)): una frase ocupa la palabra lo que dura su audio, calculado por su tamaño (los MP3 de ElevenLabs son de bitrate constante); mientras no está, vale la estimación a la velocidad `ELEVENLABS_SPEED`. El audio se pide cuando a la frase le toca salir, así una frase reemplazada o descartada no gasta créditos, y el mensaje sale a la web sin esperarlo. La web muestra cada evento con el retraso del video (~1,5 s), así que normalmente el audio ya está listo cuando aparece el mensaje y suena a la par con lo que se ve. El evento `message` trae `speechId`; la web baja el audio de `GET /api/speech/:id` (`audio/mpeg`), que espera lo que falte (hasta 8 s) y responde 404 si esa frase no tiene audio.
-- **Lo que se lee.** El mensaje tal cual, cortado en una palabra a los `VOICE_MAX_CHARS` caracteres (300). El mensaje escrito no cambia. Una frase igual con la misma voz se genera una sola vez: queda en `DATA_DIR/speech/` (hasta 1000 audios; salen primero los más viejos).
-- **Si algo falla, la pelea sigue.** Esa frase queda sin voz y el error se registra en el log del orquestador. Con la clave rechazada o la cuenta sin créditos, la voz se apaga 10 minutos y vuelve a intentar. Una voz que ElevenLabs no reconoce se avisa una vez y solo ese lado queda mudo. Si ElevenLabs está ocupado (429) se reintenta una vez. Nunca hay más de 4 solicitudes a la vez; una frase que esperó su turno más de 8 s ya no se pide (nadie la va a oír ni se gastan créditos en ella).
-- **Tope de créditos.** El orquestador lee los créditos de la cuenta al arrancar y cada 10 minutos mientras se habla, y les suma lo que cuesta cada frase. Si quedan menos de `VOICE_MIN_CREDITS_LEFT` (5000), los agentes dejan de hablar hasta que la cuenta se recargue (queda un aviso en el log). Si la lectura falla, la voz sigue sin ese tope; si es porque la clave no tiene permiso de lectura de «User» (HTTP 401/403), queda un error en el log que lo dice.
-
-| Variable | Por defecto | Para qué |
-|---|---|---|
-| `ELEVENLABS_API_KEY` | vacía | Clave de la API. Sin ella no hay voz. |
-| `ELEVENLABS_VOICE_RED`, `ELEVENLABS_VOICE_BLUE` | vacías | Id de la voz de cada lado. |
-| `ELEVENLABS_VOICE_JAPANESE_RED`, `ELEVENLABS_VOICE_JAPANESE_BLUE` | ya puestas | Voces japonesas: un segundo par, que se elige en la web junto al interruptor de la voz. |
-| `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | El modelo rápido (~100 ms); habla español. |
-| `ELEVENLABS_SPEED` | `1.1` | Velocidad del habla, de 0.7 a 1.2. |
-| `ELEVENLABS_OUTPUT_FORMAT` | `mp3_44100_64` | Formato MP3. Más calidad tarda más. |
-| `ELEVENLABS_LANGUAGE` | vacía | Idioma (`es`, `en`…). Vacía = lo detecta el modelo; cada agente elige el suyo. |
-| `VOICE_MAX_CHARS` | `300` | Largo máximo de lo que se lee en voz alta. |
-| `VOICE_MIN_CREDITS_LEFT` | `5000` | Bajo esto, los agentes dejan de hablar. |
-
-Para probar la clave y las voces sin levantar nada, con Node 22:
-
-```bash
-node scripts/voice-check.mjs
-```
-
-Lee el `.env` de la raíz, dice una frase corta en español con cada voz y muestra cuánto tardó el primer byte y el total, los bytes recibidos, lo que costó (`character-cost`) y los créditos que quedan. Si falta la clave o una voz, o ElevenLabs las rechaza, lo dice. La clave nunca se imprime. Cada prueba gasta unos pocos créditos.
-
-**Primera frase.** Una voz que lleva mucho rato sin usarse puede tardar varios segundos en responder la primera vez (medido: 5 a 6 s, contra medio segundo las siguientes). Por eso, al preparar una pelea con voz y con los agentes en "Pueden hablarse", el servidor despierta las dos voces pidiéndoles una palabra, que se descarta: cuesta un par de créditos por pelea.
-
-## Prompts marcados
-
-En la sección **Historial** de la web cada pelea muestra el prompt de cada lado, y cualquiera puede **marcarlo** con etiquetas y una nota. Marcar guarda ese prompt aparte, tal como peleó: su texto, modelo y kit, contra quién, con qué ajustes y cómo le fue. Se puede marcar a mitad de pelea; el resultado se completa cuando termina.
-
-- **Evaluar**: al filtrar por una etiqueta se ve cuántos de esos prompts ganaron y perdieron, y cada pelea tiene su transcripción.
-- **Replicar**: «Cargar en Rojo» o «Cargar en Azul» deja el prompt, su modelo y su kit en ese editor, como cambios sin guardar.
-
-El historial solo recuerda las últimas 50 peleas; lo marcado queda en `DATA_DIR/flags.json` aunque la pelea ya no esté entre ellas. Rutas: `GET /api/flags`, y `PUT` / `DELETE /api/matches/:id/flags/:side` (cuerpo `{ tags, note }`, hasta 8 etiquetas).
-
-## Transcripciones
-
-Cada pelea deja su transcripción completa en `DATA_DIR/transcripts/<id>.jsonl`: una entrada por línea, en el orden en que pasó, escrita mientras la pelea ocurre (si el servidor se cae, queda lo que alcanzó a pasar). Parte con `start` (configs con el proveedor, modelo y kit reales, ajustes, el prompt de sistema completo de cada agente, tick y duración) y trae las fases, cada decisión, lo que pensó, dijo e hizo cada agente, el daño, los cambios de estado, el registro de eventos, el resultado (`end`) y el "por qué ganó" (`explanation`). También quedan las peleas que fallaron o se detuvieron antes de empezar. El formato es `TranscriptEntrySchema`, en `packages/protocol`.
-
-Cada `decision` guarda la observación que vio el LLM y su respuesta tal cual llegó: el texto y todas las llamadas a herramientas, también las que no se ejecutaron o nombran una herramienta que no existe. Ahí queda lo que el modelo intentó hacer aunque el juego no se lo ofreciera.
-
-Para leerla, el id es el de la pelea en `/api/matches` (o el `id` de `/api/state` para la que está en curso):
-
-```bash
-curl http://localhost:8787/api/matches/<id>/transcript              # JSONL, tal cual
-curl "http://localhost:8787/api/matches/<id>/transcript?format=text" # resumen para leer
-```
-
-El JSONL es el registro completo. Con `?format=text` sale un resumen legible (quién vio, pensó, dijo e hizo qué, con el tiempo desde que empezó el duelo), sin las observaciones enteras ni los cambios de estado. Funciona también con la pelea en curso. Un id que no es un UUID responde 400, y una pelea sin transcripción, 404.
-
-## Configurar el proveedor de LLM
-
-En `.env`:
-
-```bash
-LLM_PROVIDER=vercel           # mock | vercel
-LLM_MODEL=                    # vacío = modelo por defecto del proveedor (ver packages/llm)
-VERCEL_API_KEY=vck_...
-```
-
-Hay una sola conexión a modelos reales: `vercel`, el **Vercel AI Gateway** a través del SDK `ai`. Una sola clave (`VERCEL_API_KEY`) sirve para modelos de cualquier laboratorio, que se nombran `creador/modelo` (por ejemplo `openai/gpt-6-luna`). El modelo por defecto es `deepseek/deepseek-v4.1-flash-1017-fast`. `mock` es el LLM simulado: no usa clave ni llama a ninguna API.
-
-Luego `docker compose up -d` (recrea los contenedores cuyo entorno cambió).
-
-- `LLM_PROVIDER` y `LLM_MODEL` son el valor por defecto de ambos agentes. Desde la web cada lado elige "Por defecto del servidor", "Simulado" o un modelo de la lista de permitidos, así que se puede enfrentar un modelo contra otro. Si se elige un modelo real y falta `VERCEL_API_KEY`, la pelea falla con un error claro.
-- **Solo modelos baratos.** Un modelo está permitido si su precio de catálogo no pasa de **1 USD por millón de tokens de entrada y 5 USD por millón de tokens de salida** (`MODEL_PRICE_CAP`, en `packages/protocol`). Además, la lista es **la misma del torneo**: DeepSeek V4.1 Flash (la referencia) y una versión por línea prioritaria (GPT Luna, Gemini Flash, Claude Haiku, Qwen Flash, GLM Flash, MiMo Flash, MiniMax Flash, Muse Ember), elegidas con `resolveCatalog`. El orquestador descarga el catálogo público de Vercel AI Gateway, lo filtra y sirve el resultado en `GET /api/models`; la web solo ofrece esa lista, con el precio de cada modelo, y ya no deja escribir un id a mano. Si no logra descargar el catálogo, responde una lista fija (`source: "fallback"`). El modelo por defecto del servidor siempre está permitido.
-- La lista se hace cumplir en el servidor: `PUT /api/prompts/:side` responde `400` si el modelo no está permitido, y al iniciar una pelea se revisa otra vez. Si el modelo guardado dejó de estar permitido, ese agente pelea con el modelo por defecto del servidor y queda un aviso en el registro de eventos.
-- Cada agente decide en cuanto su LLM responde, con una pausa mínima de `AGENT_TICK_MS` milisegundos entre decisiones (300 por defecto: no frena a ningún modelo de la lista, solo evita reintentar en bucle si el LLM falla al instante). Antes era 1500, y ese tope igualaba a todos los modelos que responden en menos de 1,5 s. Una pelea dura como máximo `MATCH_DURATION_SECONDS` (180): con un modelo que tarda ~1 s, son del orden de 2 × 180 = **360 llamadas al LLM**. El sitio no tiene autenticación: cualquiera con el link puede iniciar peleas, así que ponle un límite de gasto a la clave.
-- La lista completa de variables está en [.env.example](.env.example) y su fuente de verdad en `libs/env/src/index.ts`.
-- **Si vienes de una versión anterior:** los proveedores `openai`, `anthropic`, `openrouter` y `gateway` ya no existen. Con uno de ellos en `LLM_PROVIDER`, el orquestador y la cámara no arrancan: antes de desplegar, deja `LLM_PROVIDER=vercel` (o `mock`) y la clave en `VERCEL_API_KEY` en el `.env` del servidor. Los datos guardados se siguen leyendo: un prompt o una pelea del historial con `gateway` pasa a `vercel`, y con los otros tres conserva su texto y queda con el proveedor por defecto.
-
-## Torneo de modelos
-
-Arena 1v1 entre modelos de Vercel AI Gateway con rating Bradley–Terry en escala Elo (DeepSeek V4.1 Flash por Baseten fijo en 1000). Responde dos preguntas: qué modelos juegan parecido a DeepSeek (calibración, banda ±150 Elo) y, entre ellos, quién le gana a quién (liga todos contra todos). Detalle del diseño en [docs/TORNEO.md](docs/TORNEO.md).
-
-El torneo corre como proceso aparte (`pnpm tournament …`, lee el `.env` de la raíz) y guarda todo en `DATA_DIR/tournaments/<id>/`. Mientras un `run` está vivo, el botón "Iniciar pelea" de la web responde 409.
-
-```bash
-# 1. Dry-run: baja el catálogo y los endpoints públicos (sin gastar créditos) y muestra
-#    los modelos exactos, las líneas omitidas con su motivo, el calendario y el costo.
-pnpm tournament plan
-
-# 2. Congelar el torneo (catálogo, modelos, proveedor, benchmark). Imprime el id.
-pnpm tournament create --name "Torneo 1h" --max-minutes 60 --max-usd 10 --concurrency 1 --max-candidates 8
-pnpm tournament create --name "Islas" --scenario chunk-battle   # mapa Chunk Battle (--map es lo mismo; por defecto, platanus)
-
-# 3. Correrlo (Minecraft levantado + VERCEL_API_KEY). Ctrl+C = pausa al terminar la partida en curso.
-pnpm tournament run <id>
-pnpm tournament pause <id>          # desde otra terminal: misma pausa, vía archivo PAUSE
-pnpm tournament run <id>            # reanuda sin repetir partidas
-
-# 4. Mirar
-pnpm tournament status <id>         # progreso + calibración (quién entró, quién no y por qué)
-pnpm tournament leaderboard <id>    # ranking oficial (solo liga) y matriz
-pnpm tournament speed <id>          # velocidad por modelo junto al Elo y su correlación (--dir <carpeta> para archivos sueltos)
-pnpm tournament list
-```
-
-- **Mapa:** `--scenario platanus|chunk-battle` (o `--map`) en `plan` y `create` (por defecto `ARENA_SCENARIO`). Las partidas se juegan en ese mapa sin reiniciar Minecraft, y la semilla de cada partida del calendario llega a la pelea real (en Chunk Battle decide las islas). El mapa es parte de la versión del benchmark (`pvp-<mapa>-v2+…`): un torneo creado con otra versión no se reanuda.
-- **Ensayo sin Minecraft ni créditos:** `pnpm tournament create --simulate --name ensayo` y luego `pnpm tournament run <id>`. Usa agentes simulados (ratings ocultos por modelo, RNG con semilla) y el mismo calendario, límites y reporte.
-- **Sin red:** `--catalog apps/orchestrator/src/tournament/catalog.fixture.json` (ruta relativa a la raíz o absoluta) usa un catálogo local.
-- **Leaderboard web:** `pnpm dev` y abrir http://localhost:4321/arena (lee `/api/tournaments` del orquestador; con `?mock` muestra datos de ejemplo).
-- Todas las opciones: `pnpm tournament --help`.
-
-## Web en Cloudflare (Worker + túnel privado)
-
-La web también se puede publicar como un **Worker de Cloudflare** (`apps/web/wrangler.jsonc`), sin exponer el servidor a internet:
-
-```
-navegador --> Worker "phack2026-web" (Cloudflare)
-                |  /        assets estáticos (apps/web/dist)
-                |  /api/*   --+
-                |  /live/*  --+--> Workers VPC --> túnel "phack2026-local" --> cloudflared
-                                                                                  |
-                                                         127.0.0.1:8787 (orquestador)
-                                                         127.0.0.1:8888 (HLS de MediaMTX)
-```
-
-`apps/web/worker/index.ts` cumple el rol de Caddy: sirve el sitio y hace de proxy de `/api/*` y `/live/*`. El orquestador y MediaMTX se alcanzan por [Workers VPC](https://developers.cloudflare.com/workers-vpc/): el túnel **no tiene hostname público** ni reglas de ingress, solo el Worker puede llegar a esos puertos.
-
-```bash
-pnpm deploy:web                     # astro build + wrangler deploy (usa el login de `wrangler login`)
-pnpm local --tunnel                 # en la máquina de la arena: stack + cloudflared
-```
-
-Recursos ya creados en la cuenta de Cloudflare (sus IDs están en `apps/web/wrangler.jsonc`):
-
-| Recurso | Nombre | Apunta a |
-|---|---|---|
-| Túnel | `phack2026-local` | la máquina donde corra `cloudflared` |
-| VPC service | `phack2026-api` | `http://127.0.0.1:8787` |
-| VPC service | `phack2026-live` | `http://127.0.0.1:8888` |
-
-`127.0.0.1` se resuelve en la máquina que corre `cloudflared`, así que el túnel debe correr donde estén el orquestador y MediaMTX, con esos puertos alcanzables en loopback. Requiere `cloudflared` >= 2025.7.0 con transporte QUIC (UDP 7844 de salida).
-
-El Worker lleva dentro el contrato de `packages/protocol` y se despliega aparte del orquestador. Cuando el contrato cambia (proveedores, kits, rutas de la API), despliega primero el orquestador y la web justo después: mientras las dos versiones no coinciden, la web puede descartar el estado o los valores por defecto que no entiende.
-
-## Acceso: quién puede cambiar la arena
-
-Mirar nunca pide nada: la transmisión, el marcador, los pensamientos, el historial y el leaderboard son públicos. Cambiar algo pide una clave cuando el servidor tiene `ADMIN_PASSPHRASE` en su `.env`; sin ella no hay control (cómodo en local, peligroso en un sitio público).
-
-| Quién | Cómo entra | Qué puede |
-|---|---|---|
-| Equipo | `ADMIN_PASSPHRASE` | Todo: detener peleas, todos los ajustes, voz, baterías, juez, marcas y borrar el historial. |
-| Invitado (un jurado) | `PLAYER_PASSPHRASE`, opcional | Escribir los prompts (con kit y modelo), elegir cómo se comunican los agentes e iniciar peleas. |
-| Visitante | sin clave | Solo mirar. Con el ajuste **Arena abierta** encendido por el equipo, lo mismo que un invitado. |
-
-La clave se le da a un navegador de dos maneras:
-
-- **Con un enlace** (sirve para un QR): `https://tu-sitio/#key=LA_CLAVE`. La página la guarda en `localStorage` y la borra de la dirección. Lo que va tras el `#` no viaja al servidor ni queda en sus registros.
-- **A mano**, en la consola del navegador: `localStorage.setItem("prompt-arena.access", JSON.stringify({ key: "LA_CLAVE" }))`.
-
-En la barra de arriba aparece "Equipo" o "Invitado"; dos clics ahí quitan la clave de ese navegador. El servidor es el que decide (`apps/orchestrator/src/access.ts`): la web solo esconde lo que igual sería rechazado. Para probar cómo se ve cada rol sin servidor: `/?mock&as=visitor`, `/?mock&as=player` o `/?mock&as=admin`.
-
-## Cloudflare Tunnel (sitio en tu dominio y SSH sin Tailscale)
-
-El servicio `cloudflared` (perfil `tunnel` de compose) conecta el servidor con Cloudflare por un túnel de salida: no se abren puertos en el router. Las rutas se configuran en el panel de Cloudflare:
-
-| Hostname | Servicio | Acceso |
-|---|---|---|
-| `arena.<dominio>` | HTTP `web:80` (Caddy) | público |
-| `ssh.<dominio>` | SSH `host.docker.internal:22` (sshd del servidor) | solo con Cloudflare Access (obligatorio) |
-
-En corto:
-
-1. Dominio en Cloudflare, túnel creado en **Networking → Tunnels**, y su token en el `.env` del servidor (`TUNNEL_TOKEN=eyJ...`).
-2. Levantar con el perfil: `docker compose --profile tunnel up -d` (o `DEPLOY_TUNNEL=1` en los scripts de despliegue).
-3. Con el sitio funcionando, `WEB_BIND=127.0.0.1` en el `.env` del servidor (obligatorio si el túnel es la única entrada) para que el puerto 8080 no quede abierto a la red.
-4. Desplegar por Cloudflare: `DEPLOY_HOST=ssh.<dominio>` y `DEPLOY_CF_ACCESS=1` en `.env.deploy`, con `cloudflared` instalado en tu máquina.
-
-El paso a paso completo (nameservers, rutas, la aplicación de Access para el SSH, service token para el loop, orden para apagar Tailscale sin quedarse fuera, verificación y problemas comunes) está en [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
-
-Cloudflare termina TLS; Caddy solo habla HTTP en el puerto 80. Los websockets funcionan por el túnel sin configuración adicional.
-
-## Despliegue
-
-Desde tu máquina (solo usa `rsync` y `ssh`; no construye ni ejecuta nada localmente):
-
-```bash
-bash scripts/deploy.sh usuario@servidor /home/usuario/phack2026
-```
-
-O con variables:
-
-```bash
-DEPLOY_HOST=servidor DEPLOY_USER=usuario DEPLOY_PATH=/home/usuario/phack2026 \
-DEPLOY_TUNNEL=1 DEPLOY_SMOKE=1 bash scripts/deploy.sh
-```
-
-Por Cloudflare, en vez de una IP de la red: `DEPLOY_HOST=ssh.<dominio> DEPLOY_CF_ACCESS=1` (ssh y rsync pasan por `cloudflared access ssh`; ver [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)). Sirve igual para `scripts/deploy-main.sh`, que además lee esas variables de `.env.deploy`; `deploy.sh` solo las toma del entorno.
-
-El script:
-
-1. Copia el repo con `rsync` (excluye `node_modules`, `.git`, `data`, `dist`, `.env` y `.env.*` salvo `.env.example`, así que `.env.deploy` no sale de tu máquina). Un `pnpm-lock.yaml` generado en el servidor no se borra; aun así, cópialo a tu máquina y commitéalo cuando exista.
-2. Si en el servidor no hay `.env`, lo crea desde `.env.example` (modo mock). **Las claves se editan en el servidor**, nunca viajan desde tu máquina.
-3. Corre `docker compose up -d --build` (con `--profile tunnel` si `DEPLOY_TUNNEL=1`).
-4. Reinicia `mediamtx` para que tome `infra/mediamtx/mediamtx.yml` (el video se corta unos segundos). Los cambios en `infra/minecraft/config/` o `infra/caddy/Caddyfile` se aplican a mano: `docker compose restart minecraft` / `docker compose restart web`.
-5. Con `DEPLOY_SMOKE=1`, corre `scripts/smoke.sh` en el servidor.
-
-### Despliegue automático cuando cambia `main`
-
-`scripts/deploy-main.sh` despliega `origin/main` solo si cambió desde el último despliegue (compara con el commit anotado en el servidor). Copia el commit exacto, no tu carpeta de trabajo. Los datos del servidor van en `.env.deploy` (ignorado por git): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, y opcionalmente `DEPLOY_PASSWORD` y `DEPLOY_SUDO=1` si el usuario necesita `sudo` para Docker. Para entrar por Cloudflare: `DEPLOY_CF_ACCESS=1`, y para que el loop corra sin abrir el navegador, un service token de Access en `DEPLOY_CF_TOKEN_ID` y `DEPLOY_CF_TOKEN_SECRET`.
-
-```bash
-bash scripts/deploy-main.sh            # despliega si hay commits nuevos
-bash scripts/deploy-main.sh --force    # despliega aunque no haya cambios
-```
-
-Para dejarlo corriendo solo desde Claude Code:
-
-```
-/loop 2m Ejecuta `bash scripts/deploy-main.sh` y responde con una sola línea con su resultado. No edites archivos ni intentes arreglar nada; si falla, muestra el error tal cual.
-```
-
-La web y la API levantan sin esperar a Minecraft: en el primer arranque (descarga de Paper y generación del mundo) el sitio muestra "sin señal" y el orquestador reintenta RCON hasta que el servidor responda. Iniciar una pelea antes de eso termina con error.
-
-`scripts/smoke.sh` revisa, con una línea PASS/FAIL por eslabón: contenedores sanos, RCON, `/api/health`, `/api/state`, `/api/models` con al menos un modelo, upgrade de websocket, playlist HLS con segmentos, y una pelea completa iniciada por la API que llega a `finished` y aparece en `/api/matches`. Para que esa pelea sea corta, baja `MATCH_DURATION_SECONDS` (por ejemplo a 30) mientras pruebas.
-
-### Copia en el repo de la hackathon
-
-El trabajo se hace en este repo. El repo del equipo en la organización de la hackathon ([platanus-hack/platanus-hack-26-cl-team-8](https://github.com/platanus-hack/platanus-hack-26-cl-team-8), público) es una copia de `main`: los dos comparten el mismo historial, así que ponerlo al día es empujar `main` y nada más.
-
-```bash
-bash scripts/mirror.sh    # copia origin/main al otro repo si cambió
-```
-
-Para no tener que acordarse, `DEPLOY_MIRROR=1` en `.env.deploy` hace que `scripts/deploy-main.sh` lo corra en cada vuelta.
-
-Tres cuidados:
-
-- Solo viaja `main`. Las ramas de trabajo se quedan aquí.
-- Los PR a `main` se mezclan con un commit de merge, no con squash: un squash rompe el historial compartido y el script deja de poder empujar.
-- Los archivos de la entrega (`platanus-hack-project.jsonc`, `project-description.md`, `project-logo.png` y el encabezado del README) se editan aquí, como cualquier otro. Si alguien commitea directo en el otro repo, el script falla y avisa en vez de pisarlo.
-
-## Transmisión con el cliente real de Minecraft
-
-El video de la web sale del juego de verdad, no de un render aparte:
-
-```text
-Xvfb (pantalla virtual) -> cliente de Minecraft, dibujado por la GPU (VirtualGL)
-  -> ffmpeg captura la pantalla y codifica H.264 (NVENC) -> RTMP -> MediaMTX -> HLS -> web
-```
-
-El cliente entra al servidor como el espectador `Camarografo`. El contenedor `camera` lo monta (`/spectate`) en el bot `Camara` y mueve ese bot: lo que hace el bot es lo que se ve.
-
-Se instala una sola vez en el servidor (Fedora, GPU NVIDIA con su driver):
-
-```bash
-sudo bash infra/stream/install.sh
-```
-
-Eso instala Xvfb, VirtualGL y xdotool, descarga el cliente desde Mojang (unos 850 MB) y deja corriendo el servicio `phack-stream`. Necesitas una licencia de Minecraft Java; el servidor de la arena es offline, así que el cliente entra sin iniciar sesión.
-
-```bash
-systemctl status phack-stream      # estado
-journalctl -u phack-stream -f      # logs de la transmisión
-docker compose logs -f camera      # logs del bot cámara
-```
-
-Sin GPU, pon `CAMERA_MODE=viewer` en `.env`: el contenedor `camera` vuelve a renderizar por software y no hace falta `phack-stream`. Las variables `STREAM_*` están en `.env.example`.
-
-## Estado
-
-Verificado el 21 de noviembre de 2026 en el servidor casero (Fedora 44, Docker 29, 12 CPU, 16 GB), con el stack completo de `docker-compose.yml`:
-
-| Qué | Resultado |
-|---|---|
-| `pnpm install --frozen-lockfile` + `pnpm typecheck` | Limpio en todos los paquetes (la cámara no se incluyó en el typecheck). |
-| `pnpm test` | Pasan los tests de `libs/env`, `packages/llm`, `packages/agent` y `apps/orchestrator`. |
-| Imágenes Docker | Construyen las tres: `orchestrator`, `web` y `camera` (con `gl` y `canvas`). |
-| Minecraft | Paper 1.20.4 en modo offline, RCON, `bukkit.yml` sincronizado, chunks de la arena con `forceload`. |
-| Pelea en modo `mock` | Completa: los dos agentes entran, pelean, uno gana por KO y queda en el historial. |
-| Pelea con LLM real | Completa con `LLM_PROVIDER=vercel` y `deepseek/deepseek-v4.1-flash-1017-fast`: cada agente decide con tool calls y explica su razón. |
-| Web | Sitio, API y websocket a través de Caddy en el puerto 8080. |
-| Video | El cliente real de Minecraft corre en el servidor sin monitor (RTX 3080 vía VirtualGL), ffmpeg lo captura y codifica con la GPU a 30 fps, y MediaMTX entrega HLS: en la web se ven armaduras, armas, flechas, golpes y nombres. Se recupera solo si expulsan al cliente o se reinicia MediaMTX. |
-| Tests y typecheck de la cámara | Los tests pasan y `tsc --noEmit` queda limpio, corridos dentro de la imagen `camera`. |
-
-Los kits, las herramientas `pearl` y `build`, la lista de modelos permitidos y la cuenta regresiva se agregaron después de esa verificación: la tabla describe el estado anterior, con el kit Clásico.
-
-### Lo que no se ha probado
-
-- **Los kits nuevos en una pelea real.** Las peleas de prueba fueron todas con el kit Clásico. Falta ver en el servidor los otros cinco kits, la perla de ender y el muro, y el balance entre kits: sale de las fórmulas de daño de Minecraft 1.20.4, no de peleas medidas.
-- **La lista de modelos permitidos** contra el catálogo real, y cómo se comporta cada modelo barato en una pelea: solo se probó `deepseek/deepseek-v4.1-flash-1017-fast`.
-- **Cloudflare Tunnel** (`--profile tunnel`) y el video LL-HLS a través del túnel, el SSH por Cloudflare Access (`DEPLOY_CF_ACCESS=1`) y el healthcheck de `cloudflared`.
-- **`scripts/deploy.sh` tal cual**: asume que el usuario SSH puede usar `docker` sin `sudo`.
-- **La cámara fuera de Docker**, y el modo `CAMERA_MODE=viewer` después de agregar el modo `client`.
-- **La transmisión tras un reinicio completo del servidor** (que `phack-stream` parta solo al encender) y en otra distribución que no sea Fedora.
-- **Empates y victorias por tiempo**: todas las peleas de prueba terminaron por KO en menos de 30 segundos.
-- **La voz de los agentes con una clave real de ElevenLabs**: está probada solo con dobles. Falta medir la latencia real, ver que el formato y la velocidad suenen bien y confirmar las respuestas de error y de créditos de la API (`scripts/voice-check.mjs`).
-
-### Limitaciones conocidas
-
-- **Cámara del cliente real.** Son dos y se alternan: la que sigue a los peleadores (parada en un punto, gira para mirarlos) y la general (estática, desde arriba). Sin pelea se muestra la general; con pelea, 20 s de una y 6 s de la otra (`CAMERA_FOLLOW_SECONDS`, `CAMERA_WIDE_SECONDS`). El campo de visión es fijo (`STREAM_FOV`): no hay zoom. El video no lleva audio.
-- **Render sin GPU (`CAMERA_MODE=viewer`).** prismarine-viewer no dibuja armaduras, ítems en la mano, flechas ni animaciones de ataque, y todos los jugadores usan la misma skin. Es el respaldo para máquinas sin GPU y lo que se usa en desarrollo local.
-- **Vida del rival.** Cada agente ve la vida del otro solo si mineflayer la recibe del servidor; puede llegar como `null`.
-- **Peleas cortas.** Con el kit Clásico un duelo dura 15 a 30 segundos, es decir, unas 8 a 10 decisiones por agente. Para peleas más largas hay que ajustar los kits en `KITS` (`packages/protocol/src/index.ts`).
-- **Efectos y absorción.** La Velocidad I del Berserker no muestra partículas en el video: se ve en el panel del kit de la web. La vida extra de la manzana dorada no cuenta como vida, ni en el marcador ni para decidir quién gana por tiempo.
-- **Sin autenticación.** Cualquiera con el link puede cambiar prompts e iniciar peleas, y cada pelea gasta llamadas al LLM. Ponle un límite de gasto a la clave.
-- **Suspensión y red del servidor.** Si el equipo se suspende o pierde la red, el stream se corta. Desactiva la suspensión automática.
+- [Manual técnico](docs/MANUAL.md): correr, configurar, desplegar y operar.
+- [Diseño técnico](docs/DISENO-TECNICO.md): cada capa del sistema.
+- [Torneo](docs/TORNEO.md): calibración, liga y cómo se calcula el rating.
+- [Arquitectura](docs/ARQUITECTURA.md): contratos y flujo de datos.
+- [Publicar con Cloudflare](docs/CLOUDFLARE.md) y [marca](docs/MARCA.md).

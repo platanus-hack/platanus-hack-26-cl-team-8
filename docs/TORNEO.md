@@ -7,7 +7,7 @@ decide gana A, gana B o empate). Responde dos preguntas:
    Baseten)? → **calibración** contra la referencia con una banda de ±150 Elo.
 2. Entre ellos, ¿cuál es el ranking y quién le gana a quién? → **liga** todos contra todos.
 
-Comandos en el [README](../README.md#torneo-de-modelos). Este documento explica qué hace
+Comandos en el [manual](MANUAL.md#torneo-de-modelos). Este documento explica qué hace
 cada etapa, qué se guarda y cómo leer los resultados.
 
 ## Piezas

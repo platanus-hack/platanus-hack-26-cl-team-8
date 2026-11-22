@@ -2,7 +2,7 @@
 
 > **Dos modos.** Con `CAMERA_MODE=client` (el oficial, por defecto en Docker Compose) este
 > servicio no dibuja nada: solo vuela al bot cámara (`src/operator.ts`) y el video lo produce
-> el cliente real de Minecraft (`infra/stream`, ver el README de la raíz). Todo lo que sigue
+> el cliente real de Minecraft (`infra/stream`, ver docs/MANUAL.md). Todo lo que sigue
 > describe el modo `CAMERA_MODE=viewer`: el render propio por software, que queda como
 > respaldo para máquinas sin GPU y para desarrollo local. El punto de entrada es `src/main.ts`.
 

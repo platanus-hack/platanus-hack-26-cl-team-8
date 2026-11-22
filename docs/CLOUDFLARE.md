@@ -103,7 +103,7 @@ No pongas Cloudflare Access delante del sitio completo: la arena es pública a p
 >
 > Antes de publicar:
 >
-> 0. **Pon `ADMIN_PASSPHRASE` en el `.env` del servidor** (y `PLAYER_PASSPHRASE` si habrá invitados). Con ella, quien visita solo mira, y cambiar algo pide clave: ver "Acceso" en el [README](../README.md#acceso-quién-puede-cambiar-la-arena). Es la defensa principal; lo de abajo la complementa.
+> 0. **Pon `ADMIN_PASSPHRASE` en el `.env` del servidor** (y `PLAYER_PASSPHRASE` si habrá invitados). Con ella, quien visita solo mira, y cambiar algo pide clave: ver "Acceso" en el [manual](MANUAL.md#acceso-quién-puede-cambiar-la-arena). Es la defensa principal; lo de abajo la complementa.
 > 1. **Pon un tope de gasto** a la clave del Vercel AI Gateway (panel de Vercel → AI Gateway → límites de la clave).
 > 2. **Agrega una regla de rate limiting** en Cloudflare (el plan Free trae una): en el dominio, **Security → WAF → Rate limiting rules → Create rule**, con la expresión
 >    `(http.host eq "arena.tudominio.cl" and http.request.method in {"POST" "PUT" "DELETE"} and starts_with(http.request.uri.path, "/api/"))`,

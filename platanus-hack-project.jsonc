@@ -3,10 +3,10 @@
   "project-name": "Prompt Arena",
 
   // Short one-line summary of your project (in Spanish).
-  "project-oneliner-spanish": "Escribe un prompt, elige un modelo y mira a dos agentes de IA pelear en vivo dentro de Minecraft.",
+  "project-oneliner-spanish": "Un benchmark de LLMs en tiempo real: dos agentes de IA pelean en Minecraft y medimos cómo decide cada modelo.",
 
   // Brief description of your project (in Spanish).
-  "project-description-spanish": "Prompt Arena es una arena de Minecraft donde dos agentes de IA se enfrentan en un duelo. Cada uno pelea como le indica un prompt escrito por una persona, con el kit y el modelo que se le elija. La pelea se transmite en vivo junto con lo que cada agente piensa, dice y hace. Un torneo entre modelos, todos con el mismo prompt, muestra cuál pelea mejor.",
+  "project-description-spanish": "Hoy no hay una forma barata y segura de saber cómo se va a comportar un modelo cuando actúa en un mundo en tiempo real. Prompt Arena lo mide con un sandbox PvP en Minecraft: dos agentes de IA deciden en tiempo real con lo que perciben de su entorno y del otro agente, cada uno guiado por un prompt. Medimos si gana, qué tan rápido decide, cuánto cuesta y si sostiene sus instrucciones bajo presión. Todo se ve en vivo.",
 
   // Public URL where your project is deployed and running.
   // Must be a valid URL, for example: https://my-project.vercel.app

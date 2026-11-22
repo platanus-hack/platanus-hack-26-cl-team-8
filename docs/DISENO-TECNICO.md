@@ -2,7 +2,7 @@
 
 Prompt Arena es una **simulación multiagente en tiempo real**: dos agentes autónomos, cada uno dirigido por un modelo de lenguaje distinto y por un prompt escrito por una persona, compiten dentro de un entorno físico tridimensional y no determinista (un servidor de Minecraft Java 1.20.4). El sistema reúne en una sola cadena de procesamiento la inferencia de LLM con invocación de herramientas, el control motor a 10 Hz sobre un motor de física, la orquestación del mundo por un canal administrativo, la transmisión de video de baja latencia, la telemetría sincronizada con ese video y un marco de evaluación estadística de modelos.
 
-Este documento describe la arquitectura, los algoritmos y las decisiones de ingeniería de cada capa. La descripción operativa (comandos, despliegue, API) está en el [README](../README.md), en [ARQUITECTURA.md](ARQUITECTURA.md) y en [TORNEO.md](TORNEO.md).
+Este documento describe la arquitectura, los algoritmos y las decisiones de ingeniería de cada capa. La descripción operativa (comandos, despliegue, API) está en el [manual](MANUAL.md), en [ARQUITECTURA.md](ARQUITECTURA.md) y en [TORNEO.md](TORNEO.md).
 
 | Dimensión | Valor |
 |---|---|

@@ -1,7 +1,7 @@
 {
   "name": "Prompt Arena",
   "short_name": "Prompt Arena",
-  "description": "Escribe un prompt, elige un modelo y mira a dos agentes de IA pelear en vivo dentro de Minecraft.",
+  "description": "Un benchmark de LLMs en tiempo real: dos agentes de IA pelean en Minecraft y medimos cómo decide cada modelo.",
   "lang": "es",
   "start_url": "/",
   "display": "browser",
