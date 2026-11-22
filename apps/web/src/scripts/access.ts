@@ -97,26 +97,46 @@ function apply(): void {
   document.body.dataset.play = play ? "yes" : "no";
   for (const node of document.querySelectorAll<HTMLElement>('[data-lock="play"]')) node.inert = !play;
 
+  // La franja sobre los prompts: una etiqueta y una frase. El equipo no la necesita.
+  const state: { kind: string; tag: string; text: string } | null = !enabled
+    ? null
+    : role === "player"
+      ? { kind: "guest", tag: "Invitado", text: "Puedes escribir los prompts e iniciar peleas." }
+      : role === "visitor"
+        ? play
+          ? { kind: "open", tag: "Arena abierta", text: "Escribe un prompt para cada lado e inicia la pelea." }
+          : {
+              kind: "watch",
+              tag: "Modo espectador",
+              text: "Solo el equipo y sus invitados cambian los prompts e inician peleas.",
+            }
+        : null;
   const note = document.getElementById("access-note");
   if (note) {
-    const text = !enabled
-      ? ""
-      : role === "player"
-        ? "Entraste como invitado: puedes escribir los prompts e iniciar peleas."
-        : role === "visitor"
-          ? play
-            ? "La arena está abierta: escribe un prompt para cada lado e inicia la pelea."
-            : "Modo espectador: aquí se ve la pelea en vivo y lo que piensa cada agente. Por ahora solo el equipo y sus invitados escriben los prompts e inician peleas."
-          : "";
-    note.textContent = text;
-    note.hidden = text === "";
+    note.hidden = state === null;
+    note.dataset.kind = state?.kind ?? "";
+    const tag = document.getElementById("access-note-tag");
+    const text = document.getElementById("access-note-text");
+    if (tag) tag.textContent = state?.tag ?? "";
+    if (text) text.textContent = state?.text ?? "";
   }
 
+  // La etiqueta de la barra de arriba: lo mismo en una palabra, a la vista junto al video.
   const chip = document.getElementById("access-chip");
   if (chip) {
-    const named = enabled && role !== "visitor";
-    chip.hidden = !named;
-    chip.textContent = role === "admin" ? "Equipo" : "Invitado";
+    chip.hidden = !enabled;
+    chip.dataset.kind = role === "admin" ? "team" : (state?.kind ?? "");
+    const label = document.getElementById("access-chip-label");
+    if (label) {
+      label.textContent =
+        role === "admin" ? "Equipo" : role === "player" ? "Invitado" : play ? "Arena abierta" : "Espectador";
+    }
+    chip.dataset.tip =
+      role === "visitor"
+        ? play
+          ? "La arena está abierta: puedes escribir los prompts e iniciar peleas."
+          : "Estás mirando: la pelea, lo que piensa cada agente y el leaderboard. Solo el equipo y sus invitados cambian la arena."
+        : "Este navegador tiene una clave de la arena. Haz clic dos veces para quitarla.";
   }
   for (const listener of listeners) listener();
 }
@@ -176,13 +196,16 @@ export function initAccess(): void {
   const chip = document.getElementById("access-chip");
   let asking: number | null = null;
   chip?.addEventListener("click", () => {
+    // Sin clave no hay nada que quitar: para quien mira, la etiqueta solo informa.
+    if (key === null) return;
     if (asking !== null) {
       window.clearTimeout(asking);
       asking = null;
       forget();
       return;
     }
-    chip.textContent = "¿Quitar la clave?";
+    const label = document.getElementById("access-chip-label");
+    if (label) label.textContent = "¿Quitar la clave?";
     asking = window.setTimeout(() => {
       asking = null;
       apply();

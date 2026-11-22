@@ -75,7 +75,7 @@
 .arena-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 18px;
   max-width: 1440px;
   height: 56px;
   margin: 0 auto;
@@ -87,22 +87,6 @@
   text-decoration: none;
 }
 
-.arena-top__crumb {
-  color: var(--faint);
-}
-
-.arena-top__title {
-  font: 400 16px/1 var(--pixel);
-  color: var(--amber);
-}
-
-.arena-top__back {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
 .arena-top__mock {
   margin-left: auto;
   padding: 3px 8px;
@@ -112,23 +96,16 @@
   white-space: nowrap;
 }
 
-.arena-top__mock:not([hidden]) + .arena-top__back {
-  margin-left: 0;
-}
-
-.arena-top__back:hover {
-  color: var(--text);
+@media (max-width: 699px) {
+  /* Como la barra de la pelea: el nombre y las pestañas se achican en global.css. */
+  .arena-top {
+    gap: 10px;
+  }
 }
 
 @media (max-width: 520px) {
-  .arena-top__brand .brand__title,
-  .arena-top__crumb,
   .arena-top__mock {
     display: none;
-  }
-
-  .arena-top__mock:not([hidden]) + .arena-top__back {
-    margin-left: auto;
   }
 }
 

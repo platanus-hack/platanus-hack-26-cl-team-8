@@ -19,6 +19,7 @@ import {
 } from "@phack/protocol";
 import HeartSprite from "../components/HeartSprite.astro";
 import PixelIcon from "../components/PixelIcon.astro";
+import SiteNav from "../components/SiteNav.astro";
 import "../styles/global.css";
 
 // Los ids generados aquí (fighter-red, prompt-blue, ...) son el contrato con
@@ -80,19 +81,25 @@ const stats = [
           <span class="brand__mark" aria-hidden="true"><i></i><i></i></span>
           <h1 class="brand__title">Prompt Arena</h1>
         </div>
+        <SiteNav current="live" />
         <!-- Solo se ve cuando llega la transmisión (global.css lo decide por el estado del reproductor). -->
         <span class="live" role="status" data-tip="La transmisión de la arena está llegando en este momento.">
           <i class="live__dot" aria-hidden="true"></i>
           En vivo
         </span>
-        <!-- Con qué clave está este navegador (access.ts); dos clics la quitan. -->
-        <button
-          type="button"
-          class="access-chip"
-          id="access-chip"
-          data-tip="Este navegador tiene una clave de la arena. Haz clic dos veces para quitarla."
-          hidden
-        ></button>
+        <!--
+          Cómo está este navegador en la arena (access.ts): espectador (con el ojo), arena
+          abierta, invitado o equipo. Con clave, dos clics la quitan.
+        -->
+        <button type="button" class="access-chip" id="access-chip" hidden>
+          <svg class="access-chip__eye" viewBox="0 0 11 6" width="22" height="12" aria-hidden="true" shape-rendering="crispEdges">
+            <path
+              fill="currentColor"
+              d="M3 0h5v1H3zM1 1h2v1H1zM8 1h2v1H8zM0 2h1v2H0zM10 2h1v2h-1zM4 2h3v2H4zM1 4h2v1H1zM8 4h2v1H8zM3 5h5v1H3z"
+            />
+          </svg>
+          <span id="access-chip-label"></span>
+        </button>
         <button
           type="button"
           class="sound"
@@ -108,7 +115,6 @@ const stats = [
           <span class="conn__dot" aria-hidden="true"></span>
           <span class="conn__text" id="conn-text">Conectando…</span>
         </div>
-        <a class="top__arena" href="/arena" data-tip="Torneo de modelos: ranking y quién le gana a quién.">Leaderboard</a>
       </header>
 
       <!-- Marcador: una barra de vida por lado y el reloj al centro. -->
@@ -301,13 +307,26 @@ const stats = [
       <div class="workbench">
         <section class="prompts" aria-labelledby="prompts-title">
         <header class="section__head">
-          <h2 class="section__title" id="prompts-title">Preparar la pelea</h2>
-          <p class="section__hint">
+          <!--
+            Dos versiones del encabezado (global.css muestra una): quien puede jugar prepara la
+            pelea; quien solo mira lee lo que le pidieron a cada agente.
+          -->
+          <h2 class="section__title" id="prompts-title">
+            <span data-when="play">Preparar la pelea</span>
+            <span data-when="watch">Lo que le pidieron a cada agente</span>
+          </h2>
+          <p class="section__hint" data-when="play">
             Dile a cada agente qué quiere lograr, con qué kit y con qué modelo. Vale desde la próxima pelea. Los ítems
             que existen están en <a href="/items">la lista de ítems</a>.
           </p>
+          <p class="section__hint" data-when="watch">
+            Cada agente pelea siguiendo su prompt, con el kit y el modelo que ves aquí.
+          </p>
           <!-- Qué puede hacer este navegador (access.ts): espectador, invitado o arena abierta. -->
-          <p class="access-note" id="access-note" role="status" hidden></p>
+          <p class="access-note" id="access-note" role="status" hidden>
+            <span class="access-note__tag" id="access-note-tag"></span>
+            <span id="access-note-text"></span>
+          </p>
         </header>
 
         <!-- Ajustes de la pelea (no de un lado): los maneja scripts/settings.ts. -->
@@ -317,7 +336,7 @@ const stats = [
           sus ids son los de scripts/settings.ts, benchsettings.ts y presetpicker.ts;
           controls-enhance.ts les pone el contador, las opciones a la vista y la ayuda.
         -->
-        <div class="settings" id="settings-field">
+        <div class="settings" id="settings-field" data-when="play">
           <div class="settings__group">
             <!-- Pre-ajuste: elegir uno lo carga de inmediato; si algo cambia, vuelve a "Personalizado" (scripts/presetpicker.ts). -->
             <div class="setting" data-needs="admin">
@@ -578,23 +597,5 @@ const stats = [
     <script>
       import "../scripts/main";
     </script>
-
-    <style>
-      /* Enlace discreto al leaderboard del torneo, al final de la barra superior. */
-      .top__arena {
-        font-size: 13px;
-        color: var(--muted);
-        text-decoration: none;
-        white-space: nowrap;
-      }
-      .top__arena:hover {
-        color: var(--text);
-        text-decoration: underline;
-      }
-      .top__arena[data-tip]::after {
-        left: auto;
-        right: 0;
-      }
-    </style>
   </body>
 </html>
